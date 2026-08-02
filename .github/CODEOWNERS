@@ -1,0 +1,18 @@
+# Хранитель этического хеша — владелец репозитория
+* @isotope-network
+
+# Документация
+/docs/ @isotope-network
+*.md @isotope-network
+
+# Ядро (защита от случайных изменений)
+/node/node.go @isotope-network
+/node/memory.go @isotope-network
+/node/layers.go @isotope-network
+
+# Этический хеш (критично)
+/genesis/ @isotope-network
+
+# Лицензии
+LICENSE @isotope-network
+LICENSE.COMMERCIAL.md @isotope-network

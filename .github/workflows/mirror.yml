@@ -1,0 +1,25 @@
+name: Mirror to All Platforms
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  mirror:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Push to GitLab
+        run: |
+          git remote add gitlab https://oauth2:${{ secrets.GITLAB_TOKEN }}@gitlab.com/isotope-network/isotope-core.git
+          git push --mirror gitlab
+        continue-on-error: true
+
+      - name: Push to Codeberg
+        run: |
+          git remote add codeberg https://oauth2:${{ secrets.CODEBERG_TOKEN }}@codeberg.org/isotope-network/isotope-core.git
+          git push --mirror codeberg
+        continue-on-error: true

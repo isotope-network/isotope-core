@@ -1,0 +1,40 @@
+services:
+  node1:
+    build: ./node
+    networks:
+      - isotope-net
+    ports:
+      - "9001:9000"
+      - "8081:8081"
+    volumes:
+      - ./state:/root/state
+    environment:
+      - NODE_ID=1
+
+  node2:
+    build: ./node
+    networks:
+      - isotope-net
+    ports:
+      - "9002:9000"
+      - "8082:8081"
+    volumes:
+      - ./state:/root/state
+    environment:
+      - NODE_ID=2
+
+  node3:
+    build: ./node
+    networks:
+      - isotope-net
+    ports:
+      - "9003:9000"
+      - "8083:8081"
+    volumes:
+      - ./state:/root/state
+    environment:
+      - NODE_ID=3
+
+networks:
+  isotope-net:
+    driver: bridge
