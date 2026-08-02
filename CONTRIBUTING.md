@@ -1,84 +1,84 @@
-# Вклад в проект ISOTOPE
+# Contributing to ISOTOPE
 
-Спасибо за интерес к развитию ISOTOPE. Этот документ описывает, как помочь проекту.
-
----
-
-## Кодекс поведения
-
-Участники обязаны соблюдать [Кодекс поведения](CODE_OF_CONDUCT.md). Коротко: уважение, никакого насилия, никакой дискриминации.
+Thank you for your interest in developing ISOTOPE. This document describes how to help the project.
 
 ---
 
-## Как помочь
+## Code of Conduct
 
-### Сообщить об ошибке
-- Проверьте, нет ли уже такого issue
-- Опишите: что делали, что ожидали, что получили
-- Приложите логи (без приватных данных)
-- Укажите версию и окружение
-
-### Предложить улучшение
-- Откройте issue с меткой `enhancement`
-- Опишите: зачем это нужно, как должно работать
-- Обсудите с сообществом до написания кода
-
-### Написать код
-1. Форкните репозиторий
-2. Создайте ветку: `feature/название` или `fix/название`
-3. Напишите код и тесты
-4. Убедитесь, что `go test ./...` проходит
-5. Создайте Pull Request
+Participants must follow the [Code of Conduct](CODE_OF_CONDUCT.md). In short: respect, no violence, no discrimination.
 
 ---
 
-## Стандарты кода
+## How to Help
+
+### Report a Bug
+- Check if the issue already exists
+- Describe: what you did, what you expected, what you got
+- Attach logs (without private data)
+- Specify version and environment
+
+### Suggest an Improvement
+- Open an issue with the `enhancement` label
+- Describe: why it's needed, how it should work
+- Discuss with the community before writing code
+
+### Write Code
+1. Fork the repository
+2. Create a branch: `feature/name` or `fix/name`
+3. Write code and tests
+4. Make sure `go test ./...` passes
+5. Create a Pull Request
+
+---
+
+## Code Standards
 
 - **Go:** `gofmt`, `go vet`, `golint`
 - **Flutter:** `flutter analyze`, `flutter test`
-- **Коммиты:** осмысленные сообщения на английском
-- **Тесты:** обязательны для новой функциональности
+- **Commits:** meaningful messages in English
+- **Tests:** required for new functionality
 
 ---
 
-## Структура проекта
+## Project Structure
 
     isotope-core/
-    ├── node/           # Ядро на Go
-    │   ├── main.go     # Точка входа
-    │   ├── node.go     # P2P-узел, processMessage
-    │   ├── memory.go   # Взвешенная память
-    │   ├── layers.go   # Нейросеть
+    ├── node/           # Go core
+    │   ├── main.go     # Entry point
+    │   ├── node.go     # P2P node, processMessage
+    │   ├── memory.go   # Weighted memory
+    │   ├── layers.go   # Neural network
     │   ├── handlers.go # HTTP + WebSocket
-    │   ├── utils.go    # Утилиты, векторизация
-    │   └── state.go    # Сохранение состояния
-    ├── mobile/         # Flutter-приложение
-    ├── tests/          # Автотесты
-    └── docs/           # Документация
+    │   ├── utils.go    # Utilities, vectorization
+    │   └── state.go    # State persistence
+    ├── mobile/         # Flutter app
+    ├── tests/          # Test suites
+    └── docs/           # Documentation
 
 ---
 
-## Приоритеты
+## Priorities
 
-Актуальные задачи отмечены в [Roadmap](docs/roadmap/ROADMAP.md) и Issues с меткой `help wanted`.
-
----
-
-## Если GitHub недоступен
-
-При блокировке GitHub:
-- Форки и PR принимаются через зеркала (GitLab, Codeberg)
-- Релизы доступны на isotope.network и IPFS
-
-[Список зеркал →](docs/MIRRORS.md)
+Current tasks are marked in the [Roadmap](docs/roadmap/ROADMAP.md) and Issues with the `help wanted` label.
 
 ---
 
-## Контакты
+## If GitHub Is Unavailable
+
+If GitHub is blocked:
+- Forks and PRs are accepted via mirrors (GitLab, Codeberg)
+- Releases are available at isotope.network and IPFS
+
+[See mirrors →](docs/MIRRORS.md)
+
+---
+
+## Contacts
 
 - GitHub: [github.com/isotope-network](https://github.com/isotope-network)
-- Сайт: [isotope.network](https://isotope.network)
+- Website: [isotope.network](https://isotope.network)
 
 ---
 
-**ISOTOPE строится сообществом. Каждый вклад важен.**
+**ISOTOPE is built by the community. Every contribution matters.**

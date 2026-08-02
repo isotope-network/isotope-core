@@ -1,74 +1,74 @@
-# Политика безопасности ISOTOPE
+# ISOTOPE Security Policy
 
-## Сообщить об уязвимости
+## Report a Vulnerability
 
-Если вы обнаружили уязвимость в ISOTOPE, пожалуйста:
+If you discover a vulnerability in ISOTOPE, please:
 
-1. **Не публикуйте её.** Не создавайте публичный issue.
-2. Отправьте описание на: **security@isotope.network**
-3. Зашифруйте сообщение нашим PGP-ключом (запросите ключ по email)
-4. Мы ответим в течение 72 часов
-
----
-
-## Поддерживаемые версии
-
-| Версия | Поддержка безопасности |
-|--------|------------------------|
-| v1.5   | Полная                 |
-| v1.4   | Критические исправления|
-| < v1.4 | Не поддерживаются      |
+1. **Do not publish it.** Do not create a public issue.
+2. Send a description to: **security@isotope.network**
+3. Encrypt the message with our PGP key (request the key by email)
+4. We will respond within 72 hours
 
 ---
 
-## Что мы считаем уязвимостью
+## Supported Versions
 
-- Утечка IP-адреса пользователя вопреки настройкам анонимности
-- Возможность чтения чужих сообщений (нарушение E2E)
-- Обход этического фильтра
-- Атака на bootstrap-узлы
-- Деанонимизация через метаданные
-- DoS-атаки на сеть
-- Отравление DHT
-
-## Что НЕ является уязвимостью
-
-- Социальная инженерия
-- Физический доступ к устройству
-- Атаки на инфраструктуру пользователя (скомпрометированный роутер, вредоносное ПО)
-- Самостоятельно скомпилированные бинарники с изменённым кодом
-- Установка вредоносного узла (сеть защищена этическим хешем)
+| Version | Security Support |
+|---------|-----------------|
+| v1.5    | Full            |
+| v1.4    | Critical fixes  |
+| < v1.4  | Not supported   |
 
 ---
 
-## Процесс обработки
+## What We Consider a Vulnerability
 
-1. Вы отправляете отчёт
-2. Мы подтверждаем получение
-3. Мы анализируем и воспроизводим
-4. Мы выпускаем исправление
-5. Мы публикуем advisory с благодарностью (если вы согласны)
+- Leakage of user IP address contrary to anonymity settings
+- Ability to read others' messages (E2E violation)
+- Bypassing the ethical filter
+- Attack on bootstrap nodes
+- De-anonymization through metadata
+- DoS attacks on the network
+- DHT poisoning
 
----
+## What Is NOT a Vulnerability
 
-## Вознаграждение
-
-ISOTOPE — open-source проект без коммерческого финансирования. Мы не предлагаем bug bounty.
-Но мы публично благодарим исследователей, которые помогают нам.
-
----
-
-## Криптография
-
-ISOTOPE использует:
-
-- **Ed25519** — для подписи сообщений и ключей узлов
-- **SHA-256** — для хеширования и идентификаторов
-- **Noise** — для шифрования P2P-соединений (встроено в libp2p)
-- **E2E-шифрование** — планируется
-
-Не изобретаем свою криптографию. Используем проверенные стандарты.
+- Social engineering
+- Physical access to the device
+- Attacks on user infrastructure (compromised router, malware)
+- Self-compiled binaries with modified code
+- Installing a malicious node (the network is protected by the ethical hash)
 
 ---
 
-**Безопасность — это не фича. Это фундамент ISOTOPE.**
+## Processing Procedure
+
+1. You submit a report
+2. We confirm receipt
+3. We analyze and reproduce
+4. We release a fix
+5. We publish an advisory with thanks (if you agree)
+
+---
+
+## Reward
+
+ISOTOPE is an open-source project without commercial funding. We do not offer bug bounties. 
+But we publicly thank researchers who help us.
+
+---
+
+## Cryptography
+
+ISOTOPE uses:
+
+- **Ed25519** — for signing messages and node keys
+- **SHA-256** — for hashing and identifiers
+- **Noise** — for P2P connection encryption (built into libp2p)
+- **E2E encryption** — planned
+
+We do not invent our own cryptography. We use proven standards.
+
+---
+
+**Security is not a feature. It is the foundation of ISOTOPE.**

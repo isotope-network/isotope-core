@@ -1,71 +1,71 @@
-# Кодекс поведения ISOTOPE
+# ISOTOPE Code of Conduct
 
-## Обязательство
+## Commitment
 
-Мы, как участники и создатели проекта ISOTOPE, обязуемся сделать участие в нашем сообществе свободным от насилия, дискриминации и преследования для всех, независимо от:
+We, as participants and creators of the ISOTOPE project, pledge to make participation in our community free from violence, discrimination, and harassment for everyone, regardless of:
 
-- возраста
-- расы
-- этнической принадлежности
-- национальности
-- религии
-- пола
-- сексуальной ориентации
-- гендерной идентичности
-- физических ограничений
-- политических убеждений
-- уровня опыта
-
----
-
-## Стандарты поведения
-
-### Ожидаемое поведение
-
-- Уважение к другим участникам
-- Конструктивная критика, направленная на улучшение проекта
-- Принятие ответственности за свои действия
-- Фокус на том, что лучше для сообщества
-- Эмпатия и поддержка
-
-### Недопустимое поведение
-
-- Язык вражды, оскорбления, угрозы
-- Преследование, запугивание, сталкинг
-- Раскрытие личной информации без согласия
-- Сексуальные домогательства
-- Спам, троллинг, флуд
-- Пропаганда насилия или незаконной деятельности
+- age
+- race
+- ethnicity
+- nationality
+- religion
+- sex
+- sexual orientation
+- gender identity
+- physical limitations
+- political beliefs
+- experience level
 
 ---
 
-## Применение
+## Standards of Behavior
 
-Нарушения кодекса поведения рассматриваются Хранителем этического хеша и доверенными участниками сообщества.
+### Expected Behavior
 
-Последствия:
-- Предупреждение
-- Временная блокировка
-- Постоянное исключение из сообщества
+- Respect for other participants
+- Constructive criticism aimed at improving the project
+- Taking responsibility for your actions
+- Focus on what is best for the community
+- Empathy and support
 
-Все жалобы конфиденциальны.
+### Unacceptable Behavior
+
+- Hate speech, insults, threats
+- Harassment, intimidation, stalking
+- Disclosure of personal information without consent
+- Sexual harassment
+- Spam, trolling, flooding
+- Promotion of violence or illegal activity
 
 ---
 
-## Этический хеш ISOTOPE
+## Enforcement
 
-Этот проект основан на этическом хеше — цифровом ДНК сети, которое отвергает насилие.
+Violations of the Code of Conduct are reviewed by the Keeper of the ethical hash and trusted community members.
 
-Участвуя в проекте, вы принимаете эти принципы.
+Consequences:
+- Warning
+- Temporary ban
+- Permanent exclusion from the community
+
+All complaints are confidential.
 
 ---
 
-## Контакты
+## The ISOTOPE Ethical Hash
 
-Для сообщения о нарушениях:
-- GitHub Issues с меткой `conduct`
+This project is based on the ethical hash — the digital DNA of the network that rejects violence.
+
+By participating in the project, you accept these principles.
+
+---
+
+## Contacts
+
+To report violations:
+- GitHub Issues with the `conduct` label
 - Email: conduct@isotope.network
 
 ---
 
-**ISOTOPE — это пространство свободы и уважения.**
+**ISOTOPE is a space of freedom and respect.**
