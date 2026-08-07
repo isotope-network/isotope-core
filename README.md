@@ -1,38 +1,104 @@
-# ISOTOPE — Immune System Of Transparent Open Peer Exchange
+# ISOTOPE — Infrastructure Layer for the Data Economy
 
-**Communication that cannot be blocked, tracked, or destroyed.**
+**Ask without revealing. Answer without exposing.**
 
-ISOTOPE is a decentralized P2P messenger with ethical immunity, anonymous routing, and adaptive traffic masking.
-
----
-
-## Features
-
-- **Serverless P2P** — impossible to block or shut down
-- **Ethical Immunity** — neural network filters violence and spam automatically
-- **Onion Routing** — anonymity on your own peers, no Tor required
-- **Adaptive Masking** — traffic indistinguishable from regular HTTPS
-- **Weighted Memory** — important data lives, garbage fades
-- **Self-Adaptation** — network adjusts parameters under load
-- **E2E Encryption** — no one reads messages except the recipient
-- **Offline Operation** — mDNS, Bluetooth mesh, Wi-Fi Direct
-- **Bypass Blocking** — PWA, F-Droid, direct APK download
+ISOTOPE is an architecture for data exchange where the source is never disclosed and the answer is verified by the network.
 
 ---
 
-## Applications
+## How the Architecture Works
 
-ISOTOPE is not just a messenger. It is a protocol for any interaction requiring decentralization, ethical filtering, and an economy of trust.
+ISOTOPE is built on a single pattern: **query-response without disclosure**.
 
-| Domain | Application |
-|--------|-------------|
-| Global Economy | Cross-border payments without SWIFT, decentralized data market, credit scoring |
-| Legal | International arbitration, supply chain certification, digital inheritance |
-| Technology | IoT without cloud, federated AI training, P2P DNS without root servers |
-| Society & Government | Electronic voting, direct charity, emergency communication |
-| Science | Decentralized peer review, research consortiums |
+A participant asks a question. The network finds nodes capable of answering. The answer arrives without access to the underlying data, without revealing the source, and without identifying the respondent.
 
-[Details on each direction →](docs/APPLICATIONS.md)
+- «Has this client defaulted in the last 2 years?» → Answer: «No»
+- «What is the cardiovascular risk coefficient?» → Answer: «0.88»
+- «Is this certificate valid?» → Answer: «No»
+
+Data is never transferred. Identity is never revealed. Only the answer matters.
+
+---
+
+## Architectural Principles
+
+**Ethical Hash.** The digital DNA of the network. Seven commandments, transformed into a 100-dimensional vector. Every message is compared to the standard. The closer to the standard, the longer it lives. The further, the faster it fades. This is not censorship. This is an immune system.
+
+**Weighted Memory.** Messages are not deleted by command. They receive weight. Likes raise weight. Dislikes lower it. Time erodes even the strongest signals. When weight falls below a threshold, data moves to archive. Lower — deleted forever. The network breathes: what matters stays, the random goes, the harmful is rejected.
+
+**Collective Learning.** The neural network learns from community feedback. Every like and dislike shifts the weights. The network is not programmed — it is trained. No moderator. No banned word dictionaries.
+
+**Decentralization.** No server. No company. No single center. Nodes discover each other via mDNS, DHT, Bluetooth. The network lives as long as at least one node lives.
+
+---
+
+## Architectural Properties
+
+**Immunity activates with scale.**
+
+| Nodes | Property |
+|-------|----------|
+| 2-3 | Secure P2P channel. No immunity |
+| 5-10 | Early consensus. Outliers visible |
+| 15-20 | Immunity activates. Weights begin to work |
+| 50+ | Stable immunity. Collusion has no effect |
+| 100+ | Unstoppable network. Self-healing |
+
+This is not a flaw. This is an architectural property. Scale activates immunity.
+
+**Four layers of architecture.**
+
+| Layer | Essence |
+|-------|---------|
+| Technical | Query-response protocol without disclosure |
+| Philosophical | Ethics embedded in the protocol |
+| Business | Trust market without intermediaries |
+| Application | Messenger as a living demonstration |
+
+---
+
+## What the Architecture Enables
+
+The architecture supports any interaction requiring decentralization, ethical filtering, and trust without intermediaries.
+
+**Ready-made scenarios.** Solve a specific problem in one day.
+
+| Scenario | Problem | Minimum Nodes |
+|----------|---------|---------------|
+| Certificate Verification | Fake certificates, slow checks | 3 |
+| Credit Check | Clients leave, unwilling to disclose full history | 3-5 |
+| Anonymous Voting | Distrust in results, fear of exposure | 20-30 |
+| Anti-Fraud | Money stolen while verification is pending | 5-10 |
+| Doctor Consultation | Cannot share patient data with a colleague | 2-5 |
+
+[More: 10 domains, 30+ scenarios →](docs/USE_CASES.md)
+
+**Two growth vectors.**
+
+| Vector | Product | Audience | Metric |
+|--------|---------|----------|--------|
+| Enterprise | Protocol + commercial license | Banks, insurers, governments | Nodes, queries, contracts |
+| Community | Messenger (open source) | People, developers | Installs, forks, contributors |
+
+Both vectors feed each other. The messenger proves the protocol works. The protocol gives the messenger invulnerability.
+
+---
+
+## The Messenger: Entry Point to the Network
+
+A user installs the ISOTOPE messenger. Their node automatically participates in all scenarios — without asking, without distracting.
+
+While the user chats with friends, their node:
+- Verifies certificates for suppliers
+- Helps banks catch fraudsters
+- Participates in anonymous scientific surveys
+- Confirms votes in local communities
+
+Once a day — a single notification:
+
+> «Your node today: 12 certificates verified, 1 fraudster caught, 3 research queries helped. Earned: 2.8 ISOTOPE.»
+
+**Formula:** Install messenger. Chat. Network works. Tokens arrive.
 
 ---
 
@@ -55,26 +121,9 @@ Nodes:
 - http://localhost:8082 (node 2)
 - http://localhost:8083 (node 3)
 
-### Mobile App
-
-    cd mobile
-    flutter pub get
-    flutter run
-
 ---
 
-## How It Works
-
-- **Ethical Hash** — digital DNA of the network based on seven commandments
-- **Neural Network** — 100-dimensional vectors compare messages to the standard
-- **Collective Learning** — likes/dislikes teach the network to distinguish good from evil
-- **Weighted Memory** — important lives longer, spam fades and gets deleted
-- **Onion Routing** — three random peers form an anonymous chain
-- **Self-Adaptation** — network collects metrics and adjusts parameters
-
----
-
-## Architecture
+## Repository Architecture
 
     isotope-core/
     ├── node/           # Go core (P2P, neural network, memory, API)
@@ -92,22 +141,9 @@ Nodes:
 
 **v1.5 — stable.**
 
-Implemented:
-- P2P network: libp2p + mDNS + DHT + Gossip
-- Neural network: 100-dimensional vectors, bigrams, ethical filter
-- Memory: weighted, with archive and auto-cleanup
-- REST API + WebSocket
-- Mobile app (Flutter)
-- Network health monitoring
-- Delivery statuses with forwarding
-- 67 autotests
+Implemented: P2P network (libp2p + mDNS + DHT + Gossip), neural network (100-dimensional vectors, bigrams, ethical filter), weighted memory with archive, REST API + WebSocket, mobile app (Flutter), network health monitoring, delivery statuses with forwarding, 67 autotests.
 
-In development:
-- Onion Routing
-- PWA + F-Droid
-- Adaptive traffic masking
-- Steganography in media
-- ISOTOPE Enterprise (B2B data exchange)
+In development: Onion Routing, PWA + F-Droid, adaptive traffic masking, steganography in media, ISOTOPE Enterprise (B2B data exchange).
 
 [Roadmap →](docs/roadmap/ROADMAP.md)
 
@@ -117,10 +153,12 @@ In development:
 
 - [Manifesto](docs/philosophy/MANIFEST.md)
 - [The Story](docs/philosophy/THE_STORY.md)
+- [Applications](docs/APPLICATIONS.md)
+- [Use Cases](docs/USE_CASES.md)
+- [Immunity Scale](docs/architecture/IMMUNITY_SCALE.md)
 - [Contributing](CONTRIBUTING.md)
 - [Code of Conduct](CODE_OF_CONDUCT.md)
 - [Security](SECURITY.md)
-- [Applications](docs/APPLICATIONS.md)
 - [Mirrors](docs/MIRRORS.md)
 
 ---
@@ -142,4 +180,4 @@ Commercial license: [LICENSE.COMMERCIAL.md](LICENSE.COMMERCIAL.md)
 
 ---
 
-**ISOTOPE is not a messenger. It is communication that cannot be detected, blocked, or destroyed.**
+**ISOTOPE is an architecture. Applications flow from it.**
