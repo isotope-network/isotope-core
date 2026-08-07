@@ -15,7 +15,7 @@ jobs:
       - name: Push to GitLab
         run: |
           git remote add gitlab https://oauth2:${{ secrets.GITLAB_TOKEN }}@gitlab.com/isotope-network/isotope-core.git
-          git push --mirror gitlab
+          git push --mirror --force gitlab
         continue-on-error: true
 
       - name: Push to Codeberg
