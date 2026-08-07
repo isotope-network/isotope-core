@@ -1,0 +1,515 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ИСО — Чат</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #f5f5f5;
+            color: #333;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+        #chat-container {
+            flex: 1;
+            overflow-y: auto;
+            padding: 15px;
+        }
+        .message {
+            max-width: 70%;
+            padding: 10px 14px;
+            border-radius: 16px;
+            word-wrap: break-word;
+            position: relative;
+            animation: fadeIn 0.25s ease-out;
+            line-height: 1.45;
+            font-size: 15px;
+            margin-bottom: 8px;
+        }
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(8px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        .message.own {
+            margin-left: auto;
+            margin-right: 0;
+            background: #dcf8c6;
+            border-bottom-right-radius: 4px;
+        }
+        .message.peer {
+            margin-right: auto;
+            margin-left: 0;
+            background: #ffffff;
+            border: 1px solid #e0e0e0;
+            border-bottom-left-radius: 4px;
+        }
+        .message.network {
+            margin-right: auto;
+            margin-left: 0;
+            background: #fff3e0;
+            border: 1px solid #ffe0b2;
+            border-bottom-left-radius: 4px;
+            font-style: italic;
+        }
+        .message-header {
+            font-size: 11px;
+            margin-bottom: 3px;
+            opacity: 0.65;
+            display: flex;
+            justify-content: space-between;
+            gap: 20px;
+        }
+        .message-header .sender { font-weight: 600; }
+        .message-header .weight-badge {
+            font-size: 10px;
+            padding: 1px 6px;
+            border-radius: 8px;
+            font-weight: 600;
+        }
+        .weight-badge.high { background: #c8e6c9; color: #2e7d32; }
+        .weight-badge.mid { background: #fff9c4; color: #f57f17; }
+        .weight-badge.low { background: #ffcdd2; color: #c62828; }
+        .message-text { font-size: 15px; line-height: 1.45; }
+        .message-actions {
+            margin-top: 6px;
+            display: flex;
+            gap: 4px;
+            opacity: 0;
+            transition: opacity 0.2s;
+            justify-content: flex-end;
+        }
+        .message:hover .message-actions { opacity: 1; }
+        .message-actions button {
+            background: none;
+            border: none;
+            cursor: pointer;
+            border-radius: 12px;
+            padding: 3px 10px;
+            font-size: 14px;
+            transition: all 0.2s;
+            color: #999;
+        }
+        .message-actions button:hover { background: #00000010; color: #555; }
+        .message-actions button.liked { color: #4caf50; }
+        .message-actions button.disliked { color: #f44336; }
+
+        .delivery-status {
+            font-size: 10px;
+            margin-top: 4px;
+            opacity: 0.7;
+            text-align: right;
+        }
+        .delivery-status.sent { color: #999; }
+        .delivery-status.delivered { color: #4caf50; }
+        .delivery-status.partial { color: #ff9800; }
+        .delivery-status.filtered { color: #f44336; }
+
+        #info-panel {
+            background: #fafafa;
+            border-top: 1px solid #e0e0e0;
+            border-bottom: 1px solid #e0e0e0;
+            padding: 8px 15px;
+            font-size: 11px;
+            font-family: 'Courier New', monospace;
+            color: #666;
+            user-select: text;
+            line-height: 1.6;
+        }
+        #info-panel .label { color: #999; }
+        #info-panel .value { color: #333; font-weight: 600; }
+        #info-panel .warn { color: #e65100; }
+        #info-panel .good { color: #2e7d32; }
+        #info-panel .bad { color: #c62828; }
+        #info-panel .hash-row {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            margin-top: 2px;
+        }
+        #info-panel .hash-row input {
+            font-family: 'Courier New', monospace;
+            font-size: 11px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            padding: 2px 6px;
+            width: 200px;
+            background: #fff;
+            color: #333;
+        }
+        #info-panel .hash-row button {
+            font-size: 10px;
+            padding: 2px 8px;
+            border: 1px solid #4caf50;
+            background: #fff;
+            color: #4caf50;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+        #info-panel .hash-row button:hover { background: #4caf50; color: #fff; }
+
+        #health-panel {
+            display: flex;
+            gap: 12px;
+            margin-top: 6px;
+            flex-wrap: wrap;
+        }
+        .health-indicator {
+            display: flex;
+            align-items: center;
+            gap: 5px;
+            font-size: 10px;
+            padding: 3px 8px;
+            border-radius: 10px;
+            background: #eee;
+        }
+        .health-indicator .dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            flex-shrink: 0;
+        }
+        .dot.good { background: #4caf50; }
+        .dot.warn { background: #ff9800; }
+        .dot.bad  { background: #f44336; }
+        .dot.unknown { background: #bdbdbd; }
+
+        #input-container {
+            display: flex;
+            padding: 10px 15px;
+            background: #ffffff;
+            border-top: 1px solid #e0e0e0;
+            gap: 10px;
+        }
+        #msg-input {
+            flex: 1;
+            padding: 10px 14px;
+            background: #f0f0f0;
+            border: 1px solid transparent;
+            color: #333;
+            border-radius: 24px;
+            font-size: 15px;
+            outline: none;
+            transition: all 0.2s;
+        }
+        #msg-input:focus { background: #fff; border-color: #4caf50; }
+        #msg-input::placeholder { color: #999; }
+        #send-btn {
+            padding: 10px 20px;
+            background: #4caf50;
+            border: none;
+            color: #fff;
+            border-radius: 24px;
+            cursor: pointer;
+            font-size: 15px;
+            font-weight: 600;
+            transition: all 0.2s;
+        }
+        #send-btn:hover { background: #43a047; }
+        #send-btn:disabled { background: #bdbdbd; cursor: not-allowed; }
+    </style>
+</head>
+<body>
+    <div id="chat-container"></div>
+    <div id="info-panel">
+        <div id="info-stats">Загрузка...</div>
+        <div id="health-panel">
+            <div class="health-indicator" id="health-layers">
+                <span class="dot unknown"></span>
+                <span>Слои: ...</span>
+            </div>
+            <div class="health-indicator" id="health-stddev">
+                <span class="dot unknown"></span>
+                <span>Разброс: ...</span>
+            </div>
+            <div class="health-indicator" id="health-peers">
+                <span class="dot unknown"></span>
+                <span>Пиры: ...</span>
+            </div>
+        </div>
+        <div class="hash-row">
+            <span class="label">Хочу:</span>
+            <input id="prehash-input">
+            <button onclick="setPreHash()">✓</button>
+        </div>
+        <div class="hash-row">
+            <span class="label">Не хочу:</span>
+            <input id="antihash-input">
+            <button onclick="setAntiHash()">✓</button>
+        </div>
+    </div>
+    <div id="input-container">
+        <input type="text" id="msg-input" placeholder="Сообщение..." autofocus>
+        <button id="send-btn">Отпр.</button>
+    </div>
+
+    <script>
+        const container = document.getElementById('chat-container');
+        const input = document.getElementById('msg-input');
+        const sendBtn = document.getElementById('send-btn');
+        const infoStats = document.getElementById('info-stats');
+
+        let messagesCache = '';
+
+        const currentPort = parseInt(window.location.port) || 8081;
+        const allPorts = [8081, 8082, 8083];
+
+        function formatTime(isoString) {
+            const match = isoString.match(/T(\d{2}:\d{2}):\d{2}/);
+            if (match) return match[1];
+            if (isoString.match(/^\d{2}:\d{2}/)) return isoString.substring(0, 5);
+            return isoString;
+        }
+
+        function getWeightBadge(weight) {
+            const w = weight || 0.5;
+            let cls = 'mid';
+            if (w >= 0.7) cls = 'high';
+            else if (w <= 0.3) cls = 'low';
+            return `<span class="weight-badge ${cls}">⚖${w.toFixed(2)}</span>`;
+        }
+
+        function getDeliveryStatus(deliveryStatus) {
+            if (!deliveryStatus) return '';
+            let icon, text, cls;
+            switch (deliveryStatus) {
+                case 'sent':
+                    icon = '📤'; text = 'Отправлено'; cls = 'sent';
+                    break;
+                case 'delivered':
+                    icon = '✓✓'; text = 'Доставлено'; cls = 'delivered';
+                    break;
+                case 'partial':
+                    icon = '⚠'; text = 'Частично'; cls = 'partial';
+                    break;
+                case 'filtered':
+                    icon = '🚫'; text = 'Тема вне интересов'; cls = 'filtered';
+                    break;
+                default:
+                    return '';
+            }
+            return `<div class="delivery-status ${cls}">${icon} ${text}</div>`;
+        }
+
+        function stdDevClass(std) {
+            if (std < 0.05) return 'bad';
+            if (std < 0.2) return 'warn';
+            return 'good';
+        }
+
+        function dotClass(value, goodThreshold, warnThreshold) {
+            if (value === null || value === undefined) return 'unknown';
+            if (value <= goodThreshold) return 'good';
+            if (value <= warnThreshold) return 'warn';
+            return 'bad';
+        }
+
+        async function fetchInfo() {
+            try {
+                const [statusRes, layersRes] = await Promise.all([
+                    fetch('/status'),
+                    fetch('/api/layers')
+                ]);
+                const status = await statusRes.json();
+                const layers = await layersRes.json();
+
+                const allWeights = layers.flat();
+                const totalNeurons = allWeights.length;
+                const avg = totalNeurons > 0 ? allWeights.reduce((a,b) => a+b, 0) / totalNeurons : 0;
+                const variance = totalNeurons > 0 ? allWeights.reduce((sum, w) => sum + (w - avg) ** 2, 0) / totalNeurons : 0;
+                const stdDev = Math.sqrt(variance);
+                const stdClass = stdDevClass(stdDev);
+
+                infoStats.innerHTML =
+                    `<span class="label">Узел:</span> <span class="value">${status.id.substring(0,16)}...</span>  ` +
+                    `<span class="label">Пиров:</span> <span class="value">${status.peers}</span>  ` +
+                    `<span class="label">Сообщений:</span> <span class="value">${status.memory}</span>\n` +
+                    `<span class="label">Слоёв:</span> <span class="value">${status.layers}</span>  ` +
+                    `<span class="label">Нейронов:</span> <span class="value">${totalNeurons}</span>  ` +
+                    `<span class="label">Ср.вес:</span> <span class="value">${avg.toFixed(3)}</span>  ` +
+                    `<span class="label">Разброс:</span> <span class="value ${stdClass}">${stdDev.toFixed(3)}</span>  ` +
+                    `<span class="label">Обновлено:</span> <span class="value">${new Date().toLocaleTimeString()}</span>`;
+            } catch (err) {
+                infoStats.innerHTML = `<span class="bad">Ожидание узла...</span>`;
+            }
+        }
+
+        async function fetchHealth() {
+            try {
+                const healthPromises = allPorts.map(port => {
+                    const url = `http://localhost:${port}/health`;
+                    return fetch(url, { signal: AbortSignal.timeout(3000) })
+                        .then(r => r.json())
+                        .catch(() => null);
+                });
+
+                const results = await Promise.all(healthPromises);
+
+                const layerCounts = results
+                    .filter(r => r !== null && typeof r.layers === 'number')
+                    .map(r => r.layers);
+
+                const allLayersSame = layerCounts.length >= 2 && new Set(layerCounts).size === 1;
+                const layerDot = layerCounts.length >= 2
+                    ? (allLayersSame ? 'good' : 'bad')
+                    : (layerCounts.length === 1 ? 'warn' : 'unknown');
+                const layerText = layerCounts.length >= 2
+                    ? (allLayersSame ? `Слои: ${layerCounts[0]} ✓` : `Слои: ${layerCounts.join('/')} ✗`)
+                    : (layerCounts.length === 1 ? `Слои: ${layerCounts[0]} (1 узел)` : 'Слои: ...');
+
+                document.getElementById('health-layers').innerHTML =
+                    `<span class="dot ${layerDot}"></span><span>${layerText}</span>`;
+
+                const localHealth = results[allPorts.indexOf(currentPort)];
+                const stddev = localHealth ? localHealth.stddev : null;
+                const stddevDot = dotClass(stddev, 0.3, 0.5);
+                const stddevText = stddev !== null ? `Разброс: ${stddev.toFixed(3)}` : 'Разброс: ...';
+
+                document.getElementById('health-stddev').innerHTML =
+                    `<span class="dot ${stddevDot}"></span><span>${stddevText}</span>`;
+
+                const onlineCount = results.filter(r => r !== null).length;
+                const totalNodes = allPorts.length;
+                const peersOnline = onlineCount - 1;
+                const peersDot = onlineCount === totalNodes ? 'good'
+                    : onlineCount >= 2 ? 'warn'
+                    : 'bad';
+                const peersText = `Пиры: ${peersOnline}/${totalNodes - 1}`;
+
+                document.getElementById('health-peers').innerHTML =
+                    `<span class="dot ${peersDot}"></span><span>${peersText}</span>`;
+
+            } catch (err) {
+            }
+        }
+
+        async function loadHashes() {
+            try {
+                const res = await fetch('/gethashes');
+                const data = await res.json();
+                if (data.prehash) document.getElementById('prehash-input').value = data.prehash;
+                if (data.antihash) document.getElementById('antihash-input').value = data.antihash;
+            } catch (err) {
+            }
+        }
+
+        async function setPreHash() {
+            const val = document.getElementById('prehash-input').value.trim();
+            if (!val) return;
+            await fetch('/setprehash', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ prehash: val })
+            });
+        }
+
+        async function setAntiHash() {
+            const val = document.getElementById('antihash-input').value.trim();
+            if (!val) return;
+            await fetch('/setantihash', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ antihash: val })
+            });
+        }
+
+        async function fetchMessages() {
+            try {
+                const res = await fetch('/messages?limit=200');
+                if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                const data = await res.json();
+                const messages = Array.isArray(data) ? data : (data.messages || []);
+                const newCache = messages.length + ':' + (messages[0]?.id || '') + ':' + (messages[messages.length-1]?.id || '');
+                if (newCache === messagesCache) return;
+                messagesCache = newCache;
+                renderMessages(messages);
+            } catch (err) {}
+        }
+
+        function renderMessages(data) {
+            container.innerHTML = data.map(m => {
+                let cls = 'message';
+                let sender = 'Сеть';
+                if (m.isOwn) { cls += ' own'; sender = 'Вы'; }
+                else if (m.sender && m.sender !== 'network') { cls += ' peer'; sender = m.sender.substring(0, 8); }
+                else { cls += ' network'; sender = 'Сеть'; }
+
+                const time = formatTime(m.time);
+                const weightBadge = getWeightBadge(m.weight);
+                const score = m.score || 0;
+                const deliveryHtml = m.isOwn ? getDeliveryStatus(m.deliveryStatus) : '';
+
+                return `
+                    <div class="${cls}">
+                        <div class="message-header">
+                            <span class="sender">${sender} ${weightBadge}</span>
+                            <span>${time}</span>
+                        </div>
+                        <div class="message-text">${escapeHtml(m.text)}</div>
+                        ${deliveryHtml}
+                        <div class="message-actions">
+                            <button class="${score > 0 ? 'liked' : ''}" onclick="sendFeedback('${m.id}', 1, this)">👍</button>
+                            <button class="${score < 0 ? 'disliked' : ''}" onclick="sendFeedback('${m.id}', -1, this)">👎</button>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+            container.scrollTop = container.scrollHeight;
+        }
+
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        async function sendFeedback(id, score, btn) {
+            try {
+                const res = await fetch(`/feedback?id=${encodeURIComponent(id)}&score=${score}`, { method: 'POST' });
+                if (res.ok) {
+                    btn.classList.add(score > 0 ? 'liked' : 'disliked');
+                    messagesCache = '';
+                    await fetchMessages();
+                    await fetchInfo();
+                }
+            } catch (err) {}
+        }
+
+        async function sendMessage() {
+            const text = input.value.trim();
+            if (!text) return;
+            input.value = '';
+            input.disabled = true;
+            sendBtn.disabled = true;
+            try {
+                const res = await fetch('/send', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ message: text }),
+                });
+                if (res.ok) {
+                    messagesCache = '';
+                    await fetchMessages();
+                    await fetchInfo();
+                }
+            } catch (err) {} finally {
+                input.disabled = false;
+                sendBtn.disabled = false;
+                input.focus();
+            }
+        }
+
+        sendBtn.addEventListener('click', sendMessage);
+        input.addEventListener('keydown', (e) => { if (e.key === 'Enter') sendMessage(); });
+
+        setInterval(() => { fetchMessages(); fetchInfo(); fetchHealth(); }, 15000);
+        fetchMessages();
+        fetchInfo();
+        fetchHealth();
+        loadHashes();
+    </script>
+</body>
+</html>

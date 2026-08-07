@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Слои Сети-Без-Имени</title>
+    <style>
+        body { font-family: monospace; max-width: 800px; margin: 40px auto; background: #1e1e1e; color: #d4d4d4; }
+        h1 { color: #4fc3f7; }
+        .layer { margin: 12px 0; padding: 8px; border-left: 3px solid #4fc3f7; background: #2d2d2d; border-radius: 4px; }
+        .layer strong { color: #ffb74d; }
+        .values { color: #81c784; }
+        #status { color: #aaa; margin-bottom: 20px; }
+    </style>
+</head>
+<body>
+    <h1>🧠 Слои Сети-Без-Имени</h1>
+    <div id="status">Загрузка...</div>
+    <div id="container"></div>
+
+    <script>
+        async function loadLayers() {
+            try {
+                const res = await fetch('/api/layers');
+                const layers = await res.json();
+                const container = document.getElementById('container');
+                const status = document.getElementById('status');
+
+                if (!layers || layers.length === 0) {
+                    container.innerHTML = '<p>Слоёв пока нет.</p>';
+                    status.textContent = '⏳ Ожидание данных...';
+                    return;
+                }
+
+                status.textContent = `✅ ${layers.length} слоёв, каждый по ${layers[0].length} нейронов`;
+
+                container.innerHTML = layers.map((layer, idx) => {
+                    const values = layer.map(v => v.toFixed(4)).join('  ');
+                    return `<div class="layer">
+                        <strong>Слой ${idx + 1}:</strong>
+                        <span class="values">[${values}]</span>
+                    </div>`;
+                }).join('');
+
+            } catch (e) {
+                document.getElementById('status').textContent = '❌ Ошибка загрузки: ' + e.message;
+            }
+        }
+
+        loadLayers();
+        setInterval(loadLayers, 5000);
+    </script>
+</body>
+</html>

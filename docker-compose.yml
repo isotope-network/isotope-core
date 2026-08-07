@@ -10,6 +10,7 @@ services:
       - ./state:/root/state
     environment:
       - NODE_ID=1
+      - ISOTOPE_ETHICS_HASH=${ISOTOPE_ETHICS_HASH}
 
   node2:
     build: ./node
@@ -22,6 +23,7 @@ services:
       - ./state:/root/state
     environment:
       - NODE_ID=2
+      - ISOTOPE_ETHICS_HASH=${ISOTOPE_ETHICS_HASH}
 
   node3:
     build: ./node
@@ -34,6 +36,7 @@ services:
       - ./state:/root/state
     environment:
       - NODE_ID=3
+      - ISOTOPE_ETHICS_HASH=${ISOTOPE_ETHICS_HASH}
 
 networks:
   isotope-net:

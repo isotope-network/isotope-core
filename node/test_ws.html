@@ -1,0 +1,17 @@
+<!DOCTYPE html>
+<html>
+<body>
+<script>
+const ws = new WebSocket('ws://localhost:8081/ws');
+ws.onmessage = (e) => {
+    const msg = JSON.parse(e.data);
+    console.log(msg);
+    document.body.innerHTML += '<pre>' + JSON.stringify(msg, null, 2) + '</pre>';
+};
+ws.onopen = () => {
+    console.log('Connected');
+    ws.send(JSON.stringify({type:"send",message:"тест через WS"}));
+};
+</script>
+</body>
+</html>
