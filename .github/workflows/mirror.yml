@@ -21,5 +21,5 @@ jobs:
       - name: Push to Codeberg
         run: |
           git remote add codeberg https://oauth2:${{ secrets.CODEBERG_TOKEN }}@codeberg.org/isotope-network/isotope-core.git
-          git push --mirror codeberg
+          git push --mirror --force codeberg
         continue-on-error: true
