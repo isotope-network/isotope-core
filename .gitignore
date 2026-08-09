@@ -45,4 +45,4 @@ mobile/.flutter-plugins
 
 # Тесты
 coverage/
-*.coverprofile
+*.coverprofilenode/genesis/ 

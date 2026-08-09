@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
 	"strconv"
@@ -11,200 +12,10 @@ import (
 )
 
 // ============================================================
-// CORS MIDDLEWARE
-// ============================================================
-
-func corsMiddleware(next http.HandlerFunc) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Access-Control-Allow-Origin", "*")
-		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
-
-		if r.Method == http.MethodOptions {
-			w.WriteHeader(http.StatusOK)
-			return
-		}
-
-		next(w, r)
-	}
-}
-
-// ============================================================
-// WEBSOCKET
-// ============================================================
-
-var wsUpgrader = websocket.Upgrader{
-	CheckOrigin: func(r *http.Request) bool { return true },
-}
-
-type wsClient struct {
-	conn    *websocket.Conn
-	mu      sync.Mutex
-	channel string
-}
-
-type wsHub struct {
-	mu      sync.RWMutex
-	clients map[*wsClient]bool
-}
-
-var hub = &wsHub{
-	clients: make(map[*wsClient]bool),
-}
-
-func (h *wsHub) add(c *wsClient) {
-	h.mu.Lock()
-	h.clients[c] = true
-	h.mu.Unlock()
-}
-
-func (h *wsHub) remove(c *wsClient) {
-	h.mu.Lock()
-	delete(h.clients, c)
-	h.mu.Unlock()
-}
-
-func (h *wsHub) broadcast(msg interface{}) {
-	data, err := json.Marshal(msg)
-	if err != nil {
-		return
-	}
-
-	h.mu.RLock()
-	defer h.mu.RUnlock()
-
-	for client := range h.clients {
-		go func(c *wsClient) {
-			c.mu.Lock()
-			defer c.mu.Unlock()
-			if err := c.conn.WriteMessage(websocket.TextMessage, data); err != nil {
-				h.remove(c)
-			}
-		}(client)
-	}
-}
-
-func broadcastToWS(msg interface{}) {
-	hub.broadcast(msg)
-}
-
-func handleWebSocket(w http.ResponseWriter, r *http.Request) {
-	conn, err := wsUpgrader.Upgrade(w, r, nil)
-	if err != nil {
-		log.Printf("[WS] Upgrade failed: %v", err)
-		return
-	}
-
-	client := &wsClient{conn: conn, channel: "general"}
-	hub.add(client)
-	defer hub.remove(client)
-	defer conn.Close()
-
-	log.Printf("[WS] Client connected, total: %d", len(hub.clients))
-
-	allMsgs := memoryForWS.GetAll()
-	total := len(allMsgs)
-	start := 0
-	if total > 20 {
-		start = total - 20
-	}
-	for i := start; i < total; i++ {
-		msg := map[string]interface{}{
-			"type":    "message",
-			"channel": "general",
-			"data":    allMsgs[i],
-		}
-		data, _ := json.Marshal(msg)
-		client.mu.Lock()
-		conn.WriteMessage(websocket.TextMessage, data)
-		client.mu.Unlock()
-	}
-
-	for {
-		_, message, err := conn.ReadMessage()
-		if err != nil {
-			log.Printf("[WS] Client disconnected: %v", err)
-			break
-		}
-
-		var req map[string]interface{}
-		if err := json.Unmarshal(message, &req); err != nil {
-			continue
-		}
-
-		msgType, _ := req["type"].(string)
-
-		switch msgType {
-		case "subscribe":
-			channelID, _ := req["channel"].(string)
-			if channelID != "" && wsNode != nil {
-				wsNode.subscribeToChannel(channelID)
-				client.channel = channelID
-
-				msgs := wsNode.memory.GetAll()
-				for _, m := range msgs {
-					if m.ChannelID == channelID {
-						msg := map[string]interface{}{
-							"type":    "message",
-							"channel": channelID,
-							"data":    m,
-						}
-						data, _ := json.Marshal(msg)
-						client.mu.Lock()
-						conn.WriteMessage(websocket.TextMessage, data)
-						client.mu.Unlock()
-					}
-				}
-
-				subscribedMsg := map[string]interface{}{
-					"type":    "subscribed",
-					"channel": channelID,
-				}
-				data, _ := json.Marshal(subscribedMsg)
-				client.mu.Lock()
-				conn.WriteMessage(websocket.TextMessage, data)
-				client.mu.Unlock()
-			}
-
-		case "send":
-			text, _ := req["message"].(string)
-			channelID, _ := req["channel"].(string)
-			if channelID == "" {
-				channelID = client.channel
-			}
-			if text != "" && wsNode != nil {
-				msgID, deliveryStatus := wsNode.processMessage(text, wsNode.host.ID().String()[:8], true, "", channelID)
-				wsNode.memory.UpdateDeliveryStatus(msgID, "sent")
-
-				statusMsg := map[string]interface{}{
-					"type":           "status",
-					"msgID":          msgID,
-					"channel":        channelID,
-					"deliveryStatus": deliveryStatus,
-				}
-				data, _ := json.Marshal(statusMsg)
-				client.mu.Lock()
-				conn.WriteMessage(websocket.TextMessage, data)
-				client.mu.Unlock()
-			}
-
-		case "feedback":
-			id, _ := req["id"].(string)
-			score, _ := req["score"].(float64)
-			if id != "" && (score == 1 || score == -1) && wsNode != nil {
-				wsNode.handleFeedbackJSON(id, int(score))
-			}
-		}
-	}
-}
-
-var wsNode *Node
-var memoryForWS *Memory
-
-// ============================================================
 // HTTP-ОБРАБОТЧИКИ
 // ============================================================
 
+// handleSend — обрабатывает POST-запросы с JSON {"message": "текст", "priority": 100}
 func (n *Node) handleSend(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "only POST allowed", http.StatusMethodNotAllowed)
@@ -212,105 +23,93 @@ func (n *Node) handleSend(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req struct {
-		Message   string `json:"message"`
-		ChannelID string `json:"channel"`
+		Message  string `json:"message"`
+		Priority int    `json:"priority"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Message == "" {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{"error": "missing message field"})
+		http.Error(w, "missing message field", http.StatusBadRequest)
 		return
 	}
 
-	log.Printf("[MSG] HTTP запрос на /send: %s [канал:%s]", req.Message, req.ChannelID)
-	msgID, deliveryStatus := n.processMessage(req.Message, n.host.ID().String()[:8], true, "", req.ChannelID)
-	n.memory.UpdateDeliveryStatus(msgID, "sent")
-
+	log.Printf("[MSG] HTTP запрос на /send: %s (priority=%d)", req.Message, req.Priority)
+	n.processMessage(req.Message, n.host.ID().String()[:8], true)
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{
-		"status":         "ok",
-		"msgID":          msgID,
-		"deliveryStatus": deliveryStatus,
-	})
+	w.Write([]byte(`{"status":"ok"}`))
 }
 
+// handleMessages — возвращает все сообщения в формате JSON (новые сверху)
 func (n *Node) handleMessages(w http.ResponseWriter, r *http.Request) {
-	channelID := r.URL.Query().Get("channel")
-	limitStr := r.URL.Query().Get("limit")
-	offsetStr := r.URL.Query().Get("offset")
-
-	limit := 50
-	offset := 0
-
-	if limitStr != "" {
-		if v, err := strconv.Atoi(limitStr); err == nil && v > 0 && v <= 200 {
-			limit = v
-		}
+	msgs := n.memory.GetAll()
+	reversed := make([]Message, len(msgs))
+	for i := range msgs {
+		reversed[len(msgs)-1-i] = msgs[i]
 	}
-	if offsetStr != "" {
-		if v, err := strconv.Atoi(offsetStr); err == nil && v >= 0 {
-			offset = v
-		}
-	}
-
-	allMsgs := n.memory.GetAll()
-
-	if channelID != "" {
-		var filtered []Message
-		for _, msg := range allMsgs {
-			if msg.ChannelID == channelID {
-				filtered = append(filtered, msg)
-			}
-		}
-		allMsgs = filtered
-	}
-	total := len(allMsgs)
-
-	start := offset
-	end := offset + limit
-	if start > total {
-		start = total
-	}
-	if end > total {
-		end = total
-	}
-
-	page := allMsgs[start:end]
-
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]interface{}{
-		"messages": page,
-		"total":    total,
-		"limit":    limit,
-		"offset":   offset,
-		"channel":  channelID,
-	})
+	json.NewEncoder(w).Encode(reversed)
 }
 
-func (n *Node) handleChannels(w http.ResponseWriter, r *http.Request) {
-	channels := n.getChannels()
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]interface{}{
-		"channels": channels,
-	})
-}
-
+// handleStatus — возвращает статус узла
 func (n *Node) handleStatus(w http.ResponseWriter, r *http.Request) {
 	n.mu.Lock()
 	defer n.mu.Unlock()
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]interface{}{
-		"id":     n.host.ID().String(),
-		"peers":  len(n.host.Network().Peers()),
-		"memory": n.memory.Count(),
-		"layers": len(n.layers),
-	})
+	w.Write([]byte(fmt.Sprintf(`{"id":"%s","peers":%d,"memory":%d,"layers":%d}`,
+		n.host.ID().String(),
+		len(n.host.Network().Peers()),
+		n.memory.Count(),
+		len(n.layers),
+	)))
 }
 
+// handleHealth — возвращает метрики здоровья узла
+func (n *Node) handleHealth(w http.ResponseWriter, r *http.Request) {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+
+	allWeights := []float64{}
+	for _, layer := range n.layers {
+		allWeights = append(allWeights, layer...)
+	}
+
+	totalNeurons := len(allWeights)
+	avgWeight := 0.0
+	if totalNeurons > 0 {
+		sum := 0.0
+		for _, w := range allWeights {
+			sum += w
+		}
+		avgWeight = sum / float64(totalNeurons)
+	}
+
+	stddev := 0.0
+	if totalNeurons > 0 {
+		variance := 0.0
+		for _, w := range allWeights {
+			variance += (w - avgWeight) * (w - avgWeight)
+		}
+		variance /= float64(totalNeurons)
+		stddev = sqrt(variance)
+	}
+
+	peers := []string{}
+	for _, p := range n.host.Network().Peers() {
+		peers = append(peers, p.String()[:8])
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.Write([]byte(fmt.Sprintf(
+		`{"layers":%d,"neurons":%d,"avgWeight":%f,"stddev":%f,"peers":%v}`,
+		len(n.layers), totalNeurons, avgWeight, stddev, peers,
+	)))
+}
+
+// handleLayersPage — отдаёт HTML-страницу для просмотра слоёв
 func (n *Node) handleLayersPage(w http.ResponseWriter, r *http.Request) {
 	http.ServeFile(w, r, "layers.html")
 }
 
+// handleLayersAPI — возвращает слои в формате JSON
 func (n *Node) handleLayersAPI(w http.ResponseWriter, r *http.Request) {
 	n.mu.Lock()
 	defer n.mu.Unlock()
@@ -318,7 +117,25 @@ func (n *Node) handleLayersAPI(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(n.layers)
 }
 
-func (n *Node) handleFeedbackJSON(id string, score int) {
+// ============================================================
+// ОБРАТНАЯ СВЯЗЬ + ОБУЧЕНИЕ (С ВЕСАМИ И АРХИВОМ)
+// ============================================================
+
+// handleFeedback — обрабатывает запросы /feedback?id=...&score=1
+func (n *Node) handleFeedback(w http.ResponseWriter, r *http.Request) {
+	id := r.URL.Query().Get("id")
+	scoreStr := r.URL.Query().Get("score")
+	if id == "" || scoreStr == "" {
+		http.Error(w, "missing id or score", http.StatusBadRequest)
+		return
+	}
+
+	score, err := strconv.Atoi(scoreStr)
+	if err != nil || (score != 1 && score != -1) {
+		http.Error(w, "score must be 1 or -1", http.StatusBadRequest)
+		return
+	}
+
 	n.mu.Lock()
 
 	var targetMsg *Message
@@ -330,12 +147,14 @@ func (n *Node) handleFeedbackJSON(id string, score int) {
 	}
 	if targetMsg == nil {
 		n.mu.Unlock()
+		http.Error(w, "message not found", http.StatusNotFound)
 		return
 	}
 
 	if targetMsg.Archived {
 		if score == 1 {
 			n.memory.RestoreFromArchive(id)
+			log.Printf("[FEEDBACK] Сообщение %s восстановлено из архива!", id[:8])
 			for i := range n.memory.messages {
 				if n.memory.messages[i].ID == id {
 					targetMsg = &n.memory.messages[i]
@@ -344,6 +163,8 @@ func (n *Node) handleFeedbackJSON(id string, score int) {
 			}
 		} else {
 			n.mu.Unlock()
+			log.Printf("[FEEDBACK] Сообщение %s в архиве, дизлайк проигнорирован", id[:8])
+			w.Write([]byte("OK\n"))
 			return
 		}
 	}
@@ -354,11 +175,13 @@ func (n *Node) handleFeedbackJSON(id string, score int) {
 		if targetMsg.Weight > 1.0 {
 			targetMsg.Weight = 1.0
 		}
+		log.Printf("[FEEDBACK] 👍 Лайк: вес сообщения %s увеличен до %.2f", id[:8], targetMsg.Weight)
 	} else {
 		targetMsg.Weight -= 0.15
 		if targetMsg.Weight < 0.0 {
 			targetMsg.Weight = 0.0
 		}
+		log.Printf("[FEEDBACK] 👎 Дизлайк: вес сообщения %s уменьшен до %.2f", id[:8], targetMsg.Weight)
 	}
 
 	inputVector := textToVector(targetMsg.Text)
@@ -368,6 +191,7 @@ func (n *Node) handleFeedbackJSON(id string, score int) {
 	if score == 1 {
 		learningRate := 0.02 * targetMsg.Weight
 		n.layers = train(n.layers, inputVector, outputVector, ethicsVec, learningRate)
+		log.Printf("[FEEDBACK] [TRAIN] Этическое обучение (лайк): lr=%.4f, weight=%.2f", learningRate, targetMsg.Weight)
 	} else {
 		learningRate := 0.02 * targetMsg.Weight
 		invertedInput := make([]float64, len(inputVector))
@@ -375,136 +199,154 @@ func (n *Node) handleFeedbackJSON(id string, score int) {
 			invertedInput[i] = -inputVector[i]
 		}
 		n.layers = train(n.layers, inputVector, outputVector, invertedInput, learningRate)
+		log.Printf("[FEEDBACK] [TRAIN] Этическое обучение (дизлайк): lr=%.4f, weight=%.2f", learningRate, targetMsg.Weight)
 	}
 
 	if targetMsg.Weight < 0.15 {
 		targetMsg.Archived = true
+		log.Printf("[FEEDBACK] Сообщение %s отправлено в архив (вес %.2f)", id[:8], targetMsg.Weight)
 	}
 
 	n.mu.Unlock()
-	n.saveState()
-}
 
-func (n *Node) handleFeedback(w http.ResponseWriter, r *http.Request) {
-	id := r.URL.Query().Get("id")
-	scoreStr := r.URL.Query().Get("score")
-	if id == "" || scoreStr == "" {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{"error": "missing id or score"})
-		return
+	if err := n.saveState(); err != nil {
+		log.Printf("[ERROR] Ошибка сохранения состояния: %v", err)
 	}
 
-	score, err := strconv.Atoi(scoreStr)
-	if err != nil || (score != 1 && score != -1) {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{"error": "score must be 1 or -1"})
-		return
-	}
-
-	n.handleFeedbackJSON(id, score)
-
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+	w.Write([]byte("OK\n"))
 }
 
+// handleSetPreHash — устанавливает пользовательский пре-хеш
 func (n *Node) handleSetPreHash(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusMethodNotAllowed)
-		json.NewEncoder(w).Encode(map[string]string{"error": "only POST allowed"})
+		http.Error(w, "only POST allowed", http.StatusMethodNotAllowed)
 		return
 	}
 	var req struct {
 		PreHash string `json:"prehash"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{"error": "invalid request"})
+		http.Error(w, "invalid request", http.StatusBadRequest)
 		return
 	}
 	n.mu.Lock()
 	n.preHash = req.PreHash
 	n.mu.Unlock()
 	go n.saveState()
-	log.Printf("🔧 Пре-хеш установлен: %s", req.PreHash)
+	log.Printf("[PREHASH] Пре-хеш установлен: %s", req.PreHash)
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{"status": "ok", "prehash": req.PreHash})
+	w.Write([]byte(fmt.Sprintf(`{"prehash":"%s"}`, req.PreHash)))
 }
 
+// handleSetAntiHash — устанавливает пользовательский анти-хеш
 func (n *Node) handleSetAntiHash(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusMethodNotAllowed)
-		json.NewEncoder(w).Encode(map[string]string{"error": "only POST allowed"})
+		http.Error(w, "only POST allowed", http.StatusMethodNotAllowed)
 		return
 	}
 	var req struct {
 		AntiHash string `json:"antihash"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{"error": "invalid request"})
+		http.Error(w, "invalid request", http.StatusBadRequest)
 		return
 	}
 	n.mu.Lock()
 	n.antiHash = req.AntiHash
 	n.mu.Unlock()
 	go n.saveState()
-	log.Printf("🚫 Анти-хеш установлен: %s", req.AntiHash)
+	log.Printf("[ANTIHASH] Анти-хеш установлен: %s", req.AntiHash)
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{"status": "ok", "antihash": req.AntiHash})
+	w.Write([]byte(fmt.Sprintf(`{"antihash":"%s"}`, req.AntiHash)))
 }
 
+// handleGetHashes — возвращает текущие preHash и antiHash
 func (n *Node) handleGetHashes(w http.ResponseWriter, r *http.Request) {
 	n.mu.Lock()
 	defer n.mu.Unlock()
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{
-		"prehash":  n.preHash,
-		"antihash": n.antiHash,
-	})
+	w.Write([]byte(fmt.Sprintf(`{"prehash":"%s","antihash":"%s"}`, n.preHash, n.antiHash)))
 }
 
-func (n *Node) handleHealth(w http.ResponseWriter, r *http.Request) {
-	n.mu.Lock()
-	defer n.mu.Unlock()
+// ============================================================
+// WEBSOCKET
+// ============================================================
 
-	var allWeights []float64
-	for _, layer := range n.layers {
-		allWeights = append(allWeights, layer...)
+var upgrader = websocket.Upgrader{
+	CheckOrigin: func(r *http.Request) bool { return true },
+}
+
+var wsClients = make(map[*websocket.Conn]bool)
+var wsMu sync.Mutex
+
+// handleWebSocket — обрабатывает WebSocket-соединения
+func (n *Node) handleWebSocket(w http.ResponseWriter, r *http.Request) {
+	conn, err := upgrader.Upgrade(w, r, nil)
+	if err != nil {
+		log.Println("[WS] Upgrade error:", err)
+		return
 	}
-	avg := 0.0
-	if len(allWeights) > 0 {
-		for _, w := range allWeights {
-			avg += w
+	defer conn.Close()
+
+	wsMu.Lock()
+	wsClients[conn] = true
+	wsMu.Unlock()
+	defer func() {
+		wsMu.Lock()
+		delete(wsClients, conn)
+		wsMu.Unlock()
+	}()
+
+	log.Println("[WS] Client connected")
+
+	// Отправляем последние 20 сообщений при подключении
+	msgs := n.memory.GetAll()
+	start := 0
+	if len(msgs) > 20 {
+		start = len(msgs) - 20
+	}
+	for _, msg := range msgs[start:] {
+		data, _ := json.Marshal(msg)
+		conn.WriteMessage(websocket.TextMessage, data)
+	}
+
+	// Читаем сообщения от клиента
+	for {
+		_, message, err := conn.ReadMessage()
+		if err != nil {
+			log.Println("[WS] Client disconnected:", err)
+			break
 		}
-		avg /= float64(len(allWeights))
-	}
-	variance := 0.0
-	if len(allWeights) > 0 {
-		for _, w := range allWeights {
-			d := w - avg
-			variance += d * d
+
+		var req struct {
+			Type     string `json:"type"`
+			Message  string `json:"message"`
+			Priority int    `json:"priority"`
 		}
-		variance /= float64(len(allWeights))
-	}
-	stdDev := sqrt(variance)
+		if err := json.Unmarshal(message, &req); err != nil {
+			continue
+		}
 
-	peerList := make([]string, 0)
-	for _, p := range n.host.Network().Peers() {
-		peerList = append(peerList, p.String()[:16])
+		if req.Type == "send" && req.Message != "" {
+			n.processMessage(req.Message, n.host.ID().String()[:8], true)
+			conn.WriteMessage(websocket.TextMessage, []byte(`{"type":"status","status":"sent"}`))
+		}
+	}
+}
+
+// broadcastToWS — рассылает сообщение всем WebSocket-клиентам
+func (n *Node) broadcastToWS(msg Message) {
+	wsMu.Lock()
+	defer wsMu.Unlock()
+
+	data, err := json.Marshal(msg)
+	if err != nil {
+		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]interface{}{
-		"layers":    len(n.layers),
-		"stddev":    stdDev,
-		"peers":     peerList,
-		"neurons":   len(allWeights),
-		"avgWeight": avg,
-	})
+	for conn := range wsClients {
+		go func(c *websocket.Conn) {
+			c.WriteMessage(websocket.TextMessage, data)
+		}(conn)
+	}
 }
