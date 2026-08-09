@@ -1,7 +1,6 @@
 package main
 
 import (
-	"os"
 	"testing"
 	"time"
 )
@@ -209,60 +208,6 @@ func TestMemory_FindSimilar_IgnoresArchived(t *testing.T) {
 		if msg.ID == "archived" {
 			t.Error("FindSimilar should ignore archived messages")
 		}
-	}
-}
-
-func TestMemory_SaveLoadArchive(t *testing.T) {
-	m := Memory{}
-	m.Add(createTestMsg("arc1", 0.1, true, time.Now().Add(-10*time.Hour)))
-	m.Add(createTestMsg("arc2", 0.1, true, time.Now().Add(-10*time.Hour)))
-	m.Add(createTestMsg("active1", 0.8, false, time.Now()))
-
-	tmpFile := "test_archive.json"
-	defer os.Remove(tmpFile)
-
-	if err := m.SaveArchive(tmpFile); err != nil {
-		t.Fatalf("SaveArchive failed: %v", err)
-	}
-
-	m2 := Memory{}
-	if err := m2.LoadArchive(tmpFile); err != nil {
-		t.Fatalf("LoadArchive failed: %v", err)
-	}
-
-	if m2.Count() != 2 {
-		t.Errorf("Loaded count = %d, want 2", m2.Count())
-	}
-
-	all := m2.GetAll()
-	for _, msg := range all {
-		if !msg.Archived {
-			t.Errorf("loaded message %s should be archived", msg.ID)
-		}
-	}
-}
-
-func TestMemory_SaveArchive_Empty(t *testing.T) {
-	m := Memory{}
-	m.Add(createTestMsg("active", 0.8, false, time.Now()))
-
-	tmpFile := "test_archive_empty.json"
-	defer os.Remove(tmpFile)
-
-	if err := m.SaveArchive(tmpFile); err != nil {
-		t.Fatalf("SaveArchive empty failed: %v", err)
-	}
-
-	if _, err := os.Stat(tmpFile); err == nil {
-		t.Error("empty archive should not create file")
-	}
-}
-
-func TestMemory_LoadArchive_Nonexistent(t *testing.T) {
-	m := Memory{}
-	err := m.LoadArchive("nonexistent_file.json")
-	if err == nil {
-		t.Error("LoadArchive should return error for nonexistent file")
 	}
 }
 

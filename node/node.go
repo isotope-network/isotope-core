@@ -24,19 +24,19 @@ const protocolID = "/sbicore/1.0.0"
 const syncProtocolID = "/sbicore/sync/1.0.0"
 
 type Node struct {
-	host              host.Host
-	ethHash           string
-	preHash           string
-	antiHash          string
-	lastSyncSent      time.Time
-	lastSyncedLayers  [][]float64
-	layersDirty       bool
-	memory            Memory
-	layers            [][]float64
-	msgCount          int
-	nodeID            int
-	stateFile         string
-	mu                sync.Mutex
+	host             host.Host
+	ethHash          string
+	preHash          string
+	antiHash         string
+	lastSyncSent     time.Time
+	lastSyncedLayers [][]float64
+	layersDirty      bool
+	memory           Memory
+	layers           [][]float64
+	msgCount         int
+	nodeID           int
+	stateFile        string
+	mu               sync.Mutex
 }
 
 func (n *Node) HandlePeerFound(peerInfo peer.AddrInfo) {
@@ -119,14 +119,12 @@ func (n *Node) processMessage(msg string, senderID string, isOwn bool) {
 		n.broadcastLayers()
 	}()
 
-	// Этическая близость
 	ethicsVec := hashToVector(n.ethHash)
 	msgVec := textToVector(msg)
 	ethicsScore := cosineSimilarity(ethicsVec, msgVec)
 	initialWeight := 0.3 + ethicsScore*0.5
 	log.Printf("[ETHICS] Этическая близость: %.2f, начальный вес: %.2f", ethicsScore, initialWeight)
 
-	// Пре-хеш пользователя
 	if n.preHash != "" {
 		preVec := hashToVector(n.preHash)
 		preScore := cosineSimilarity(preVec, msgVec)
@@ -135,7 +133,6 @@ func (n *Node) processMessage(msg string, senderID string, isOwn bool) {
 		log.Printf("[PREHASH] Пре-хеш близость: %.2f, итоговый вес: %.2f", preScore, initialWeight)
 	}
 
-	// Анти-хеш
 	if n.antiHash != "" {
 		antiVec := hashToVector(n.antiHash)
 		antiScore := cosineSimilarity(antiVec, msgVec)
@@ -147,7 +144,6 @@ func (n *Node) processMessage(msg string, senderID string, isOwn bool) {
 		log.Printf("[ANTIHASH] Анти-хеш близость: %.2f, итоговый вес: %.2f", antiScore, initialWeight)
 	}
 
-	// Приоритет сообщения (Priority Gossip)
 	priority := 0
 	if isOwn {
 		nodeWeight := 0.5
@@ -225,8 +221,7 @@ func (n *Node) processMessage(msg string, senderID string, isOwn bool) {
 		}
 	}()
 
-	// Форвардинг с приоритетом
-	if !isOwn {
+	if !isOwn && n.host != nil {
 		ttl := 3
 		if priority > 50 {
 			ttl = 6

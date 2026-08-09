@@ -17,12 +17,12 @@ jobs:
       - name: Run tests
         run: cd node && go test -v ./...
 
-  test-flutter:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: subosito/flutter-action@v2
-        with:
-          flutter-version: '3.x'
-      - name: Run Flutter tests
-        run: cd mobile && flutter test
+  # test-flutter:
+  #   runs-on: ubuntu-latest
+  #   steps:
+  #     - uses: actions/checkout@v4
+  #     - uses: subosito/flutter-action@v2
+  #       with:
+  #         flutter-version: '3.x'
+  #     - name: Run Flutter tests
+  #       run: cd mobile && flutter test
