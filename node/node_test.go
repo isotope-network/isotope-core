@@ -22,7 +22,7 @@ func TestProcessMessage_ReturnsMsgID(t *testing.T) {
 	}
 
 	t.Log("Запуск processMessage...")
-	msgID, status := n.processMessage("тест", "testsender", true, "")
+	msgID, status := n.processMessage("тест", "testsender", true, "", 0)
 	t.Logf("msgID=%s, status=%s", msgID, status)
 
 	if msgID == "" {
@@ -56,7 +56,7 @@ func TestProcessMessage_UsesIncomingMsgID(t *testing.T) {
 
 	incomingID := "abc12345"
 	t.Logf("Входящий ID: %s", incomingID)
-	msgID, _ := n.processMessage("тест", "testsender", false, incomingID)
+	msgID, _ := n.processMessage("тест", "testsender", false, incomingID, 0)
 	t.Logf("Результат msgID: %s", msgID)
 
 	if msgID != incomingID {
@@ -82,11 +82,11 @@ func TestProcessMessage_GeneratesOwnID(t *testing.T) {
 	}
 
 	t.Log("Генерация первого ID...")
-	msgID1, _ := n.processMessage("тест", "testsender", true, "")
+	msgID1, _ := n.processMessage("тест", "testsender", true, "", 0)
 	t.Logf("msgID1=%s", msgID1)
 
 	t.Log("Генерация второго ID...")
-	msgID2, _ := n.processMessage("тест", "testsender", true, "")
+	msgID2, _ := n.processMessage("тест", "testsender", true, "", 0)
 	t.Logf("msgID2=%s", msgID2)
 
 	if msgID1 == "" || msgID2 == "" {
@@ -112,7 +112,7 @@ func TestProcessMessage_DuplicateDetection(t *testing.T) {
 	}
 
 	t.Log("Первое сообщение с fixed-id-123...")
-	n.processMessage("дубль", "sender1", false, "fixed-id-123")
+	n.processMessage("дубль", "sender1", false, "fixed-id-123", 0)
 
 	countBefore := 0
 	for _, msg := range n.memory.GetAll() {
@@ -123,7 +123,7 @@ func TestProcessMessage_DuplicateDetection(t *testing.T) {
 	t.Logf("Сообщений с fixed-id-123: %d", countBefore)
 
 	t.Log("Дубликат с fixed-id-123...")
-	n.processMessage("дубль", "sender2", false, "fixed-id-123")
+	n.processMessage("дубль", "sender2", false, "fixed-id-123", 0)
 
 	countAfter := 0
 	for _, msg := range n.memory.GetAll() {
@@ -157,9 +157,9 @@ func TestProcessMessage_DifferentIDsDifferentMessages(t *testing.T) {
 	}
 
 	t.Log("Добавление id-1...")
-	n.processMessage("msg1", "sender", false, "id-1")
+	n.processMessage("msg1", "sender", false, "id-1", 0)
 	t.Log("Добавление id-2...")
-	n.processMessage("msg2", "sender", false, "id-2")
+	n.processMessage("msg2", "sender", false, "id-2", 0)
 
 	count := 0
 	for _, msg := range n.memory.GetAll() {
@@ -193,11 +193,11 @@ func TestDeliveryStatus_Thresholds(t *testing.T) {
 	}
 
 	t.Log("Позитивное сообщение...")
-	_, status1 := n.processMessage("добро свет мир любовь помощь забота радость счастье", "sender", true, "")
+	_, status1 := n.processMessage("добро свет мир любовь помощь забота радость счастье", "sender", true, "", 0)
 	t.Logf("Статус: %s", status1)
 
 	t.Log("Пустое сообщение...")
-	_, status2 := n.processMessage("", "sender", true, "")
+	_, status2 := n.processMessage("", "sender", true, "", 0)
 	t.Logf("Статус: %s", status2)
 
 	if status2 == "" {
@@ -280,7 +280,7 @@ func TestProcessMessage_WeightCalculation(t *testing.T) {
 	}
 
 	t.Log("Отправка тестового сообщения...")
-	n.processMessage("тестовое сообщение", "sender", true, "weight-test-1")
+	n.processMessage("тестовое сообщение", "sender", true, "weight-test-1", 0)
 
 	all := n.memory.GetAll()
 	found := false
@@ -316,9 +316,9 @@ func TestProcessMessage_IsOwnFlag(t *testing.T) {
 	}
 
 	t.Log("Своё сообщение...")
-	n.processMessage("моё", "sender", true, "own-test")
+	n.processMessage("моё", "sender", true, "own-test", 0)
 	t.Log("Чужое сообщение...")
-	n.processMessage("чужое", "sender", false, "peer-test")
+	n.processMessage("чужое", "sender", false, "peer-test", 0)
 
 	all := n.memory.GetAll()
 	for _, msg := range all {
@@ -350,7 +350,7 @@ func TestPreHash_EffectOnWeight(t *testing.T) {
 	}
 
 	t.Log("Сообщение, близкое к preHash...")
-	n.processMessage("добро свет любовь", "sender", true, "prehash-test-1")
+	n.processMessage("добро свет любовь", "sender", true, "prehash-test-1", 0)
 
 	all := n.memory.GetAll()
 	for _, msg := range all {
@@ -382,7 +382,7 @@ func TestAntiHash_EffectOnWeight(t *testing.T) {
 	}
 
 	t.Log("Сообщение, близкое к antiHash...")
-	n.processMessage("зло тьма ненависть", "sender", true, "antihash-test-1")
+	n.processMessage("зло тьма ненависть", "sender", true, "antihash-test-1", 0)
 
 	all := n.memory.GetAll()
 	for _, msg := range all {
