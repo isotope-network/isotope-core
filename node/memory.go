@@ -11,16 +11,16 @@ import (
 
 // Message — структура одного сообщения
 type Message struct {
-	ID        string    `json:"id"`
-	Text      string    `json:"text"`
-	Sender    string    `json:"sender"`
-	Time      string    `json:"time"`
-	IsOwn     bool      `json:"isOwn"`
-	Score     int       `json:"score"`
-	Weight    float64   `json:"weight"`
-	Created   time.Time `json:"created"`
-	Archived  bool      `json:"archived"`
-	Priority  int       `json:"priority"` // 0–100, для Priority Gossip
+	ID       string    `json:"id"`
+	Text     string    `json:"text"`
+	Sender   string    `json:"sender"`
+	Time     string    `json:"time"`
+	IsOwn    bool      `json:"isOwn"`
+	Score    int       `json:"score"`
+	Weight   float64   `json:"weight"`
+	Created  time.Time `json:"created"`
+	Archived bool      `json:"archived"`
+	Priority int       `json:"priority"`
 }
 
 // Memory — потокобезопасное хранилище сообщений (без лимита)
@@ -207,4 +207,92 @@ func (m *Memory) PurgeDead(threshold float64) int {
 	}
 	m.messages = alive
 	return removed
+}
+
+// ============================================================
+// АССОЦИАТИВНАЯ ПАМЯТЬ (кто у кого что спрашивал)
+// ============================================================
+
+// Association — запись о том, какой узел к какому обращался
+type Association struct {
+	FromPeerID string    `json:"fromPeerID"`
+	ToPeerID   string    `json:"toPeerID"`
+	Topic      string    `json:"topic"`
+	Count      int       `json:"count"`
+	LastAsked  time.Time `json:"lastAsked"`
+}
+
+// AssocMemory — хранилище ассоциаций
+type AssocMemory struct {
+	mu           sync.Mutex
+	associations []Association
+}
+
+// AddAssociation — добавляет или обновляет ассоциацию
+func (am *AssocMemory) AddAssociation(fromPeerID, toPeerID, topic string) {
+	am.mu.Lock()
+	defer am.mu.Unlock()
+
+	for i := range am.associations {
+		if am.associations[i].FromPeerID == fromPeerID &&
+			am.associations[i].ToPeerID == toPeerID &&
+			am.associations[i].Topic == topic {
+			am.associations[i].Count++
+			am.associations[i].LastAsked = time.Now()
+			return
+		}
+	}
+
+	am.associations = append(am.associations, Association{
+		FromPeerID: fromPeerID,
+		ToPeerID:   toPeerID,
+		Topic:      topic,
+		Count:      1,
+		LastAsked:  time.Now(),
+	})
+}
+
+// GetRecommendations — возвращает пиров, к которым этот отправитель часто обращается
+func (am *AssocMemory) GetRecommendations(fromPeerID string, minCount int) []string {
+	am.mu.Lock()
+	defer am.mu.Unlock()
+
+	counts := make(map[string]int)
+	for _, a := range am.associations {
+		if a.FromPeerID == fromPeerID && a.Count >= minCount {
+			counts[a.ToPeerID] += a.Count
+		}
+	}
+
+	var peers []string
+	for peerID, count := range counts {
+		if count > 0 {
+			peers = append(peers, peerID)
+		}
+	}
+	return peers
+}
+
+// GetAllAssociations — возвращает все ассоциации
+func (am *AssocMemory) GetAllAssociations() []Association {
+	am.mu.Lock()
+	defer am.mu.Unlock()
+	result := make([]Association, len(am.associations))
+	copy(result, am.associations)
+	return result
+}
+
+// CleanupOldAssociations — удаляет ассоциации старше N дней
+func (am *AssocMemory) CleanupOldAssociations(days int) {
+	am.mu.Lock()
+	defer am.mu.Unlock()
+
+	cutoff := time.Now().AddDate(0, 0, -days)
+	var alive []Association
+	for _, a := range am.associations {
+		if a.LastAsked.After(cutoff) {
+			alive = append(alive, a)
+		}
+	}
+	am.associations = alive
 }

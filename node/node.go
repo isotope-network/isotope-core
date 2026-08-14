@@ -35,6 +35,7 @@ type Node struct {
 	lastSyncedLayers [][]float64
 	layersDirty      bool
 	memory           Memory
+	assoc            AssocMemory
 	layers           [][]float64
 	msgCount         int
 	nodeID           int
@@ -69,12 +70,18 @@ func (n *Node) handleStream(stream network.Stream) {
 		log.Println("Accepted peer:", stream.Conn().RemotePeer())
 		return
 	}
-	log.Printf("[MSG] P2P сообщение от %s: %s", stream.Conn().RemotePeer().String()[:8], msg)
-	n.processMessage(msg, stream.Conn().RemotePeer().String()[:8], false)
+	remoteID := stream.Conn().RemotePeer().String()[:8]
+	log.Printf("[MSG] P2P сообщение от %s: %s", remoteID, msg)
+	n.processMessage(msg, remoteID, false)
 }
 
 func (n *Node) processMessage(msg string, senderID string, isOwn bool) {
 	log.Printf("[MSG] Обработка сообщения: %s (от %s)", msg, senderID)
+
+	// Ассоциативная память: запоминаем, кто к нам обращался
+	if !isOwn && n.host != nil {
+        n.assoc.AddAssociation(senderID, n.host.ID().String()[:8], msg)
+        }
 
 	inputVector := textToVector(msg)
 	log.Printf("[MSG] Входной вектор (первые 5): %v", inputVector[:5])
@@ -224,13 +231,48 @@ func (n *Node) processMessage(msg string, senderID string, isOwn bool) {
 		}
 	}()
 
+	// Форвардинг с приоритетом и рекомендациями
 	if !isOwn && n.host != nil {
 		ttl := 3
 		if priority > 50 {
 			ttl = 6
 		}
+
+		// Ассоциативная память: сначала шлём рекомендованным пирам
+		recommended := n.assoc.GetRecommendations(senderID, 3)
+		if len(recommended) > 0 {
+			log.Printf("[ASSOC] Рекомендованные пиры для %s: %v", senderID, recommended)
+			for _, recID := range recommended {
+				for _, p := range n.host.Network().Peers() {
+					if p.String()[:8] == recID {
+						go func(peerID peer.ID) {
+							ctx := context.Background()
+							s, err := n.host.NewStream(ctx, peerID, protocolID)
+							if err != nil {
+								return
+							}
+							defer s.Close()
+							fmt.Fprintf(s, "%s\n", msg)
+						}(p)
+						break
+					}
+				}
+			}
+		}
+
+		// Затем шлём остальным
 		for _, p := range n.host.Network().Peers() {
 			if p.String()[:8] == senderID {
+				continue
+			}
+			alreadySent := false
+			for _, recID := range recommended {
+				if recID == p.String()[:8] {
+					alreadySent = true
+					break
+				}
+			}
+			if alreadySent {
 				continue
 			}
 			go func(peerID peer.ID) {
@@ -351,6 +393,15 @@ func (n *Node) start() {
 		}
 		log.Println("[INIT] Initial layer created with love vector")
 	}
+
+	// Очистка старых ассоциаций раз в сутки
+	go func() {
+		for {
+			time.Sleep(24 * time.Hour)
+			n.assoc.CleanupOldAssociations(7)
+			log.Println("[ASSOC] Старые ассоциации очищены")
+		}
+	}()
 
 	go func() {
 		for {
