@@ -229,6 +229,7 @@ P2P, этический хеш, иммунитет, самообучение.
 - [Применения](docs/APPLICATIONS.md)
 - [Сценарии использования](docs/USE_CASES.md)
 - [Шкала иммунитета](docs/architecture/IMMUNITY_SCALE.md)
+- [FAQ — вопросы экспертов](docs/FAQ.md)
 - [Как помочь](CONTRIBUTING.md)
 - [Кодекс поведения](CODE_OF_CONDUCT.md)
 - [Безопасность](SECURITY.md)

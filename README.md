@@ -226,6 +226,7 @@ Nodes:
 - [Applications](docs/APPLICATIONS.md)
 - [Use Cases](docs/USE_CASES.md)
 - [Immunity Scale](docs/architecture/IMMUNITY_SCALE.md)
+- [FAQ — Expert Questions](docs/FAQ.md)
 - [Contributing](CONTRIBUTING.md)
 - [Code of Conduct](CODE_OF_CONDUCT.md)
 - [Security](SECURITY.md)
