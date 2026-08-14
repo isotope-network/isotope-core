@@ -18,6 +18,9 @@ import (
 	"github.com/libp2p/go-libp2p/core/network"
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/libp2p/go-libp2p/p2p/discovery/mdns"
+	libp2ptls "github.com/libp2p/go-libp2p/p2p/security/tls"
+	"github.com/libp2p/go-libp2p/p2p/transport/tcp"
+	"github.com/libp2p/go-libp2p/p2p/transport/websocket"
 )
 
 const protocolID = "/sbicore/1.0.0"
@@ -315,8 +318,14 @@ func (n *Node) start() {
 		log.Fatal(err)
 	}
 	host, err := libp2p.New(
-		libp2p.ListenAddrStrings("/ip4/0.0.0.0/tcp/9000"),
+		libp2p.ListenAddrStrings(
+			"/ip4/0.0.0.0/tcp/9000",
+			"/ip4/0.0.0.0/tcp/9001/ws",
+		),
 		libp2p.Identity(priv),
+		libp2p.Transport(tcp.NewTCPTransport),
+		libp2p.Transport(websocket.New),
+		libp2p.Security(libp2ptls.ID, libp2ptls.New),
 	)
 	if err != nil {
 		log.Fatal(err)
