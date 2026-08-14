@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>ISOTOPE — Infrastructure Layer for the Data Economy</title>
+    <title>ISOTOPE — Infrastructure for Data, AI, and People</title>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif; background: #0d1117; color: #c9d1d9; line-height: 1.6; }
@@ -11,10 +11,10 @@
         h1 { font-size: 2.8em; color: #58a6ff; margin-bottom: 12px; letter-spacing: -0.5px; }
         .subtitle { font-size: 1.4em; color: #8b949e; margin-bottom: 48px; }
         h2 { font-size: 1.6em; color: #e6edf3; margin: 48px 0 16px; padding-bottom: 8px; border-bottom: 1px solid #21262d; }
-        .principles { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin: 24px 0; }
-        .principle { background: #161b22; border: 1px solid #21262d; border-radius: 8px; padding: 20px; }
-        .principle h3 { color: #58a6ff; margin-bottom: 8px; font-size: 1.1em; }
-        .principle p { color: #8b949e; font-size: 0.95em; }
+        .pillars { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 20px; margin: 24px 0; }
+        .pillar { background: #161b22; border: 1px solid #21262d; border-radius: 8px; padding: 20px; }
+        .pillar h3 { color: #58a6ff; margin-bottom: 8px; font-size: 1.1em; }
+        .pillar p { color: #8b949e; font-size: 0.95em; }
         .scenarios { display: grid; grid-template-columns: 1fr; gap: 16px; margin: 24px 0; }
         .scenario { background: #161b22; border: 1px solid #21262d; border-radius: 8px; padding: 20px; }
         .scenario h3 { color: #58a6ff; margin-bottom: 6px; }
@@ -26,37 +26,38 @@
         .links a { color: #58a6ff; text-decoration: none; }
         .links a:hover { text-decoration: underline; }
         .footer { margin-top: 60px; padding-top: 24px; border-top: 1px solid #21262d; color: #8b949e; font-size: 0.9em; }
-        @media (max-width: 600px) { .principles { grid-template-columns: 1fr; } h1 { font-size: 2em; } }
+        @media (max-width: 600px) { .pillars { grid-template-columns: 1fr; } h1 { font-size: 2em; } }
     </style>
 </head>
 <body>
     <div class="container">
         <h1>ISOTOPE</h1>
-        <p class="subtitle">Infrastructure layer for the data economy.<br>Ask without revealing. Answer without exposing.</p>
+        <p class="subtitle">Infrastructure for ethical, unstoppable,<br>self-learning exchange of data and AI.</p>
 
-        <h2>What Is ISOTOPE</h2>
-        <p>ISOTOPE is an architecture for data exchange where the source is never disclosed and the answer is verified by the network. Not a messenger. A protocol.</p>
-
-        <div class="principles">
-            <div class="principle">
-                <h3>Query-Response Without Disclosure</h3>
-                <p>Data never leaves its owner. Only the answer matters. «Default?» → «No». «Risk?» → «0.88». «Valid?» → «Yes».</p>
+        <h2>Three Pillars</h2>
+        <div class="pillars">
+            <div class="pillar">
+                <h3>Data</h3>
+                <p>Query-response without disclosure. Banks, insurers, hospitals exchange answers — not data.</p>
             </div>
-            <div class="principle">
-                <h3>Ethical Immunity</h3>
-                <p>Every message is compared to the ethical hash. Harmful content fades. Valuable content stays. No censorship — immune system.</p>
+            <div class="pillar">
+                <h3>AI</h3>
+                <p>Distributed inference. Lightweight models on nodes. Simple queries answered nearby. Complex go to data center.</p>
             </div>
-            <div class="principle">
-                <h3>Immunity Activates With Scale</h3>
-                <p>2–3 nodes: secure channel. 15+ nodes: immune system. 100+ nodes: unstoppable network.</p>
-            </div>
-            <div class="principle">
-                <h3>Four Layers, Two Vectors</h3>
-                <p>Technical protocol. Philosophical ethics. Business trust market. Application messenger. Enterprise + Community.</p>
+            <div class="pillar">
+                <h3>People</h3>
+                <p>The messenger as entry point. Communication without censorship, blocking, or surveillance.</p>
             </div>
         </div>
 
-        <h2>Solve a Problem Today</h2>
+        <h2>How It Works</h2>
+        <p>One pattern: <strong>query-response without disclosure</strong>.</p>
+        <p>«Has this client defaulted?» → «No».<br>
+        «What is the risk coefficient?» → «0.88».<br>
+        «Is this certificate valid?» → «No».<br>
+        «Translate this text» → The nearest AI node answers.</p>
+
+        <h2>Ready-Made Scenarios</h2>
         <div class="scenarios">
             <div class="scenario">
                 <h3>Certificate Verification</h3>
@@ -69,26 +70,21 @@
                 <p>Ask «Has this client defaulted?» Get «No» — not the full credit history.</p>
             </div>
             <div class="scenario">
-                <h3>Anonymous Voting</h3>
-                <div class="nodes">20–30 nodes needed</div>
-                <p>Verifiable results. Complete anonymity. No ballot stuffing.</p>
+                <h3>Simple AI Queries</h3>
+                <div class="nodes">5–10 nodes needed</div>
+                <p>Translation, summarization, classification — answered by the nearest node.</p>
             </div>
             <div class="scenario">
                 <h3>Anti-Fraud</h3>
                 <div class="nodes">5–10 nodes needed</div>
                 <p>Block fraudulent transactions before they happen. Answer in 1–2 seconds.</p>
             </div>
-            <div class="scenario">
-                <h3>Doctor-to-Doctor Consultation</h3>
-                <div class="nodes">2–5 nodes needed</div>
-                <p>Consult colleagues without revealing patient identity.</p>
-            </div>
         </div>
 
         <a href="https://github.com/isotope-network/isotope-core" class="btn">View on GitHub</a>
 
-        <h2>Start Using ISOTOPE</h2>
-        <p>Install the messenger. Your node automatically participates in the network. Chat with friends. Earn tokens. No extra effort.</p>
+        <h2>Status</h2>
+        <p>v1.9 — stable. Five nodes. Priority Gossip. Associative memory. WebSocket+TLS.</p>
 
         <div class="links">
             <a href="https://github.com/isotope-network/isotope-core">GitHub</a>
@@ -99,7 +95,8 @@
         </div>
 
         <div class="footer">
-            ISOTOPE &copy; 2026 Petr Stepanov (isotope.network). Licensed under AGPL v3. Commercial license available.<br>
+            ISOTOPE &copy; 2026 Petr Stepanov (isotope.network).<br>
+            Licensed under AGPL v3. Commercial license available.<br>
             Contact: keeper@isotope.network | isotope.zone
         </div>
     </div>
