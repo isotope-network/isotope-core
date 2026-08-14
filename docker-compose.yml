@@ -10,7 +10,6 @@ services:
       - ./state:/root/state
     environment:
       - NODE_ID=1
-      - ISOTOPE_ETHICS_HASH=${ISOTOPE_ETHICS_HASH}
 
   node2:
     build: ./node
@@ -23,7 +22,6 @@ services:
       - ./state:/root/state
     environment:
       - NODE_ID=2
-      - ISOTOPE_ETHICS_HASH=${ISOTOPE_ETHICS_HASH}
 
   node3:
     build: ./node
@@ -36,7 +34,30 @@ services:
       - ./state:/root/state
     environment:
       - NODE_ID=3
-      - ISOTOPE_ETHICS_HASH=${ISOTOPE_ETHICS_HASH}
+
+  node4:
+    build: ./node
+    networks:
+      - isotope-net
+    ports:
+      - "9004:9000"
+      - "8084:8081"
+    volumes:
+      - ./state:/root/state
+    environment:
+      - NODE_ID=4
+
+  node5:
+    build: ./node
+    networks:
+      - isotope-net
+    ports:
+      - "9005:9000"
+      - "8085:8081"
+    volumes:
+      - ./state:/root/state
+    environment:
+      - NODE_ID=5
 
 networks:
   isotope-net:

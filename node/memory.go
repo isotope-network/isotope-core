@@ -21,6 +21,7 @@ type Message struct {
 	Created  time.Time `json:"created"`
 	Archived bool      `json:"archived"`
 	Priority int       `json:"priority"`
+        Mode     int       `json:"mode"` // 0=обычный, 1=анонимный
 }
 
 // Memory — потокобезопасное хранилище сообщений (без лимита)

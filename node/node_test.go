@@ -2,6 +2,7 @@ package main
 
 import (
 	"testing"
+	"time"
 )
 
 func TestProcessMessage_ReturnsMsgID(t *testing.T) {
@@ -89,6 +90,7 @@ func TestProcessMessage_DuplicateDetection(t *testing.T) {
 	}
 
 	n.processMessage("дубль", "sender1", false)
+	time.Sleep(10 * time.Millisecond)
 	n.processMessage("дубль", "sender2", false)
 
 	all := n.memory.GetAll()
@@ -126,6 +128,7 @@ func TestProcessMessage_DifferentIDsDifferentMessages(t *testing.T) {
 	}
 
 	n.processMessage("msg1", "sender", false)
+	time.Sleep(10 * time.Millisecond)
 	n.processMessage("msg2", "sender", false)
 
 	count := len(n.memory.GetAll())
@@ -200,6 +203,7 @@ func TestProcessMessage_IsOwnFlag(t *testing.T) {
 	}
 
 	n.processMessage("моё", "sender", true)
+	time.Sleep(10 * time.Millisecond)
 	n.processMessage("чужое", "sender", false)
 
 	all := n.memory.GetAll()

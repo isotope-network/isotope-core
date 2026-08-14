@@ -75,13 +75,38 @@ func (n *Node) handleStream(stream network.Stream) {
 	n.processMessage(msg, remoteID, false)
 }
 
+// sendViaRelay — отправляет сообщение через relay-пира (анонимный режим)
+func (n *Node) sendViaRelay(relayID string, targetID string, msg string) {
+	relayPeer, err := peer.Decode(relayID)
+	if err != nil {
+		log.Printf("[RELAY] Invalid relay peer ID %s: %v", relayID, err)
+		return
+	}
+
+	// Отправляем relay-пиру специальное сообщение с указанием цели
+	relayMsg := fmt.Sprintf("RELAY:%s:%s", targetID, msg)
+
+	ctx := context.Background()
+	s, err := n.host.NewStream(ctx, relayPeer, protocolID)
+	if err != nil {
+		log.Printf("[RELAY] Failed to create stream to relay %s: %v", relayID[:8], err)
+		return
+	}
+	defer s.Close()
+
+	if _, err := s.Write([]byte(relayMsg + "\n")); err != nil {
+		log.Printf("[RELAY] Failed to write to relay %s: %v", relayID[:8], err)
+		return
+	}
+	log.Printf("[RELAY] Message sent via relay %s to target %s", relayID[:8], targetID[:8])
+}
+
 func (n *Node) processMessage(msg string, senderID string, isOwn bool) {
 	log.Printf("[MSG] Обработка сообщения: %s (от %s)", msg, senderID)
 
-	// Ассоциативная память: запоминаем, кто к нам обращался
 	if !isOwn && n.host != nil {
-        n.assoc.AddAssociation(senderID, n.host.ID().String()[:8], msg)
-        }
+		n.assoc.AddAssociation(senderID, n.host.ID().String()[:8], msg)
+	}
 
 	inputVector := textToVector(msg)
 	log.Printf("[MSG] Входной вектор (первые 5): %v", inputVector[:5])
@@ -180,6 +205,7 @@ func (n *Node) processMessage(msg string, senderID string, isOwn bool) {
 		Score:    0,
 		Weight:   initialWeight,
 		Priority: priority,
+		Mode:     0,
 	}
 	if n.memory.Add(newMsg) {
 		log.Printf("[MSG] Сообщение сохранено: %s (priority=%d)", msg, priority)
@@ -212,6 +238,7 @@ func (n *Node) processMessage(msg string, senderID string, isOwn bool) {
 			Score:    0,
 			Weight:   0.5,
 			Priority: 0,
+			Mode:     0,
 		}
 		if n.memory.Add(answerMsg) {
 			log.Printf("[MSG] Ответ сети сохранён: %s", answer)
@@ -231,14 +258,12 @@ func (n *Node) processMessage(msg string, senderID string, isOwn bool) {
 		}
 	}()
 
-	// Форвардинг с приоритетом и рекомендациями
 	if !isOwn && n.host != nil {
 		ttl := 3
 		if priority > 50 {
 			ttl = 6
 		}
 
-		// Ассоциативная память: сначала шлём рекомендованным пирам
 		recommended := n.assoc.GetRecommendations(senderID, 3)
 		if len(recommended) > 0 {
 			log.Printf("[ASSOC] Рекомендованные пиры для %s: %v", senderID, recommended)
@@ -260,7 +285,6 @@ func (n *Node) processMessage(msg string, senderID string, isOwn bool) {
 			}
 		}
 
-		// Затем шлём остальным
 		for _, p := range n.host.Network().Peers() {
 			if p.String()[:8] == senderID {
 				continue
@@ -298,6 +322,28 @@ func migrateTime(t string) string {
 		return time.Now().Format("2006-01-02") + "T" + t
 	}
 	return time.Now().Format("2006-01-02T15:04:05")
+}
+
+func (n *Node) loadBootstrapPeers() []string {
+	var peers []string
+
+	if envPeers := os.Getenv("ISOTOPE_BOOTSTRAP_PEERS"); envPeers != "" {
+		for _, p := range strings.Split(envPeers, ",") {
+			if p = strings.TrimSpace(p); p != "" {
+				peers = append(peers, p)
+			}
+		}
+	}
+
+	if data, err := os.ReadFile("bootstrap.txt"); err == nil {
+		for _, line := range strings.Split(string(data), "\n") {
+			if line = strings.TrimSpace(line); line != "" {
+				peers = append(peers, line)
+			}
+		}
+	}
+
+	return peers
 }
 
 func (n *Node) loadState() error {
@@ -383,6 +429,23 @@ func (n *Node) start() {
 	log.Println("[INIT] Node started with ID:", host.ID())
 	log.Println("[INIT] Listening on:", host.Addrs())
 
+	bootstrapPeers := n.loadBootstrapPeers()
+	for _, addr := range bootstrapPeers {
+		go func(addr string) {
+			peerInfo, err := peer.AddrInfoFromString(addr)
+			if err != nil {
+				log.Printf("[BOOTSTRAP] Invalid peer addr %s: %v", addr, err)
+				return
+			}
+			ctx := context.Background()
+			if err := n.host.Connect(ctx, *peerInfo); err != nil {
+				log.Printf("[BOOTSTRAP] Failed to connect to %s: %v", addr, err)
+				return
+			}
+			log.Printf("[BOOTSTRAP] Connected to %s", addr)
+		}(addr)
+	}
+
 	if len(n.layers) == 0 {
 		n.layers = append(n.layers, make([]float64, VectorDim))
 		hashVec := hashToVector(n.ethHash)
@@ -394,7 +457,6 @@ func (n *Node) start() {
 		log.Println("[INIT] Initial layer created with love vector")
 	}
 
-	// Очистка старых ассоциаций раз в сутки
 	go func() {
 		for {
 			time.Sleep(24 * time.Hour)
