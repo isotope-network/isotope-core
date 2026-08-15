@@ -1,6 +1,7 @@
 services:
   node1:
     build: ./node
+    restart: unless-stopped
     networks:
       - isotope-net
     ports:
@@ -14,6 +15,7 @@ services:
 
   node2:
     build: ./node
+    restart: unless-stopped
     networks:
       - isotope-net
     ports:
@@ -27,6 +29,7 @@ services:
 
   node3:
     build: ./node
+    restart: unless-stopped
     networks:
       - isotope-net
     ports:
@@ -40,6 +43,7 @@ services:
 
   node4:
     build: ./node
+    restart: unless-stopped
     networks:
       - isotope-net
     ports:
@@ -53,6 +57,7 @@ services:
 
   node5:
     build: ./node
+    restart: unless-stopped
     networks:
       - isotope-net
     ports:

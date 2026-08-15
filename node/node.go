@@ -26,6 +26,7 @@ import (
 
 const protocolID = "/sbicore/1.0.0"
 const syncProtocolID = "/sbicore/sync/1.0.0"
+const pingProtocolID = "/sbicore/ping/1.0.0"
 
 type Node struct {
 	host             host.Host
@@ -42,6 +43,8 @@ type Node struct {
 	nodeID           int
 	stateFile        string
 	mu               sync.Mutex
+	lastPing         map[string]time.Time
+	deadPeers        map[string]bool
 }
 
 func (n *Node) HandlePeerFound(peerInfo peer.AddrInfo) {
@@ -95,6 +98,106 @@ func (n *Node) handleStream(stream network.Stream) {
 	n.processMessage(msg, remoteID, false)
 }
 
+// handlePingStream — отвечает на пинги
+func (n *Node) handlePingStream(stream network.Stream) {
+	defer stream.Close()
+
+	buf := make([]byte, 64)
+	nr, err := stream.Read(buf)
+	if err != nil {
+		return
+	}
+
+	msg := strings.TrimSpace(string(buf[:nr]))
+	if msg == "PING" {
+		stream.Write([]byte("PONG\n"))
+	}
+}
+
+// pingPeers — фоновая проверка живости соседей
+func (n *Node) pingPeers() {
+	go func() {
+		for {
+			time.Sleep(30 * time.Second)
+
+			if n.host == nil {
+				continue
+			}
+
+			peers := n.host.Network().Peers()
+			for _, p := range peers {
+				go func(peerID peer.ID) {
+					ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+					defer cancel()
+
+					s, err := n.host.NewStream(ctx, peerID, pingProtocolID)
+					if err != nil {
+						n.markPeerDead(peerID.String())
+						return
+					}
+					defer s.Close()
+
+					if _, err := s.Write([]byte("PING\n")); err != nil {
+						n.markPeerDead(peerID.String())
+						return
+					}
+
+					buf := make([]byte, 64)
+					s.SetReadDeadline(time.Now().Add(5 * time.Second))
+					nr, err := s.Read(buf)
+					if err != nil || strings.TrimSpace(string(buf[:nr])) != "PONG" {
+						n.markPeerDead(peerID.String())
+						return
+					}
+
+					n.markPeerAlive(peerID.String())
+				}(p)
+			}
+		}
+	}()
+}
+
+// markPeerAlive — отмечает пира живым
+func (n *Node) markPeerAlive(peerID string) {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+
+	if n.lastPing == nil {
+		n.lastPing = make(map[string]time.Time)
+	}
+	if n.deadPeers == nil {
+		n.deadPeers = make(map[string]bool)
+	}
+
+	n.lastPing[peerID] = time.Now()
+	if n.deadPeers[peerID] {
+		delete(n.deadPeers, peerID)
+		log.Printf("[HEAL] Пир %s вернулся в сеть", peerID[:8])
+	}
+}
+
+// markPeerDead — отмечает пира мёртвым
+func (n *Node) markPeerDead(peerID string) {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+
+	if n.deadPeers == nil {
+		n.deadPeers = make(map[string]bool)
+	}
+
+	if !n.deadPeers[peerID] {
+		n.deadPeers[peerID] = true
+		log.Printf("[HEAL] Пир %s помечен как мёртвый", peerID[:8])
+	}
+}
+
+// isPeerDead — проверяет, мёртв ли пир
+func (n *Node) isPeerDead(peerID string) bool {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	return n.deadPeers[peerID]
+}
+
 // processMessageRelayed — обрабатывает сообщение, пришедшее через relay-цепочку
 func (n *Node) processMessageRelayed(msg string, senderID string) {
 	id := generateMsgID(msg)
@@ -143,7 +246,7 @@ func (n *Node) processMessageWithModeAndTTL(msg string, senderID string, isOwn b
 
 	relays := n.selectRelays(relayCount)
 	if len(relays) < relayCount {
-		log.Printf("[ONION] Недостаточно пиров для цепочки: нужно %d, есть %d. Отправляю напрямую.", relayCount, len(relays))
+		log.Printf("[ONION] Недостаточно живых пиров для цепочки: нужно %d, есть %d. Отправляю напрямую.", relayCount, len(relays))
 		n.processMessageInternal(msg, senderID, isOwn, expiresAt)
 		return
 	}
@@ -156,30 +259,38 @@ func (n *Node) processMessageWithModeAndTTL(msg string, senderID string, isOwn b
 	n.sendViaRelayChain(relays, msg)
 }
 
-// processMessageWithMode — обрабатывает сообщение с учётом режима анонимности (без TTL)
+// processMessageWithMode — без TTL
 func (n *Node) processMessageWithMode(msg string, senderID string, isOwn bool, mode int) {
 	n.processMessageWithModeAndTTL(msg, senderID, isOwn, mode, time.Time{})
 }
 
-// selectRelays — выбирает случайных пиров для цепочки
+// selectRelays — выбирает случайных ЖИВЫХ пиров для цепочки
 func (n *Node) selectRelays(count int) []string {
 	peers := n.host.Network().Peers()
-	if len(peers) < count {
+
+	var alive []peer.ID
+	for _, p := range peers {
+		if !n.isPeerDead(p.String()) {
+			alive = append(alive, p)
+		}
+	}
+
+	if len(alive) < count {
 		var result []string
-		for _, p := range peers {
+		for _, p := range alive {
 			result = append(result, p.String())
 		}
 		return result
 	}
 
 	rand.Seed(time.Now().UnixNano())
-	rand.Shuffle(len(peers), func(i, j int) {
-		peers[i], peers[j] = peers[j], peers[i]
+	rand.Shuffle(len(alive), func(i, j int) {
+		alive[i], alive[j] = alive[j], alive[i]
 	})
 
 	var result []string
 	for i := 0; i < count; i++ {
-		result = append(result, peers[i].String())
+		result = append(result, alive[i].String())
 	}
 	return result
 }
@@ -543,6 +654,7 @@ func (n *Node) start() {
 	n.host = host
 	n.host.SetStreamHandler(protocolID, n.handleStream)
 	n.host.SetStreamHandler(syncProtocolID, n.handleSyncStream)
+	n.host.SetStreamHandler(pingProtocolID, n.handlePingStream)
 
 	mdnsService := mdns.NewMdnsService(n.host, "sbicore", n)
 	if err := mdnsService.Start(); err != nil {
@@ -579,7 +691,9 @@ func (n *Node) start() {
 		log.Println("[INIT] Initial layer created with love vector")
 	}
 
-	// Фоновая очистка истёкших сообщений раз в 60 секунд
+	// Селф-хилинг: запускаем heartbeat
+	n.pingPeers()
+
 	go func() {
 		for {
 			time.Sleep(60 * time.Second)
