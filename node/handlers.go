@@ -15,7 +15,7 @@ import (
 // HTTP-ОБРАБОТЧИКИ
 // ============================================================
 
-// handleSend — обрабатывает POST-запросы с JSON {"message": "текст", "priority": 100}
+// handleSend — обрабатывает POST-запросы с JSON {"message": "текст", "priority": 100, "mode": 1}
 func (n *Node) handleSend(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "only POST allowed", http.StatusMethodNotAllowed)
@@ -25,16 +25,21 @@ func (n *Node) handleSend(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Message  string `json:"message"`
 		Priority int    `json:"priority"`
+		Mode     int    `json:"mode"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Message == "" {
 		http.Error(w, "missing message field", http.StatusBadRequest)
 		return
 	}
 
-	log.Printf("[MSG] HTTP запрос на /send: %s (priority=%d)", req.Message, req.Priority)
-	n.processMessage(req.Message, n.host.ID().String()[:8], true)
+	if req.Mode < 0 || req.Mode > 2 {
+		req.Mode = 0
+	}
+
+	log.Printf("[MSG] HTTP запрос на /send: %s (priority=%d, mode=%d)", req.Message, req.Priority, req.Mode)
+	n.processMessageWithMode(req.Message, n.host.ID().String()[:8], true, req.Mode)
 	w.Header().Set("Content-Type", "application/json")
-	w.Write([]byte(`{"status":"ok"}`))
+	w.Write([]byte(fmt.Sprintf(`{"status":"ok","mode":%d}`, req.Mode)))
 }
 
 // handleMessages — возвращает все сообщения в формате JSON (новые сверху)
@@ -322,14 +327,18 @@ func (n *Node) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 			Type     string `json:"type"`
 			Message  string `json:"message"`
 			Priority int    `json:"priority"`
+			Mode     int    `json:"mode"`
 		}
 		if err := json.Unmarshal(message, &req); err != nil {
 			continue
 		}
 
 		if req.Type == "send" && req.Message != "" {
-			n.processMessage(req.Message, n.host.ID().String()[:8], true)
-			conn.WriteMessage(websocket.TextMessage, []byte(`{"type":"status","status":"sent"}`))
+			if req.Mode < 0 || req.Mode > 2 {
+				req.Mode = 0
+			}
+			n.processMessageWithMode(req.Message, n.host.ID().String()[:8], true, req.Mode)
+			conn.WriteMessage(websocket.TextMessage, []byte(fmt.Sprintf(`{"type":"status","status":"sent","mode":%d}`, req.Mode)))
 		}
 	}
 }

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"math/rand"
 	"net/http"
 	"os"
 	"strconv"
@@ -58,7 +59,7 @@ func (n *Node) HandlePeerFound(peerInfo peer.AddrInfo) {
 
 func (n *Node) handleStream(stream network.Stream) {
 	defer stream.Close()
-	buf := make([]byte, 1024)
+	buf := make([]byte, 4096)
 	nr, err := stream.Read(buf)
 	if err != nil {
 		log.Println("Read error:", err)
@@ -70,35 +71,138 @@ func (n *Node) handleStream(stream network.Stream) {
 		log.Println("Accepted peer:", stream.Conn().RemotePeer())
 		return
 	}
+
 	remoteID := stream.Conn().RemotePeer().String()[:8]
+
+	if strings.HasPrefix(msg, "CHAIN:") {
+		parts := strings.SplitN(msg, ":", 3)
+		if len(parts) == 3 {
+			nextRelays := parts[1]
+			actualMsg := parts[2]
+			log.Printf("[ONION] Relay-узел: следующий в цепочке: %s, сообщение: %s", nextRelays, actualMsg)
+
+			if nextRelays != "" {
+				relays := strings.Split(nextRelays, ",")
+				n.sendViaRelayChain(relays, actualMsg)
+			} else {
+				n.processMessageRelayed(actualMsg, remoteID)
+			}
+			return
+		}
+	}
+
 	log.Printf("[MSG] P2P сообщение от %s: %s", remoteID, msg)
 	n.processMessage(msg, remoteID, false)
 }
 
-// sendViaRelay — отправляет сообщение через relay-пира (анонимный режим)
-func (n *Node) sendViaRelay(relayID string, targetID string, msg string) {
-	relayPeer, err := peer.Decode(relayID)
-	if err != nil {
-		log.Printf("[RELAY] Invalid relay peer ID %s: %v", relayID, err)
+// processMessageRelayed — обрабатывает сообщение, пришедшее через relay-цепочку
+// Не форвардит, только сохраняет
+func (n *Node) processMessageRelayed(msg string, senderID string) {
+	id := generateMsgID(msg)
+	newMsg := Message{
+		ID:       id,
+		Text:     msg,
+		Sender:   senderID,
+		Time:     time.Now().Format("2006-01-02T15:04:05"),
+		IsOwn:    false,
+		Score:    0,
+		Weight:   0.5,
+		Priority: 0,
+		Mode:     1,
+		Relayed:  true,
+	}
+	if n.memory.Add(newMsg) {
+		log.Printf("[ONION] Сообщение доставлено через relay и сохранено: %s", msg)
+	}
+
+	go func() {
+		if err := n.saveState(); err != nil {
+			log.Printf("[ERROR] Ошибка сохранения состояния: %v", err)
+		}
+	}()
+}
+
+// processMessageWithMode — обрабатывает сообщение с учётом режима анонимности
+// mode: 0=обычный, 1=анонимный (2 relay), 2=скрытый (3 relay + задержка)
+func (n *Node) processMessageWithMode(msg string, senderID string, isOwn bool, mode int) {
+	if mode == 0 || n.host == nil {
+		n.processMessage(msg, senderID, isOwn)
 		return
 	}
 
-	// Отправляем relay-пиру специальное сообщение с указанием цели
-	relayMsg := fmt.Sprintf("RELAY:%s:%s", targetID, msg)
+	relayCount := 2
+	if mode == 2 {
+		relayCount = 3
+		delay := 10 + time.Duration(time.Now().UnixNano()%50)*time.Second
+		log.Printf("[ONION] Скрытый режим: задержка %v", delay)
+		time.Sleep(delay)
+	}
+
+	relays := n.selectRelays(relayCount)
+	if len(relays) < relayCount {
+		log.Printf("[ONION] Недостаточно пиров для цепочки: нужно %d, есть %d. Отправляю напрямую.", relayCount, len(relays))
+		n.processMessage(msg, senderID, isOwn)
+		return
+	}
+
+	log.Printf("[ONION] Анонимная цепочка: %s → %s → %s → получатель", senderID, relays[0][:8], relays[1][:8])
+	if mode == 2 {
+		log.Printf("[ONION] Третий relay: %s", relays[2][:8])
+	}
+
+	n.sendViaRelayChain(relays, msg)
+}
+
+// selectRelays — выбирает случайных пиров для цепочки
+func (n *Node) selectRelays(count int) []string {
+	peers := n.host.Network().Peers()
+	if len(peers) < count {
+		var result []string
+		for _, p := range peers {
+			result = append(result, p.String())
+		}
+		return result
+	}
+
+	rand.Seed(time.Now().UnixNano())
+	rand.Shuffle(len(peers), func(i, j int) {
+		peers[i], peers[j] = peers[j], peers[i]
+	})
+
+	var result []string
+	for i := 0; i < count; i++ {
+		result = append(result, peers[i].String())
+	}
+	return result
+}
+
+// sendViaRelayChain — отправляет сообщение через цепочку relay-пиров
+func (n *Node) sendViaRelayChain(relays []string, msg string) {
+	if len(relays) == 0 {
+		return
+	}
+
+	chainMsg := fmt.Sprintf("CHAIN:%s:%s", strings.Join(relays[1:], ","), msg)
+
+	relayPeer, err := peer.Decode(relays[0])
+	if err != nil {
+		log.Printf("[ONION] Invalid relay peer ID %s: %v", relays[0][:8], err)
+		return
+	}
 
 	ctx := context.Background()
 	s, err := n.host.NewStream(ctx, relayPeer, protocolID)
 	if err != nil {
-		log.Printf("[RELAY] Failed to create stream to relay %s: %v", relayID[:8], err)
+		log.Printf("[ONION] Failed to create stream to first relay %s: %v", relays[0][:8], err)
 		return
 	}
 	defer s.Close()
 
-	if _, err := s.Write([]byte(relayMsg + "\n")); err != nil {
-		log.Printf("[RELAY] Failed to write to relay %s: %v", relayID[:8], err)
+	if _, err := s.Write([]byte(chainMsg + "\n")); err != nil {
+		log.Printf("[ONION] Failed to write to first relay %s: %v", relays[0][:8], err)
 		return
 	}
-	log.Printf("[RELAY] Message sent via relay %s to target %s", relayID[:8], targetID[:8])
+	log.Printf("[ONION] Сообщение отправлено через цепочку из %d пиров", len(relays))
 }
 
 func (n *Node) processMessage(msg string, senderID string, isOwn bool) {

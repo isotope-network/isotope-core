@@ -22,6 +22,7 @@ type Message struct {
 	Archived bool      `json:"archived"`
 	Priority int       `json:"priority"`
         Mode     int       `json:"mode"` // 0=обычный, 1=анонимный
+        Relayed bool `json:"relayed"`
 }
 
 // Memory — потокобезопасное хранилище сообщений (без лимита)

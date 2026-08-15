@@ -21,14 +21,23 @@ type State struct {
 
 // saveState — сохраняет состояние узла в файл.
 func (n *Node) saveState() error {
+	if n.stateFile == "" {
+		return nil
+	}
+
 	n.mu.Lock()
 	defer n.mu.Unlock()
+
+	seen := n.memory.seen
+	if seen == nil {
+		seen = make(map[string]bool)
+	}
 
 	state := State{
 		Layers:   n.layers,
 		MsgCount: n.msgCount,
 		Messages: n.memory.GetAll(),
-		Seen:     n.memory.seen,
+		Seen:     seen,
 		PreHash:  n.preHash,
 		AntiHash: n.antiHash,
 	}
