@@ -10,6 +10,7 @@ services:
       - ./state:/root/state
     environment:
       - NODE_ID=1
+      - ISOTOPE_STATE_PASSWORD=${ISOTOPE_STATE_PASSWORD:-}
 
   node2:
     build: ./node
@@ -22,6 +23,7 @@ services:
       - ./state:/root/state
     environment:
       - NODE_ID=2
+      - ISOTOPE_STATE_PASSWORD=${ISOTOPE_STATE_PASSWORD:-}
 
   node3:
     build: ./node
@@ -34,6 +36,7 @@ services:
       - ./state:/root/state
     environment:
       - NODE_ID=3
+      - ISOTOPE_STATE_PASSWORD=${ISOTOPE_STATE_PASSWORD:-}
 
   node4:
     build: ./node
@@ -46,6 +49,7 @@ services:
       - ./state:/root/state
     environment:
       - NODE_ID=4
+      - ISOTOPE_STATE_PASSWORD=${ISOTOPE_STATE_PASSWORD:-}
 
   node5:
     build: ./node
@@ -58,6 +62,7 @@ services:
       - ./state:/root/state
     environment:
       - NODE_ID=5
+      - ISOTOPE_STATE_PASSWORD=${ISOTOPE_STATE_PASSWORD:-}
 
 networks:
   isotope-net:

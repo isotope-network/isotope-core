@@ -45,4 +45,7 @@ mobile/.flutter-plugins
 
 # Тесты
 coverage/
-*.coverprofilenode/genesis/ 
+*.coverprofile
+
+# Genesis в node
+node/genesis/

@@ -96,7 +96,6 @@ func (n *Node) handleStream(stream network.Stream) {
 }
 
 // processMessageRelayed — обрабатывает сообщение, пришедшее через relay-цепочку
-// Не форвардит, только сохраняет
 func (n *Node) processMessageRelayed(msg string, senderID string) {
 	id := generateMsgID(msg)
 	newMsg := Message{
@@ -122,11 +121,15 @@ func (n *Node) processMessageRelayed(msg string, senderID string) {
 	}()
 }
 
-// processMessageWithMode — обрабатывает сообщение с учётом режима анонимности
-// mode: 0=обычный, 1=анонимный (2 relay), 2=скрытый (3 relay + задержка)
-func (n *Node) processMessageWithMode(msg string, senderID string, isOwn bool, mode int) {
+// processMessageWithTTL — обычный режим с таймером жизни
+func (n *Node) processMessageWithTTL(msg string, senderID string, isOwn bool, expiresAt time.Time) {
+	n.processMessageInternal(msg, senderID, isOwn, expiresAt)
+}
+
+// processMessageWithModeAndTTL — анонимный режим с таймером жизни
+func (n *Node) processMessageWithModeAndTTL(msg string, senderID string, isOwn bool, mode int, expiresAt time.Time) {
 	if mode == 0 || n.host == nil {
-		n.processMessage(msg, senderID, isOwn)
+		n.processMessageInternal(msg, senderID, isOwn, expiresAt)
 		return
 	}
 
@@ -141,7 +144,7 @@ func (n *Node) processMessageWithMode(msg string, senderID string, isOwn bool, m
 	relays := n.selectRelays(relayCount)
 	if len(relays) < relayCount {
 		log.Printf("[ONION] Недостаточно пиров для цепочки: нужно %d, есть %d. Отправляю напрямую.", relayCount, len(relays))
-		n.processMessage(msg, senderID, isOwn)
+		n.processMessageInternal(msg, senderID, isOwn, expiresAt)
 		return
 	}
 
@@ -151,6 +154,11 @@ func (n *Node) processMessageWithMode(msg string, senderID string, isOwn bool, m
 	}
 
 	n.sendViaRelayChain(relays, msg)
+}
+
+// processMessageWithMode — обрабатывает сообщение с учётом режима анонимности (без TTL)
+func (n *Node) processMessageWithMode(msg string, senderID string, isOwn bool, mode int) {
+	n.processMessageWithModeAndTTL(msg, senderID, isOwn, mode, time.Time{})
 }
 
 // selectRelays — выбирает случайных пиров для цепочки
@@ -205,7 +213,13 @@ func (n *Node) sendViaRelayChain(relays []string, msg string) {
 	log.Printf("[ONION] Сообщение отправлено через цепочку из %d пиров", len(relays))
 }
 
+// processMessage — обычная обработка (без TTL)
 func (n *Node) processMessage(msg string, senderID string, isOwn bool) {
+	n.processMessageInternal(msg, senderID, isOwn, time.Time{})
+}
+
+// processMessageInternal — общая логика с поддержкой expiresAt
+func (n *Node) processMessageInternal(msg string, senderID string, isOwn bool, expiresAt time.Time) {
 	log.Printf("[MSG] Обработка сообщения: %s (от %s)", msg, senderID)
 
 	if !isOwn && n.host != nil {
@@ -301,18 +315,22 @@ func (n *Node) processMessage(msg string, senderID string, isOwn bool) {
 
 	id := generateMsgID(msg)
 	newMsg := Message{
-		ID:       id,
-		Text:     msg,
-		Sender:   senderID,
-		Time:     time.Now().Format("2006-01-02T15:04:05"),
-		IsOwn:    isOwn,
-		Score:    0,
-		Weight:   initialWeight,
-		Priority: priority,
-		Mode:     0,
+		ID:        id,
+		Text:      msg,
+		Sender:    senderID,
+		Time:      time.Now().Format("2006-01-02T15:04:05"),
+		IsOwn:     isOwn,
+		Score:     0,
+		Weight:    initialWeight,
+		Priority:  priority,
+		Mode:      0,
+		ExpiresAt: expiresAt,
 	}
 	if n.memory.Add(newMsg) {
 		log.Printf("[MSG] Сообщение сохранено: %s (priority=%d)", msg, priority)
+		if !expiresAt.IsZero() {
+			log.Printf("[MSG] Сообщение исчезнет через %v", time.Until(expiresAt))
+		}
 		n.mu.Lock()
 		n.msgCount++
 		if n.msgCount > 0 && n.msgCount%20 == 0 {
@@ -451,7 +469,7 @@ func (n *Node) loadBootstrapPeers() []string {
 }
 
 func (n *Node) loadState() error {
-	data, err := os.ReadFile(n.stateFile)
+	data, err := n.loadStateData()
 	if err != nil {
 		return err
 	}
@@ -560,6 +578,18 @@ func (n *Node) start() {
 		}
 		log.Println("[INIT] Initial layer created with love vector")
 	}
+
+	// Фоновая очистка истёкших сообщений раз в 60 секунд
+	go func() {
+		for {
+			time.Sleep(60 * time.Second)
+			removed := n.memory.DeleteExpired()
+			if removed > 0 {
+				log.Printf("[EXPIRE] Удалено истёкших сообщений: %d", removed)
+				n.saveState()
+			}
+		}
+	}()
 
 	go func() {
 		for {

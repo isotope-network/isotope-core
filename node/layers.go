@@ -156,7 +156,6 @@ func (n *Node) broadcastLayers() {
 		return
 	}
 
-	// gossip: выбираем случайных пиров (fanout = √N, минимум 2)
 	fanout := int(math.Sqrt(float64(len(peers))))
 	if fanout < 2 {
 		fanout = 2
@@ -203,7 +202,6 @@ func (n *Node) handleSyncStream(stream network.Stream) {
 		return
 	}
 
-	// Пробуем новый формат с TTL
 	var payload SyncPayload
 	if err := json.Unmarshal(data, &payload); err == nil && len(payload.Delta) > 0 {
 		n.mu.Lock()
@@ -223,7 +221,6 @@ func (n *Node) handleSyncStream(stream network.Stream) {
 		}
 		n.layersDirty = true
 
-		// Gossip forward: пересылаем дальше, если TTL > 1
 		ttl := payload.TTL - 1
 		peers := n.host.Network().Peers()
 		senderID := stream.Conn().RemotePeer()
@@ -237,7 +234,6 @@ func (n *Node) handleSyncStream(stream network.Stream) {
 				fanout = len(peers)
 			}
 
-			// Исключаем отправителя из списка
 			var candidates []peer.ID
 			for _, p := range peers {
 				if p != senderID {
@@ -273,7 +269,6 @@ func (n *Node) handleSyncStream(stream network.Stream) {
 		return
 	}
 
-	// Старый формат — дельта без TTL
 	var delta []DeltaLayer
 	if err := json.Unmarshal(data, &delta); err == nil && len(delta) > 0 {
 		n.mu.Lock()
@@ -297,7 +292,6 @@ func (n *Node) handleSyncStream(stream network.Stream) {
 		return
 	}
 
-	// Старый формат — полные слои
 	var peerLayers [][]float64
 	if err := json.Unmarshal(data, &peerLayers); err != nil {
 		log.Println("Sync unmarshal error:", err)

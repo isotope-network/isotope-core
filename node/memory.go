@@ -11,18 +11,19 @@ import (
 
 // Message — структура одного сообщения
 type Message struct {
-	ID       string    `json:"id"`
-	Text     string    `json:"text"`
-	Sender   string    `json:"sender"`
-	Time     string    `json:"time"`
-	IsOwn    bool      `json:"isOwn"`
-	Score    int       `json:"score"`
-	Weight   float64   `json:"weight"`
-	Created  time.Time `json:"created"`
-	Archived bool      `json:"archived"`
-	Priority int       `json:"priority"`
-        Mode     int       `json:"mode"` // 0=обычный, 1=анонимный
-        Relayed bool `json:"relayed"`
+	ID        string    `json:"id"`
+	Text      string    `json:"text"`
+	Sender    string    `json:"sender"`
+	Time      string    `json:"time"`
+	IsOwn     bool      `json:"isOwn"`
+	Score     int       `json:"score"`
+	Weight    float64   `json:"weight"`
+	Created   time.Time `json:"created"`
+	Archived  bool      `json:"archived"`
+	Priority  int       `json:"priority"`
+	Mode      int       `json:"mode"`
+	Relayed   bool      `json:"relayed"`
+	ExpiresAt time.Time `json:"expiresAt"` // zero = никогда
 }
 
 // Memory — потокобезопасное хранилище сообщений (без лимита)
@@ -201,6 +202,26 @@ func (m *Memory) PurgeDead(threshold float64) int {
 		ageHours := time.Since(msg.Created).Hours()
 		weight := msg.Weight - ageHours*0.01
 		if weight < threshold {
+			delete(m.seen, msg.ID)
+			removed++
+		} else {
+			alive = append(alive, msg)
+		}
+	}
+	m.messages = alive
+	return removed
+}
+
+// DeleteExpired — удаляет сообщения с истёкшим сроком жизни
+func (m *Memory) DeleteExpired() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	now := time.Now()
+	var alive []Message
+	removed := 0
+	for _, msg := range m.messages {
+		if !msg.ExpiresAt.IsZero() && now.After(msg.ExpiresAt) {
 			delete(m.seen, msg.ID)
 			removed++
 		} else {

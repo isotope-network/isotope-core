@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strconv"
 	"sync"
+	"time"
 
 	"github.com/gorilla/websocket"
 )
@@ -15,7 +16,7 @@ import (
 // HTTP-ОБРАБОТЧИКИ
 // ============================================================
 
-// handleSend — обрабатывает POST-запросы с JSON {"message": "текст", "priority": 100, "mode": 1}
+// handleSend — обрабатывает POST-запросы с JSON {"message": "текст", "priority": 100, "mode": 1, "ttl": 60}
 func (n *Node) handleSend(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "only POST allowed", http.StatusMethodNotAllowed)
@@ -26,6 +27,7 @@ func (n *Node) handleSend(w http.ResponseWriter, r *http.Request) {
 		Message  string `json:"message"`
 		Priority int    `json:"priority"`
 		Mode     int    `json:"mode"`
+		TTL      int    `json:"ttl"` // секунды, 0 = вечно
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Message == "" {
 		http.Error(w, "missing message field", http.StatusBadRequest)
@@ -36,10 +38,21 @@ func (n *Node) handleSend(w http.ResponseWriter, r *http.Request) {
 		req.Mode = 0
 	}
 
-	log.Printf("[MSG] HTTP запрос на /send: %s (priority=%d, mode=%d)", req.Message, req.Priority, req.Mode)
-	n.processMessageWithMode(req.Message, n.host.ID().String()[:8], true, req.Mode)
+	var expiresAt time.Time
+	if req.TTL > 0 {
+		expiresAt = time.Now().Add(time.Duration(req.TTL) * time.Second)
+	}
+
+	log.Printf("[MSG] HTTP запрос на /send: %s (priority=%d, mode=%d, ttl=%d)", req.Message, req.Priority, req.Mode, req.TTL)
+
+	if req.Mode > 0 {
+		n.processMessageWithModeAndTTL(req.Message, n.host.ID().String()[:8], true, req.Mode, expiresAt)
+	} else {
+		n.processMessageWithTTL(req.Message, n.host.ID().String()[:8], true, expiresAt)
+	}
+
 	w.Header().Set("Content-Type", "application/json")
-	w.Write([]byte(fmt.Sprintf(`{"status":"ok","mode":%d}`, req.Mode)))
+	w.Write([]byte(fmt.Sprintf(`{"status":"ok","mode":%d,"ttl":%d}`, req.Mode, req.TTL)))
 }
 
 // handleMessages — возвращает все сообщения в формате JSON (новые сверху)
@@ -304,7 +317,6 @@ func (n *Node) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 
 	log.Println("[WS] Client connected")
 
-	// Отправляем последние 20 сообщений при подключении
 	msgs := n.memory.GetAll()
 	start := 0
 	if len(msgs) > 20 {
@@ -315,7 +327,6 @@ func (n *Node) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 		conn.WriteMessage(websocket.TextMessage, data)
 	}
 
-	// Читаем сообщения от клиента
 	for {
 		_, message, err := conn.ReadMessage()
 		if err != nil {
@@ -328,6 +339,7 @@ func (n *Node) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 			Message  string `json:"message"`
 			Priority int    `json:"priority"`
 			Mode     int    `json:"mode"`
+			TTL      int    `json:"ttl"`
 		}
 		if err := json.Unmarshal(message, &req); err != nil {
 			continue
@@ -337,8 +349,16 @@ func (n *Node) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 			if req.Mode < 0 || req.Mode > 2 {
 				req.Mode = 0
 			}
-			n.processMessageWithMode(req.Message, n.host.ID().String()[:8], true, req.Mode)
-			conn.WriteMessage(websocket.TextMessage, []byte(fmt.Sprintf(`{"type":"status","status":"sent","mode":%d}`, req.Mode)))
+			var expiresAt time.Time
+			if req.TTL > 0 {
+				expiresAt = time.Now().Add(time.Duration(req.TTL) * time.Second)
+			}
+			if req.Mode > 0 {
+				n.processMessageWithModeAndTTL(req.Message, n.host.ID().String()[:8], true, req.Mode, expiresAt)
+			} else {
+				n.processMessageWithTTL(req.Message, n.host.ID().String()[:8], true, expiresAt)
+			}
+			conn.WriteMessage(websocket.TextMessage, []byte(fmt.Sprintf(`{"type":"status","status":"sent","mode":%d,"ttl":%d}`, req.Mode, req.TTL)))
 		}
 	}
 }
