@@ -56,6 +56,7 @@ type Node struct {
 	mu               sync.Mutex
 	lastPing         map[string]time.Time
 	deadPeers        map[string]bool
+	adaptive         *AdaptiveParams
 }
 
 func (n *Node) getObfuscationKey() []byte {
@@ -622,7 +623,12 @@ func (n *Node) processMessageInternal(msg string, senderID string, isOwn bool, e
 	} else {
 		log.Println("[TRAIN] Похожих сообщений не найдено, обучение без контекста")
 	}
-	n.layers = train(n.layers, inputVector, outputVector, inputVector, 0.01)
+
+	lr := 0.01
+	if n.adaptive != nil {
+		lr = n.adaptive.LearningRate
+	}
+	n.layers = train(n.layers, inputVector, outputVector, inputVector, lr)
 	n.layersDirty = true
 	n.mu.Unlock()
 	log.Println("[TRAIN] Обучение выполнено")
@@ -729,9 +735,13 @@ func (n *Node) processMessageInternal(msg string, senderID string, isOwn bool, e
 		}
 	}
 
-	archived := n.memory.ArchiveOld(0.15)
+	threshold := 0.15
+	if n.adaptive != nil {
+		threshold = n.adaptive.ArchiveThreshold
+	}
+	archived := n.memory.ArchiveOld(threshold)
 	if archived > 0 {
-		log.Printf("[ARCHIVE] %d messages archived", archived)
+		log.Printf("[ARCHIVE] %d messages archived (threshold=%.2f)", archived, threshold)
 	}
 
 	go func() {
@@ -824,6 +834,7 @@ func (n *Node) start() {
 	}
 	n.nodeID = nodeID
 	n.stateFile = fmt.Sprintf("state/state_node%d.json", nodeID)
+	n.adaptive = NewAdaptiveParams()
 	log.Printf("[INIT] Узел %d, файл состояния: %s", nodeID, n.stateFile)
 
 	if err := n.loadState(); err != nil {
@@ -904,6 +915,7 @@ func (n *Node) start() {
 	}
 
 	n.pingPeers()
+	n.StartAdaptation()
 
 	go func() {
 		time.Sleep(5 * time.Second)
@@ -932,7 +944,11 @@ func (n *Node) start() {
 	go func() {
 		for {
 			time.Sleep(1 * time.Hour)
-			removed := n.memory.PurgeDead(0.1)
+			threshold := 0.1
+			if n.adaptive != nil {
+				threshold = n.adaptive.ArchiveThreshold - 0.05
+			}
+			removed := n.memory.PurgeDead(threshold)
 			if removed > 0 {
 				log.Printf("[PURGE] removed %d dead messages", removed)
 				n.saveState()
