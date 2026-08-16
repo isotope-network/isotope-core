@@ -336,6 +336,18 @@ func (n *Node) isPeerDead(peerID string) bool {
 	return n.deadPeers[peerID]
 }
 
+func (n *Node) getPeerWeight(peerID string) float64 {
+	msgs := n.memory.GetMessagesFrom(peerID)
+	if len(msgs) == 0 {
+		return 0.5
+	}
+	total := 0.0
+	for _, m := range msgs {
+		total += m.Weight
+	}
+	return total / float64(len(msgs))
+}
+
 func (n *Node) processMessageRelayed(msg string, senderID string) {
 	id := generateMsgID(msg)
 	newMsg := Message{
@@ -435,7 +447,6 @@ func (n *Node) requestRestore() {
 
 			fmt.Fprintf(s, "%s%s\n", RESTORE_PREFIX, myID)
 
-			// Читаем ответы
 			buf := make([]byte, 2*1024*1024)
 			s.SetReadDeadline(time.Now().Add(5 * time.Second))
 			nr, _ := s.Read(buf)
@@ -458,9 +469,9 @@ func (n *Node) processMessageWithModeAndTTL(msg string, senderID string, isOwn b
 		return
 	}
 
-	relayCount := 2
+	relayCount := 4
 	if mode == 2 {
-		relayCount = 3
+		relayCount = 5
 		delay := 10 + time.Duration(time.Now().UnixNano()%50)*time.Second
 		log.Printf("[ONION] Скрытый режим: задержка %v", delay)
 		time.Sleep(delay)
@@ -468,16 +479,12 @@ func (n *Node) processMessageWithModeAndTTL(msg string, senderID string, isOwn b
 
 	relays := n.selectRelays(relayCount)
 	if len(relays) < relayCount {
-		log.Printf("[ONION] Недостаточно живых пиров для цепочки: нужно %d, есть %d. Отправляю напрямую.", relayCount, len(relays))
+		log.Printf("[ONION] Недостаточно доверенных пиров: нужно %d, есть %d. Отправляю напрямую.", relayCount, len(relays))
 		n.processMessageInternal(msg, senderID, isOwn, expiresAt)
 		return
 	}
 
-	log.Printf("[ONION] Анонимная цепочка: %s → %s → %s → получатель", senderID, relays[0][:8], relays[1][:8])
-	if mode == 2 {
-		log.Printf("[ONION] Третий relay: %s", relays[2][:8])
-	}
-
+	log.Printf("[ONION] Анонимная цепочка из %d relay: %s → ... → получатель", len(relays), senderID)
 	n.sendViaRelayChain(relays, msg)
 }
 
@@ -488,22 +495,41 @@ func (n *Node) processMessageWithMode(msg string, senderID string, isOwn bool, m
 func (n *Node) selectRelays(count int) []string {
 	peers := n.host.Network().Peers()
 
-	var alive []peer.ID
+	var trusted []peer.ID
+	var fallback []peer.ID
 	for _, p := range peers {
-		if !n.isPeerDead(p.String()) {
-			alive = append(alive, p)
+		if n.isPeerDead(p.String()) {
+			continue
+		}
+		weight := n.getPeerWeight(p.String())
+		if weight > 0.7 {
+			trusted = append(trusted, p)
+		} else {
+			fallback = append(fallback, p)
 		}
 	}
 
-	if len(alive) < count {
-		var result []string
-		for _, p := range alive {
-			result = append(result, p.String())
+	if len(trusted) >= count {
+		perm := make([]int, len(trusted))
+		for i := range perm {
+			perm[i] = i
+		}
+		for i := len(perm) - 1; i > 0; i-- {
+			j, _ := rand.Int(rand.Reader, big.NewInt(int64(i+1)))
+			perm[i], perm[int(j.Int64())] = perm[int(j.Int64())], perm[i]
+		}
+		result := make([]string, count)
+		for i := 0; i < count; i++ {
+			result[i] = trusted[perm[i]].String()
 		}
 		return result
 	}
 
-	perm := make([]int, len(alive))
+	selected := make([]string, 0)
+	for _, p := range trusted {
+		selected = append(selected, p.String())
+	}
+	perm := make([]int, len(fallback))
 	for i := range perm {
 		perm[i] = i
 	}
@@ -511,12 +537,10 @@ func (n *Node) selectRelays(count int) []string {
 		j, _ := rand.Int(rand.Reader, big.NewInt(int64(i+1)))
 		perm[i], perm[int(j.Int64())] = perm[int(j.Int64())], perm[i]
 	}
-
-	result := make([]string, count)
-	for i := 0; i < count; i++ {
-		result[i] = alive[perm[i]].String()
+	for i := 0; len(selected) < count && i < len(fallback); i++ {
+		selected = append(selected, fallback[perm[i]].String())
 	}
-	return result
+	return selected
 }
 
 func (n *Node) sendViaRelayChain(relays []string, msg string) {
@@ -547,7 +571,7 @@ func (n *Node) sendViaRelayChain(relays []string, msg string) {
 		log.Printf("[ONION] Failed to write to first relay %s: %v", relays[0][:8], err)
 		return
 	}
-	log.Printf("[ONION] Сообщение отправлено через цепочку из %d пиров (обфусцировано)", len(relays))
+	log.Printf("[ONION] Сообщение отправлено через цепочку из %d relay (обфусцировано)", len(relays))
 }
 
 func (n *Node) processMessage(msg string, senderID string, isOwn bool) {
@@ -808,7 +832,6 @@ func (n *Node) start() {
 		log.Println("[INIT] Состояние успешно загружено")
 	}
 
-	// Стабильный ключ
 	var priv crypto.PrivKey
 	keyBytes, err := n.loadPrivateKey()
 	if err != nil {
