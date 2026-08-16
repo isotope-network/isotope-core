@@ -57,6 +57,7 @@ type Node struct {
 	lastPing         map[string]time.Time
 	deadPeers        map[string]bool
 	adaptive         *AdaptiveParams
+	channels         *ChannelStore
 }
 
 func (n *Node) getObfuscationKey() []byte {
@@ -835,6 +836,7 @@ func (n *Node) start() {
 	n.nodeID = nodeID
 	n.stateFile = fmt.Sprintf("state/state_node%d.json", nodeID)
 	n.adaptive = NewAdaptiveParams()
+	n.channels = NewChannelStore()
 	log.Printf("[INIT] Узел %d, файл состояния: %s", nodeID, n.stateFile)
 
 	if err := n.loadState(); err != nil {
@@ -971,6 +973,20 @@ func (n *Node) start() {
 	http.HandleFunc("/setantihash", n.handleSetAntiHash)
 	http.HandleFunc("/gethashes", n.handleGetHashes)
 	http.HandleFunc("/ws", n.handleWebSocket)
+	http.HandleFunc("/channels", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			n.handleCreateChannel(w, r)
+		} else {
+			n.handleGetChannels(w, r)
+		}
+	})
+	http.HandleFunc("/channels/", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			n.handleSendToChannel(w, r)
+		} else {
+			n.handleGetChannelMessages(w, r)
+		}
+	})
 
 	go func() {
 		log.Println("[INIT] HTTP server listening on :8081")

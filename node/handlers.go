@@ -7,6 +7,7 @@ import (
 	"log"
 	"net/http"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -52,7 +53,6 @@ func (n *Node) handleSend(w http.ResponseWriter, r *http.Request) {
 		n.processMessageWithTTL(req.Message, n.host.ID().String()[:8], true, expiresAt)
 	}
 
-	// Форвардинг обфусцированного сообщения соседям
 	if n.host != nil {
 		go func() {
 			for _, p := range n.host.Network().Peers() {
@@ -73,8 +73,7 @@ func (n *Node) handleSend(w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte(fmt.Sprintf(`{"status":"ok","mode":%d,"ttl":%d}`, req.Mode, req.TTL)))
 }
 
-// handleSendStego — отправляет сообщение, спрятанное в WAV-файле
-// POST /send_stego {"message": "текст", "wav": "base64_wav_data"}
+// handleSendStego — отправляет сообщение, спрятанное в WAV
 func (n *Node) handleSendStego(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "only POST allowed", http.StatusMethodNotAllowed)
@@ -83,7 +82,7 @@ func (n *Node) handleSendStego(w http.ResponseWriter, r *http.Request) {
 
 	var req struct {
 		Message string `json:"message"`
-		WAV     string `json:"wav"` // base64 WAV
+		WAV     string `json:"wav"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Message == "" || req.WAV == "" {
 		http.Error(w, "missing message or wav field", http.StatusBadRequest)
@@ -101,25 +100,20 @@ func (n *Node) handleSendStego(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Шифруем сообщение
 	key := n.getObfuscationKey()
 	encrypted := n.obfuscate(req.Message)
 	encryptedBytes := []byte(encrypted)
 
-	// Встраиваем в WAV
 	wavWithData, err := embedLSB(wavBytes, encryptedBytes, key)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("embed failed: %v", err), http.StatusBadRequest)
 		return
 	}
 
-	// Кодируем в base64 для передачи
 	stegoMsg := "[STEGO]" + wavToBase64(wavWithData)
 
-	// Сохраняем локально
 	n.processMessageWithTTL(req.Message, n.host.ID().String()[:8], true, time.Time{})
 
-	// Форвардим стего-сообщение соседям
 	if n.host != nil {
 		go func() {
 			for _, p := range n.host.Network().Peers() {
@@ -138,6 +132,108 @@ func (n *Node) handleSendStego(w http.ResponseWriter, r *http.Request) {
 	log.Printf("[STEGO] Сообщение спрятано в WAV и отправлено: %s", req.Message)
 	w.Header().Set("Content-Type", "application/json")
 	w.Write([]byte(`{"status":"ok","mode":3}`))
+}
+
+// handleCreateChannel — создаёт канал
+func (n *Node) handleCreateChannel(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "only POST allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req struct {
+		Name string `json:"name"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Name == "" {
+		http.Error(w, "missing name field", http.StatusBadRequest)
+		return
+	}
+
+	id := generateMsgID(req.Name)
+	owner := n.host.ID().String()[:8]
+	ch := n.channels.Create(id, req.Name, owner)
+
+	log.Printf("[CHANNEL] Создан канал %s: %s", id[:8], req.Name)
+	w.Header().Set("Content-Type", "application/json")
+	w.Write([]byte(fmt.Sprintf(`{"id":"%s","name":"%s","owner":"%s"}`, id, req.Name, owner)))
+	_ = ch
+}
+
+// handleGetChannels — список каналов
+func (n *Node) handleGetChannels(w http.ResponseWriter, r *http.Request) {
+	channels := n.channels.GetAll()
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(channels)
+}
+
+// handleSendToChannel — отправить сообщение в канал
+func (n *Node) handleSendToChannel(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "only POST allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	// ID канала из URL: /channels/{id}/messages
+	parts := strings.Split(r.URL.Path, "/")
+	if len(parts) < 4 {
+		http.Error(w, "invalid path", http.StatusBadRequest)
+		return
+	}
+	channelID := parts[2]
+
+	ch := n.channels.Get(channelID)
+	if ch == nil {
+		http.Error(w, "channel not found", http.StatusNotFound)
+		return
+	}
+
+	senderWeight := n.getPeerWeight(n.host.ID().String()[:8])
+
+	var req struct {
+		Message string `json:"message"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Message == "" {
+		http.Error(w, "missing message field", http.StatusBadRequest)
+		return
+	}
+
+	msg := Message{
+		ID:      generateMsgID(req.Message),
+		Text:    req.Message,
+		Sender:  n.host.ID().String()[:8],
+		Time:    time.Now().Format("2006-01-02T15:04:05"),
+		IsOwn:   true,
+		Score:   0,
+		Weight:  senderWeight,
+		Created: time.Now(),
+	}
+
+	ch.AddMessage(msg)
+	log.Printf("[CHANNEL] Сообщение в канал %s: %s", channelID[:8], req.Message)
+	w.Header().Set("Content-Type", "application/json")
+	w.Write([]byte(`{"status":"ok"}`))
+}
+
+// handleGetChannelMessages — получить сообщения канала с учётом веса
+func (n *Node) handleGetChannelMessages(w http.ResponseWriter, r *http.Request) {
+	parts := strings.Split(r.URL.Path, "/")
+	if len(parts) < 4 {
+		http.Error(w, "invalid path", http.StatusBadRequest)
+		return
+	}
+	channelID := parts[2]
+
+	ch := n.channels.Get(channelID)
+	if ch == nil {
+		http.Error(w, "channel not found", http.StatusNotFound)
+		return
+	}
+
+	weight := n.getPeerWeight(n.host.ID().String()[:8])
+	messages := ch.GetVisibleMessages(weight)
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(messages)
 }
 
 // handleMessages — возвращает все сообщения в формате JSON (новые сверху)
@@ -221,7 +317,7 @@ func (n *Node) handleLayersAPI(w http.ResponseWriter, r *http.Request) {
 }
 
 // ============================================================
-// ОБРАТНАЯ СВЯЗЬ + ОБУЧЕНИЕ (С ВЕСАМИ И АРХИВОМ)
+// ОБРАТНАЯ СВЯЗЬ + ОБУЧЕНИЕ
 // ============================================================
 
 // handleFeedback — обрабатывает запросы /feedback?id=...&score=1
