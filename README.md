@@ -165,7 +165,7 @@ Once a day — a single notification:
 
 ## Status
 
-**v1.15 — stable.**
+**v1.18 — stable.**
 
 Implemented:
 - P2P network: libp2p + mDNS + DHT + Gossip
@@ -174,12 +174,15 @@ Implemented:
 - WebSocket + TLS: traffic indistinguishable from HTTPS
 - Obfuscation: AES-GCM + random delays
 - Voice steganography: LSB in WAV
+- Onion Routing v2: 4-5 relay, weight-based selection
 - Neural network: 100-dimensional vectors, bigrams, ethical filter
 - Weighted memory with archive and auto-cleanup
 - Expiring messages (TTL)
 - Local encryption (AES-256-GCM)
 - Self-healing: heartbeat, auto-restart
 - Replication: restore from neighbors
+- Self-adaptation: automatic threshold adjustment
+- Channels with weight levels
 - REST API + WebSocket
 - Mobile app (Flutter)
 - Network health monitoring
@@ -187,10 +190,10 @@ Implemented:
 - 5 nodes in docker-compose
 
 In development:
-- Onion Routing v2 (4+ peers, weight-based selection)
 - PWA + F-Droid
-- Channels with weight levels
-- Emergent trust
+- Offline communication (Bluetooth mesh, Wi-Fi Direct)
+- Traffic morphing
+- Image steganography
 - ISOTOPE Enterprise (B2B data exchange)
 - ISOTOPE AI Mesh (distributed AI inference)
 
