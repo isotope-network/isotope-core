@@ -15,11 +15,13 @@ jobs:
       - name: Push to GitLab
         run: |
           git remote add gitlab https://oauth2:${{ secrets.GITLAB_TOKEN }}@gitlab.com/isotope-network/isotope-core.git
-          git push --mirror --force gitlab
+          git push --force gitlab main:main
+          git push --force gitlab --tags
         continue-on-error: true
 
       - name: Push to Codeberg
         run: |
           git remote add codeberg https://oauth2:${{ secrets.CODEBERG_TOKEN }}@codeberg.org/isotope-network/isotope-core.git
-          git push --mirror --force codeberg
+          git push --force codeberg main:main
+          git push --force codeberg --tags
         continue-on-error: true
