@@ -12,6 +12,11 @@ services:
     environment:
       - NODE_ID=1
       - ISOTOPE_STATE_PASSWORD=${ISOTOPE_STATE_PASSWORD:-}
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
 
   node2:
     build: ./node
@@ -26,6 +31,11 @@ services:
     environment:
       - NODE_ID=2
       - ISOTOPE_STATE_PASSWORD=${ISOTOPE_STATE_PASSWORD:-}
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
 
   node3:
     build: ./node
@@ -40,6 +50,11 @@ services:
     environment:
       - NODE_ID=3
       - ISOTOPE_STATE_PASSWORD=${ISOTOPE_STATE_PASSWORD:-}
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
 
   node4:
     build: ./node
@@ -54,6 +69,11 @@ services:
     environment:
       - NODE_ID=4
       - ISOTOPE_STATE_PASSWORD=${ISOTOPE_STATE_PASSWORD:-}
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
 
   node5:
     build: ./node
@@ -68,6 +88,11 @@ services:
     environment:
       - NODE_ID=5
       - ISOTOPE_STATE_PASSWORD=${ISOTOPE_STATE_PASSWORD:-}
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
 
 networks:
   isotope-net:

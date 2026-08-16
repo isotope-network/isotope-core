@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -27,7 +28,7 @@ func (n *Node) handleSend(w http.ResponseWriter, r *http.Request) {
 		Message  string `json:"message"`
 		Priority int    `json:"priority"`
 		Mode     int    `json:"mode"`
-		TTL      int    `json:"ttl"` // секунды, 0 = вечно
+		TTL      int    `json:"ttl"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Message == "" {
 		http.Error(w, "missing message field", http.StatusBadRequest)
@@ -49,6 +50,23 @@ func (n *Node) handleSend(w http.ResponseWriter, r *http.Request) {
 		n.processMessageWithModeAndTTL(req.Message, n.host.ID().String()[:8], true, req.Mode, expiresAt)
 	} else {
 		n.processMessageWithTTL(req.Message, n.host.ID().String()[:8], true, expiresAt)
+	}
+
+	// Форвардинг обфусцированного сообщения соседям
+	if n.host != nil {
+		go func() {
+			for _, p := range n.host.Network().Peers() {
+				randomDelay(5, 25)
+				obfuscated := n.obfuscate(req.Message)
+				ctx := context.Background()
+				s, err := n.host.NewStream(ctx, p, protocolID)
+				if err != nil {
+					continue
+				}
+				fmt.Fprintf(s, "%s\n", obfuscated)
+				s.Close()
+			}
+		}()
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -358,6 +376,24 @@ func (n *Node) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 			} else {
 				n.processMessageWithTTL(req.Message, n.host.ID().String()[:8], true, expiresAt)
 			}
+
+			// Форвардинг обфусцированного сообщения
+			if n.host != nil {
+				go func() {
+					for _, p := range n.host.Network().Peers() {
+						randomDelay(5, 25)
+						obfuscated := n.obfuscate(req.Message)
+						ctx := context.Background()
+						s, err := n.host.NewStream(ctx, p, protocolID)
+						if err != nil {
+							continue
+						}
+						fmt.Fprintf(s, "%s\n", obfuscated)
+						s.Close()
+					}
+				}()
+			}
+
 			conn.WriteMessage(websocket.TextMessage, []byte(fmt.Sprintf(`{"type":"status","status":"sent","mode":%d,"ttl":%d}`, req.Mode, req.TTL)))
 		}
 	}

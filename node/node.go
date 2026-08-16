@@ -2,10 +2,16 @@ package main
 
 import (
 	"context"
+	"crypto/aes"
+	"crypto/cipher"
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
-	"math/rand"
+	"math/big"
 	"net/http"
 	"os"
 	"strconv"
@@ -28,6 +34,8 @@ const protocolID = "/sbicore/1.0.0"
 const syncProtocolID = "/sbicore/sync/1.0.0"
 const pingProtocolID = "/sbicore/ping/1.0.0"
 
+const OBFUSCATION_PREFIX = "[SHUF]"
+
 type Node struct {
 	host             host.Host
 	ethHash          string
@@ -47,6 +55,74 @@ type Node struct {
 	deadPeers        map[string]bool
 }
 
+func (n *Node) getObfuscationKey() []byte {
+	hash := sha256.Sum256([]byte(n.ethHash))
+	return hash[:]
+}
+
+func (n *Node) obfuscate(msg string) string {
+	key := n.getObfuscationKey()
+	block, err := aes.NewCipher(key)
+	if err != nil {
+		return msg
+	}
+
+	gcm, err := cipher.NewGCM(block)
+	if err != nil {
+		return msg
+	}
+
+	nonce := make([]byte, gcm.NonceSize())
+	if _, err := io.ReadFull(rand.Reader, nonce); err != nil {
+		return msg
+	}
+
+	ciphertext := gcm.Seal(nonce, nonce, []byte(msg), nil)
+	return OBFUSCATION_PREFIX + base64.StdEncoding.EncodeToString(ciphertext)
+}
+
+func (n *Node) deobfuscate(data string) (string, bool) {
+	if !strings.HasPrefix(data, OBFUSCATION_PREFIX) {
+		return data, false
+	}
+
+	encoded := strings.TrimPrefix(data, OBFUSCATION_PREFIX)
+	ciphertext, err := base64.StdEncoding.DecodeString(encoded)
+	if err != nil {
+		return data, false
+	}
+
+	key := n.getObfuscationKey()
+	block, err := aes.NewCipher(key)
+	if err != nil {
+		return data, false
+	}
+
+	gcm, err := cipher.NewGCM(block)
+	if err != nil {
+		return data, false
+	}
+
+	nonceSize := gcm.NonceSize()
+	if len(ciphertext) < nonceSize {
+		return data, false
+	}
+
+	nonce, ciphertext := ciphertext[:nonceSize], ciphertext[nonceSize:]
+	plaintext, err := gcm.Open(nil, nonce, ciphertext, nil)
+	if err != nil {
+		return data, false
+	}
+
+	return string(plaintext), true
+}
+
+func randomDelay(minMs, maxMs int) {
+	n, _ := rand.Int(rand.Reader, big.NewInt(int64(maxMs-minMs)))
+	delay := time.Duration(minMs+int(n.Int64())) * time.Millisecond
+	time.Sleep(delay)
+}
+
 func (n *Node) HandlePeerFound(peerInfo peer.AddrInfo) {
 	ctx := context.Background()
 	if err := n.host.Connect(ctx, peerInfo); err != nil {
@@ -62,13 +138,19 @@ func (n *Node) HandlePeerFound(peerInfo peer.AddrInfo) {
 
 func (n *Node) handleStream(stream network.Stream) {
 	defer stream.Close()
-	buf := make([]byte, 4096)
+	buf := make([]byte, 8192)
 	nr, err := stream.Read(buf)
 	if err != nil {
 		log.Println("Read error:", err)
 		return
 	}
 	msg := strings.TrimSpace(string(buf[:nr]))
+
+	if plaintext, ok := n.deobfuscate(msg); ok {
+		msg = plaintext
+		log.Printf("[OBF] Деобфусцировано сообщение от %s", stream.Conn().RemotePeer().String()[:8])
+	}
+
 	if msg == n.ethHash {
 		stream.Write([]byte("ACCEPTED\n"))
 		log.Println("Accepted peer:", stream.Conn().RemotePeer())
@@ -95,10 +177,9 @@ func (n *Node) handleStream(stream network.Stream) {
 	}
 
 	log.Printf("[MSG] P2P сообщение от %s: %s", remoteID, msg)
-	n.processMessage(msg, remoteID, false)
+	n.processMessageInternal(msg, remoteID, false, time.Time{})
 }
 
-// handlePingStream — отвечает на пинги
 func (n *Node) handlePingStream(stream network.Stream) {
 	defer stream.Close()
 
@@ -114,7 +195,6 @@ func (n *Node) handlePingStream(stream network.Stream) {
 	}
 }
 
-// pingPeers — фоновая проверка живости соседей
 func (n *Node) pingPeers() {
 	go func() {
 		for {
@@ -157,7 +237,6 @@ func (n *Node) pingPeers() {
 	}()
 }
 
-// markPeerAlive — отмечает пира живым
 func (n *Node) markPeerAlive(peerID string) {
 	n.mu.Lock()
 	defer n.mu.Unlock()
@@ -176,7 +255,6 @@ func (n *Node) markPeerAlive(peerID string) {
 	}
 }
 
-// markPeerDead — отмечает пира мёртвым
 func (n *Node) markPeerDead(peerID string) {
 	n.mu.Lock()
 	defer n.mu.Unlock()
@@ -191,14 +269,12 @@ func (n *Node) markPeerDead(peerID string) {
 	}
 }
 
-// isPeerDead — проверяет, мёртв ли пир
 func (n *Node) isPeerDead(peerID string) bool {
 	n.mu.Lock()
 	defer n.mu.Unlock()
 	return n.deadPeers[peerID]
 }
 
-// processMessageRelayed — обрабатывает сообщение, пришедшее через relay-цепочку
 func (n *Node) processMessageRelayed(msg string, senderID string) {
 	id := generateMsgID(msg)
 	newMsg := Message{
@@ -224,12 +300,10 @@ func (n *Node) processMessageRelayed(msg string, senderID string) {
 	}()
 }
 
-// processMessageWithTTL — обычный режим с таймером жизни
 func (n *Node) processMessageWithTTL(msg string, senderID string, isOwn bool, expiresAt time.Time) {
 	n.processMessageInternal(msg, senderID, isOwn, expiresAt)
 }
 
-// processMessageWithModeAndTTL — анонимный режим с таймером жизни
 func (n *Node) processMessageWithModeAndTTL(msg string, senderID string, isOwn bool, mode int, expiresAt time.Time) {
 	if mode == 0 || n.host == nil {
 		n.processMessageInternal(msg, senderID, isOwn, expiresAt)
@@ -259,12 +333,10 @@ func (n *Node) processMessageWithModeAndTTL(msg string, senderID string, isOwn b
 	n.sendViaRelayChain(relays, msg)
 }
 
-// processMessageWithMode — без TTL
 func (n *Node) processMessageWithMode(msg string, senderID string, isOwn bool, mode int) {
 	n.processMessageWithModeAndTTL(msg, senderID, isOwn, mode, time.Time{})
 }
 
-// selectRelays — выбирает случайных ЖИВЫХ пиров для цепочки
 func (n *Node) selectRelays(count int) []string {
 	peers := n.host.Network().Peers()
 
@@ -283,31 +355,37 @@ func (n *Node) selectRelays(count int) []string {
 		return result
 	}
 
-	rand.Seed(time.Now().UnixNano())
-	rand.Shuffle(len(alive), func(i, j int) {
-		alive[i], alive[j] = alive[j], alive[i]
-	})
+	perm := make([]int, len(alive))
+	for i := range perm {
+		perm[i] = i
+	}
+	for i := len(perm) - 1; i > 0; i-- {
+		j, _ := rand.Int(rand.Reader, big.NewInt(int64(i+1)))
+		perm[i], perm[int(j.Int64())] = perm[int(j.Int64())], perm[i]
+	}
 
-	var result []string
+	result := make([]string, count)
 	for i := 0; i < count; i++ {
-		result = append(result, alive[i].String())
+		result[i] = alive[perm[i]].String()
 	}
 	return result
 }
 
-// sendViaRelayChain — отправляет сообщение через цепочку relay-пиров
 func (n *Node) sendViaRelayChain(relays []string, msg string) {
 	if len(relays) == 0 {
 		return
 	}
 
-	chainMsg := fmt.Sprintf("CHAIN:%s:%s", strings.Join(relays[1:], ","), msg)
+	obfuscated := n.obfuscate(msg)
+	chainMsg := fmt.Sprintf("CHAIN:%s:%s", strings.Join(relays[1:], ","), obfuscated)
 
 	relayPeer, err := peer.Decode(relays[0])
 	if err != nil {
 		log.Printf("[ONION] Invalid relay peer ID %s: %v", relays[0][:8], err)
 		return
 	}
+
+	randomDelay(10, 50)
 
 	ctx := context.Background()
 	s, err := n.host.NewStream(ctx, relayPeer, protocolID)
@@ -321,15 +399,13 @@ func (n *Node) sendViaRelayChain(relays []string, msg string) {
 		log.Printf("[ONION] Failed to write to first relay %s: %v", relays[0][:8], err)
 		return
 	}
-	log.Printf("[ONION] Сообщение отправлено через цепочку из %d пиров", len(relays))
+	log.Printf("[ONION] Сообщение отправлено через цепочку из %d пиров (обфусцировано)", len(relays))
 }
 
-// processMessage — обычная обработка (без TTL)
 func (n *Node) processMessage(msg string, senderID string, isOwn bool) {
 	n.processMessageInternal(msg, senderID, isOwn, time.Time{})
 }
 
-// processMessageInternal — общая логика с поддержкой expiresAt
 func (n *Node) processMessageInternal(msg string, senderID string, isOwn bool, expiresAt time.Time) {
 	log.Printf("[MSG] Обработка сообщения: %s (от %s)", msg, senderID)
 
@@ -491,59 +567,6 @@ func (n *Node) processMessageInternal(msg string, senderID string, isOwn bool, e
 		}
 	}()
 
-	if !isOwn && n.host != nil {
-		ttl := 3
-		if priority > 50 {
-			ttl = 6
-		}
-
-		recommended := n.assoc.GetRecommendations(senderID, 3)
-		if len(recommended) > 0 {
-			log.Printf("[ASSOC] Рекомендованные пиры для %s: %v", senderID, recommended)
-			for _, recID := range recommended {
-				for _, p := range n.host.Network().Peers() {
-					if p.String()[:8] == recID {
-						go func(peerID peer.ID) {
-							ctx := context.Background()
-							s, err := n.host.NewStream(ctx, peerID, protocolID)
-							if err != nil {
-								return
-							}
-							defer s.Close()
-							fmt.Fprintf(s, "%s\n", msg)
-						}(p)
-						break
-					}
-				}
-			}
-		}
-
-		for _, p := range n.host.Network().Peers() {
-			if p.String()[:8] == senderID {
-				continue
-			}
-			alreadySent := false
-			for _, recID := range recommended {
-				if recID == p.String()[:8] {
-					alreadySent = true
-					break
-				}
-			}
-			if alreadySent {
-				continue
-			}
-			go func(peerID peer.ID) {
-				ctx := context.Background()
-				s, err := n.host.NewStream(ctx, peerID, protocolID)
-				if err != nil {
-					return
-				}
-				defer s.Close()
-				fmt.Fprintf(s, "%s\n", msg)
-			}(p)
-		}
-		_ = ttl
-	}
 	log.Println("[MSG] Обработка сообщения завершена")
 }
 
@@ -691,7 +714,6 @@ func (n *Node) start() {
 		log.Println("[INIT] Initial layer created with love vector")
 	}
 
-	// Селф-хилинг: запускаем heartbeat
 	n.pingPeers()
 
 	go func() {

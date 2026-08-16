@@ -49,3 +49,8 @@ coverage/
 
 # Genesis в node
 node/genesis/
+
+# Временные JSON-файлы (результаты тестов)
+*.json.tmp
+n2.json
+node2_messages.json
