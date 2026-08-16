@@ -73,6 +73,73 @@ func (n *Node) handleSend(w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte(fmt.Sprintf(`{"status":"ok","mode":%d,"ttl":%d}`, req.Mode, req.TTL)))
 }
 
+// handleSendStego — отправляет сообщение, спрятанное в WAV-файле
+// POST /send_stego {"message": "текст", "wav": "base64_wav_data"}
+func (n *Node) handleSendStego(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "only POST allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req struct {
+		Message string `json:"message"`
+		WAV     string `json:"wav"` // base64 WAV
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Message == "" || req.WAV == "" {
+		http.Error(w, "missing message or wav field", http.StatusBadRequest)
+		return
+	}
+
+	wavBytes, err := base64ToWav(req.WAV)
+	if err != nil {
+		http.Error(w, "invalid wav base64", http.StatusBadRequest)
+		return
+	}
+
+	if !isWAV(wavBytes) {
+		http.Error(w, "invalid WAV format", http.StatusBadRequest)
+		return
+	}
+
+	// Шифруем сообщение
+	key := n.getObfuscationKey()
+	encrypted := n.obfuscate(req.Message)
+	encryptedBytes := []byte(encrypted)
+
+	// Встраиваем в WAV
+	wavWithData, err := embedLSB(wavBytes, encryptedBytes, key)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("embed failed: %v", err), http.StatusBadRequest)
+		return
+	}
+
+	// Кодируем в base64 для передачи
+	stegoMsg := "[STEGO]" + wavToBase64(wavWithData)
+
+	// Сохраняем локально
+	n.processMessageWithTTL(req.Message, n.host.ID().String()[:8], true, time.Time{})
+
+	// Форвардим стего-сообщение соседям
+	if n.host != nil {
+		go func() {
+			for _, p := range n.host.Network().Peers() {
+				randomDelay(10, 50)
+				ctx := context.Background()
+				s, err := n.host.NewStream(ctx, p, protocolID)
+				if err != nil {
+					continue
+				}
+				fmt.Fprintf(s, "%s\n", stegoMsg)
+				s.Close()
+			}
+		}()
+	}
+
+	log.Printf("[STEGO] Сообщение спрятано в WAV и отправлено: %s", req.Message)
+	w.Header().Set("Content-Type", "application/json")
+	w.Write([]byte(`{"status":"ok","mode":3}`))
+}
+
 // handleMessages — возвращает все сообщения в формате JSON (новые сверху)
 func (n *Node) handleMessages(w http.ResponseWriter, r *http.Request) {
 	msgs := n.memory.GetAll()
@@ -377,7 +444,6 @@ func (n *Node) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 				n.processMessageWithTTL(req.Message, n.host.ID().String()[:8], true, expiresAt)
 			}
 
-			// Форвардинг обфусцированного сообщения
 			if n.host != nil {
 				go func() {
 					for _, p := range n.host.Network().Peers() {

@@ -35,6 +35,7 @@ const syncProtocolID = "/sbicore/sync/1.0.0"
 const pingProtocolID = "/sbicore/ping/1.0.0"
 
 const OBFUSCATION_PREFIX = "[SHUF]"
+const STEGO_PREFIX = "[STEGO]"
 
 type Node struct {
 	host             host.Host
@@ -138,7 +139,7 @@ func (n *Node) HandlePeerFound(peerInfo peer.AddrInfo) {
 
 func (n *Node) handleStream(stream network.Stream) {
 	defer stream.Close()
-	buf := make([]byte, 8192)
+	buf := make([]byte, 2*1024*1024)
 	nr, err := stream.Read(buf)
 	if err != nil {
 		log.Println("Read error:", err)
@@ -146,6 +147,26 @@ func (n *Node) handleStream(stream network.Stream) {
 	}
 	msg := strings.TrimSpace(string(buf[:nr]))
 
+	// Стего-сообщение
+	if strings.HasPrefix(msg, STEGO_PREFIX) {
+		stegoB64 := strings.TrimPrefix(msg, STEGO_PREFIX)
+		wavBytes, err := base64ToWav(stegoB64)
+		if err == nil && isWAV(wavBytes) {
+			key := n.getObfuscationKey()
+			extracted, err := extractLSB(wavBytes, key)
+			if err == nil {
+				if plaintext, ok := n.deobfuscate(string(extracted)); ok {
+					log.Printf("[STEGO] Извлечено скрытое сообщение: %s", plaintext)
+					n.processMessage(plaintext, stream.Conn().RemotePeer().String()[:8], false)
+					return
+				}
+			}
+		}
+		log.Println("[STEGO] Не удалось извлечь сообщение")
+		return
+	}
+
+	// Деобфускация обычных сообщений
 	if plaintext, ok := n.deobfuscate(msg); ok {
 		msg = plaintext
 		log.Printf("[OBF] Деобфусцировано сообщение от %s", stream.Conn().RemotePeer().String()[:8])
@@ -177,7 +198,7 @@ func (n *Node) handleStream(stream network.Stream) {
 	}
 
 	log.Printf("[MSG] P2P сообщение от %s: %s", remoteID, msg)
-	n.processMessageInternal(msg, remoteID, false, time.Time{})
+	n.processMessage(msg, remoteID, false)
 }
 
 func (n *Node) handlePingStream(stream network.Stream) {
@@ -750,6 +771,7 @@ func (n *Node) start() {
 		http.ServeFile(w, r, "index.html")
 	})
 	http.HandleFunc("/send", n.handleSend)
+	http.HandleFunc("/send_stego", n.handleSendStego)
 	http.HandleFunc("/messages", n.handleMessages)
 	http.HandleFunc("/status", n.handleStatus)
 	http.HandleFunc("/health", n.handleHealth)
