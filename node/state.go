@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"io"
 	"os"
+	"strconv"
 )
 
 // ============================================================
@@ -101,7 +102,6 @@ func (n *Node) saveState() error {
 		return err
 	}
 
-	// Шифруем, если задан пароль
 	password := os.Getenv("ISOTOPE_STATE_PASSWORD")
 	if password != "" {
 		data, err = encryptData(data, password)
@@ -133,4 +133,17 @@ func (n *Node) loadStateData() ([]byte, error) {
 	}
 
 	return data, nil
+}
+
+// savePrivateKey — сохраняет приватный ключ в отдельный файл
+func (n *Node) savePrivateKey(key []byte) error {
+	if err := os.MkdirAll("state", 0755); err != nil {
+		return err
+	}
+	return os.WriteFile("state/private_key_"+strconv.Itoa(n.nodeID)+".bin", key, 0600)
+}
+
+// loadPrivateKey — загружает приватный ключ
+func (n *Node) loadPrivateKey() ([]byte, error) {
+	return os.ReadFile("state/private_key_" + strconv.Itoa(n.nodeID) + ".bin")
 }

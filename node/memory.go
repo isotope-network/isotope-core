@@ -11,19 +11,21 @@ import (
 
 // Message — структура одного сообщения
 type Message struct {
-	ID        string    `json:"id"`
-	Text      string    `json:"text"`
-	Sender    string    `json:"sender"`
-	Time      string    `json:"time"`
-	IsOwn     bool      `json:"isOwn"`
-	Score     int       `json:"score"`
-	Weight    float64   `json:"weight"`
-	Created   time.Time `json:"created"`
-	Archived  bool      `json:"archived"`
-	Priority  int       `json:"priority"`
-	Mode      int       `json:"mode"`
-	Relayed   bool      `json:"relayed"`
-	ExpiresAt time.Time `json:"expiresAt"` // zero = никогда
+	ID              string    `json:"id"`
+	Text            string    `json:"text"`
+	Sender          string    `json:"sender"`
+	Time            string    `json:"time"`
+	IsOwn           bool      `json:"isOwn"`
+	Score           int       `json:"score"`
+	Weight          float64   `json:"weight"`
+	Created         time.Time `json:"created"`
+	Archived        bool      `json:"archived"`
+	Priority        int       `json:"priority"`
+	Mode            int       `json:"mode"`
+	Relayed         bool      `json:"relayed"`
+	ExpiresAt       time.Time `json:"expiresAt"`
+	ReplicatedFrom  string    `json:"replicatedFrom"` // от какого узла реплика
+	ReplicatedAt    time.Time `json:"replicatedAt"`   // когда реплицировано
 }
 
 // Memory — потокобезопасное хранилище сообщений (без лимита)
@@ -230,6 +232,32 @@ func (m *Memory) DeleteExpired() int {
 	}
 	m.messages = alive
 	return removed
+}
+
+// GetMessagesFrom — возвращает сообщения от определённого узла
+func (m *Memory) GetMessagesFrom(senderID string) []Message {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var result []Message
+	for _, msg := range m.messages {
+		if msg.Sender == senderID || msg.ReplicatedFrom == senderID {
+			result = append(result, msg)
+		}
+	}
+	return result
+}
+
+// GetReplicasFor — возвращает реплики, хранящиеся для определённого узла
+func (m *Memory) GetReplicasFor(nodeID string) []Message {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var result []Message
+	for _, msg := range m.messages {
+		if msg.ReplicatedFrom == nodeID {
+			result = append(result, msg)
+		}
+	}
+	return result
 }
 
 // ============================================================

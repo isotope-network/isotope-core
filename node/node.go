@@ -36,6 +36,8 @@ const pingProtocolID = "/sbicore/ping/1.0.0"
 
 const OBFUSCATION_PREFIX = "[SHUF]"
 const STEGO_PREFIX = "[STEGO]"
+const REPLICA_PREFIX = "[REPLICA]"
+const RESTORE_PREFIX = "[RESTORE]"
 
 type Node struct {
 	host             host.Host
@@ -147,7 +149,31 @@ func (n *Node) handleStream(stream network.Stream) {
 	}
 	msg := strings.TrimSpace(string(buf[:nr]))
 
-	// Стего-сообщение
+	if strings.HasPrefix(msg, REPLICA_PREFIX) {
+		payload := strings.TrimPrefix(msg, REPLICA_PREFIX)
+		var replicaMsg Message
+		if err := json.Unmarshal([]byte(payload), &replicaMsg); err == nil {
+			replicaMsg.ReplicatedAt = time.Now()
+			if n.memory.Add(replicaMsg) {
+				log.Printf("[REPLICA] Сохранена реплика от %s: %s", replicaMsg.Sender[:8], replicaMsg.Text)
+			}
+		}
+		return
+	}
+
+	if strings.HasPrefix(msg, RESTORE_PREFIX) {
+		nodeID := strings.TrimPrefix(msg, RESTORE_PREFIX)
+		replicas := n.memory.GetReplicasFor(nodeID)
+		if len(replicas) > 0 {
+			for _, r := range replicas {
+				data, _ := json.Marshal(r)
+				stream.Write([]byte(REPLICA_PREFIX + string(data) + "\n"))
+			}
+			log.Printf("[RESTORE] Отправлено %d реплик для узла %s", len(replicas), nodeID[:8])
+		}
+		return
+	}
+
 	if strings.HasPrefix(msg, STEGO_PREFIX) {
 		stegoB64 := strings.TrimPrefix(msg, STEGO_PREFIX)
 		wavBytes, err := base64ToWav(stegoB64)
@@ -166,7 +192,6 @@ func (n *Node) handleStream(stream network.Stream) {
 		return
 	}
 
-	// Деобфускация обычных сообщений
 	if plaintext, ok := n.deobfuscate(msg); ok {
 		msg = plaintext
 		log.Printf("[OBF] Деобфусцировано сообщение от %s", stream.Conn().RemotePeer().String()[:8])
@@ -199,6 +224,21 @@ func (n *Node) handleStream(stream network.Stream) {
 
 	log.Printf("[MSG] P2P сообщение от %s: %s", remoteID, msg)
 	n.processMessage(msg, remoteID, false)
+}
+
+func (n *Node) handleReplicaData(data string) {
+	for _, line := range strings.Split(data, "\n") {
+		if strings.HasPrefix(line, REPLICA_PREFIX) {
+			payload := strings.TrimPrefix(line, REPLICA_PREFIX)
+			var replicaMsg Message
+			if err := json.Unmarshal([]byte(payload), &replicaMsg); err == nil {
+				replicaMsg.ReplicatedAt = time.Now()
+				if n.memory.Add(replicaMsg) {
+					log.Printf("[REPLICA] Сохранена реплика от %s: %s", replicaMsg.Sender[:8], replicaMsg.Text)
+				}
+			}
+		}
+	}
 }
 
 func (n *Node) handlePingStream(stream network.Stream) {
@@ -312,6 +352,7 @@ func (n *Node) processMessageRelayed(msg string, senderID string) {
 	}
 	if n.memory.Add(newMsg) {
 		log.Printf("[ONION] Сообщение доставлено через relay и сохранено: %s", msg)
+		n.replicateMessage(newMsg)
 	}
 
 	go func() {
@@ -319,6 +360,92 @@ func (n *Node) processMessageRelayed(msg string, senderID string) {
 			log.Printf("[ERROR] Ошибка сохранения состояния: %v", err)
 		}
 	}()
+}
+
+func (n *Node) replicateMessage(msg Message) {
+	if n.host == nil {
+		return
+	}
+
+	msg.ReplicatedFrom = msg.Sender
+	data, err := json.Marshal(msg)
+	if err != nil {
+		return
+	}
+
+	peers := n.host.Network().Peers()
+	var alive []peer.ID
+	for _, p := range peers {
+		if !n.isPeerDead(p.String()) {
+			alive = append(alive, p)
+		}
+	}
+
+	if len(alive) == 0 {
+		return
+	}
+
+	perm := make([]int, len(alive))
+	for i := range perm {
+		perm[i] = i
+	}
+	for i := len(perm) - 1; i > 0; i-- {
+		j, _ := rand.Int(rand.Reader, big.NewInt(int64(i+1)))
+		perm[i], perm[int(j.Int64())] = perm[int(j.Int64())], perm[i]
+	}
+
+	replicaCount := 2
+	if len(alive) < replicaCount {
+		replicaCount = len(alive)
+	}
+
+	for i := 0; i < replicaCount; i++ {
+		go func(peerID peer.ID) {
+			randomDelay(10, 30)
+			ctx := context.Background()
+			s, err := n.host.NewStream(ctx, peerID, protocolID)
+			if err != nil {
+				return
+			}
+			defer s.Close()
+			fmt.Fprintf(s, "%s%s\n", REPLICA_PREFIX, string(data))
+		}(alive[perm[i]])
+	}
+
+	log.Printf("[REPLICA] Сообщение реплицировано на %d узлов", replicaCount)
+}
+
+func (n *Node) requestRestore() {
+	if n.host == nil {
+		return
+	}
+
+	myID := n.host.ID().String()[:8]
+	peers := n.host.Network().Peers()
+
+	for _, p := range peers {
+		go func(peerID peer.ID) {
+			randomDelay(100, 500)
+			ctx := context.Background()
+			s, err := n.host.NewStream(ctx, peerID, protocolID)
+			if err != nil {
+				return
+			}
+			defer s.Close()
+
+			fmt.Fprintf(s, "%s%s\n", RESTORE_PREFIX, myID)
+
+			// Читаем ответы
+			buf := make([]byte, 2*1024*1024)
+			s.SetReadDeadline(time.Now().Add(5 * time.Second))
+			nr, _ := s.Read(buf)
+			if nr > 0 {
+				response := strings.TrimSpace(string(buf[:nr]))
+				n.handleReplicaData(response)
+			}
+		}(p)
+	}
+	log.Printf("[RESTORE] Запрошены реплики у %d соседей", len(peers))
 }
 
 func (n *Node) processMessageWithTTL(msg string, senderID string, isOwn bool, expiresAt time.Time) {
@@ -553,6 +680,8 @@ func (n *Node) processMessageInternal(msg string, senderID string, isOwn bool, e
 			log.Printf("[TRAIN] Новый слой добавлен! Всего слоёв: %d", len(n.layers))
 		}
 		n.mu.Unlock()
+
+		n.replicateMessage(newMsg)
 	} else {
 		log.Printf("[MSG] Сообщение-дубликат: %s", msg)
 	}
@@ -572,6 +701,7 @@ func (n *Node) processMessageInternal(msg string, senderID string, isOwn bool, e
 		}
 		if n.memory.Add(answerMsg) {
 			log.Printf("[MSG] Ответ сети сохранён: %s", answer)
+			n.replicateMessage(answerMsg)
 		}
 	}
 
@@ -678,10 +808,25 @@ func (n *Node) start() {
 		log.Println("[INIT] Состояние успешно загружено")
 	}
 
-	priv, _, err := crypto.GenerateKeyPair(crypto.RSA, 2048)
+	// Стабильный ключ
+	var priv crypto.PrivKey
+	keyBytes, err := n.loadPrivateKey()
 	if err != nil {
-		log.Fatal(err)
+		priv, _, err = crypto.GenerateKeyPair(crypto.RSA, 2048)
+		if err != nil {
+			log.Fatal(err)
+		}
+		keyBytes, _ = crypto.MarshalPrivateKey(priv)
+		n.savePrivateKey(keyBytes)
+		log.Printf("[INIT] Сгенерирован новый стабильный ключ узла")
+	} else {
+		priv, err = crypto.UnmarshalPrivateKey(keyBytes)
+		if err != nil {
+			log.Fatal(err)
+		}
+		log.Printf("[INIT] Загружен стабильный ключ узла")
 	}
+
 	host, err := libp2p.New(
 		libp2p.ListenAddrStrings(
 			"/ip4/0.0.0.0/tcp/9000",
@@ -736,6 +881,11 @@ func (n *Node) start() {
 	}
 
 	n.pingPeers()
+
+	go func() {
+		time.Sleep(5 * time.Second)
+		n.requestRestore()
+	}()
 
 	go func() {
 		for {
