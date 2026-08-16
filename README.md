@@ -103,6 +103,18 @@ The network lives as long as at least one node lives.
 This is not a flaw. This is an architectural property.
 Scale activates immunity.
 
+**Weight Access Model.**
+Node weight is a universal pass.
+
+| Weight | Rights |
+|--------|--------|
+| 0–0.3 | Read (teaser) |
+| 0.3–0.5 | Full access |
+| 0.5–0.7 | Comment, moderate |
+| 0.7–1.0 | Vote, relay, replicas |
+
+[Details →](docs/architecture/WEIGHT_ACCESS_MODEL.md)
+
 ---
 
 ## What the Architecture Enables
@@ -153,28 +165,32 @@ Once a day — a single notification:
 
 ## Status
 
-**v1.9 — stable.**
+**v1.15 — stable.**
 
 Implemented:
 - P2P network: libp2p + mDNS + DHT + Gossip
 - Priority Gossip: urgent messages propagate faster
 - Associative memory: nodes remember who asks whom
 - WebSocket + TLS: traffic indistinguishable from HTTPS
+- Obfuscation: AES-GCM + random delays
+- Voice steganography: LSB in WAV
 - Neural network: 100-dimensional vectors, bigrams, ethical filter
 - Weighted memory with archive and auto-cleanup
+- Expiring messages (TTL)
+- Local encryption (AES-256-GCM)
+- Self-healing: heartbeat, auto-restart
+- Replication: restore from neighbors
 - REST API + WebSocket
 - Mobile app (Flutter)
 - Network health monitoring
-- Delivery statuses with forwarding
 - 67 autotests
 - 5 nodes in docker-compose
-- Onion Routing foundation
 
 In development:
-- Onion Routing (full chain of 3+ peers)
+- Onion Routing v2 (4+ peers, weight-based selection)
 - PWA + F-Droid
-- Adaptive traffic masking
-- Steganography in media
+- Channels with weight levels
+- Emergent trust
 - ISOTOPE Enterprise (B2B data exchange)
 - ISOTOPE AI Mesh (distributed AI inference)
 
@@ -226,6 +242,7 @@ Nodes:
 - [Applications](docs/APPLICATIONS.md)
 - [Use Cases](docs/USE_CASES.md)
 - [Immunity Scale](docs/architecture/IMMUNITY_SCALE.md)
+- [Weight Access Model](docs/architecture/WEIGHT_ACCESS_MODEL.md)
 - [FAQ — Expert Questions](docs/FAQ.md)
 - [Contributing](CONTRIBUTING.md)
 - [Code of Conduct](CODE_OF_CONDUCT.md)
