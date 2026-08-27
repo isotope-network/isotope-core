@@ -1,4 +1,4 @@
-package main
+package core
 
 import (
 	"log"
@@ -13,10 +13,10 @@ import (
 // AdaptiveParams — параметры, которые сеть регулирует сама
 type AdaptiveParams struct {
 	mu               sync.Mutex
-	ArchiveThreshold float64   `json:"archiveThreshold"`
-	LearningRate     float64   `json:"learningRate"`
+	ArchiveThreshold float64       `json:"archiveThreshold"`
+	LearningRate     float64       `json:"learningRate"`
 	SyncInterval     time.Duration `json:"-"`
-	LastAdapted      time.Time `json:"lastAdapted"`
+	LastAdapted      time.Time     `json:"lastAdapted"`
 }
 
 // NewAdaptiveParams — начальные значения

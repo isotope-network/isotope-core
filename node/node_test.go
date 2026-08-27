@@ -1,4 +1,4 @@
-package main
+package core
 
 import (
 	"testing"
@@ -45,6 +45,18 @@ func TestProcessMessage_UsesIncomingMsgID(t *testing.T) {
 	}
 
 	n.processMessage("тест", "testsender", false)
+
+	all := n.memory.GetAll()
+	found := false
+	for _, msg := range all {
+		if msg.Text == "тест" && msg.Sender == "testsender" && !msg.IsOwn {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Error("Incoming message should be stored with correct sender and IsOwn=false")
+	}
 	t.Log("PASS")
 }
 

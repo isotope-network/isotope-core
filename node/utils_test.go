@@ -1,4 +1,4 @@
-package main
+package core
 
 import (
 	"strings"
@@ -333,9 +333,9 @@ func TestGenerateMsgID_HexChars(t *testing.T) {
 
 // TestHashText проверяет хеширование текста
 func TestHashText_NotEmpty(t *testing.T) {
-	h := hashText("something")
+	h := HashText("something")
 	if len(h) == 0 {
-		t.Error("hashText returned empty string")
+		t.Error("HashText returned empty string")
 	}
 }
 

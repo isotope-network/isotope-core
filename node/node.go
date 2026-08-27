@@ -1,4 +1,4 @@
-package main
+package core
 
 import (
 	"context"
@@ -39,6 +39,15 @@ const STEGO_PREFIX = "[STEGO]"
 const REPLICA_PREFIX = "[REPLICA]"
 const RESTORE_PREFIX = "[RESTORE]"
 
+// Config — конфигурация узла
+type Config struct {
+	EthHash    string   // этический хеш
+	Transports []string // ["ws"] или ["ws", "tcp"]
+	Bootstrap  []string // адреса bootstrap-пиров
+	Port       int      // порт для P2P (0 = автоматический)
+}
+
+// Node — основной узел сети
 type Node struct {
 	host             host.Host
 	ethHash          string
@@ -53,11 +62,32 @@ type Node struct {
 	msgCount         int
 	nodeID           int
 	stateFile        string
+	configTransports []string
+	configPort       int
+	configBootstrap  []string
 	mu               sync.Mutex
 	lastPing         map[string]time.Time
 	deadPeers        map[string]bool
 	adaptive         *AdaptiveParams
 	channels         *ChannelStore
+}
+
+// NewNode — создаёт новый узел
+func NewNode(cfg Config) *Node {
+	port := cfg.Port
+	if port == 0 {
+		port = 9000
+	}
+
+	return &Node{
+		ethHash:          cfg.EthHash,
+		configTransports: cfg.Transports,
+		configPort:       port,
+		configBootstrap:  cfg.Bootstrap,
+		memory: Memory{
+			seen: make(map[string]bool),
+		},
+	}
 }
 
 func (n *Node) getObfuscationKey() []byte {
@@ -767,6 +797,10 @@ func migrateTime(t string) string {
 }
 
 func (n *Node) loadBootstrapPeers() []string {
+	if len(n.configBootstrap) > 0 {
+		return n.configBootstrap
+	}
+
 	var peers []string
 
 	if envPeers := os.Getenv("ISOTOPE_BOOTSTRAP_PEERS"); envPeers != "" {
@@ -794,11 +828,11 @@ func (n *Node) loadState() error {
 		return err
 	}
 	var state struct {
-		Messages []Message  `json:"messages"`
+		Messages []Message   `json:"messages"`
 		Layers   [][]float64 `json:"layers"`
-		MsgCount int        `json:"msgCount"`
-		PreHash  string     `json:"preHash"`
-		AntiHash string     `json:"antiHash"`
+		MsgCount int         `json:"msgCount"`
+		PreHash  string      `json:"preHash"`
+		AntiHash string      `json:"antiHash"`
 	}
 	if err := json.Unmarshal(data, &state); err != nil {
 		return err
@@ -824,20 +858,25 @@ func (n *Node) loadState() error {
 	return nil
 }
 
-func (n *Node) start() {
-	nodeIDStr := os.Getenv("NODE_ID")
-	if nodeIDStr == "" {
-		nodeIDStr = "1"
+// InitP2P — инициализирует P2P (libp2p, mDNS, bootstrap, обработчики)
+func (n *Node) InitP2P() error {
+	// Не трогаем stateFile, если он уже задан (например, из StartMobile)
+	if n.stateFile == "" {
+		nodeIDStr := os.Getenv("NODE_ID")
+		if nodeIDStr == "" {
+			nodeIDStr = "1"
+		}
+		nodeID, err := strconv.Atoi(nodeIDStr)
+		if err != nil {
+			nodeID = 1
+		}
+		n.nodeID = nodeID
+		n.stateFile = fmt.Sprintf("state/state_node%d.json", nodeID)
 	}
-	nodeID, err := strconv.Atoi(nodeIDStr)
-	if err != nil {
-		nodeID = 1
-	}
-	n.nodeID = nodeID
-	n.stateFile = fmt.Sprintf("state/state_node%d.json", nodeID)
+
 	n.adaptive = NewAdaptiveParams()
 	n.channels = NewChannelStore()
-	log.Printf("[INIT] Узел %d, файл состояния: %s", nodeID, n.stateFile)
+	log.Printf("[INIT] Узел %d, файл состояния: %s", n.nodeID, n.stateFile)
 
 	if err := n.loadState(); err != nil {
 		log.Println("[INIT] Состояние не найдено или повреждено, начинаем с нуля")
@@ -850,7 +889,7 @@ func (n *Node) start() {
 	if err != nil {
 		priv, _, err = crypto.GenerateKeyPair(crypto.RSA, 2048)
 		if err != nil {
-			log.Fatal(err)
+			return fmt.Errorf("failed to generate key: %w", err)
 		}
 		keyBytes, _ = crypto.MarshalPrivateKey(priv)
 		n.savePrivateKey(keyBytes)
@@ -858,32 +897,45 @@ func (n *Node) start() {
 	} else {
 		priv, err = crypto.UnmarshalPrivateKey(keyBytes)
 		if err != nil {
-			log.Fatal(err)
+			return fmt.Errorf("failed to unmarshal key: %w", err)
 		}
 		log.Printf("[INIT] Загружен стабильный ключ узла")
 	}
 
-	host, err := libp2p.New(
-		libp2p.ListenAddrStrings(
-			"/ip4/0.0.0.0/tcp/9000",
-			"/ip4/0.0.0.0/tcp/9001/ws",
-		),
+	listenAddr := fmt.Sprintf("/ip4/0.0.0.0/tcp/%d", n.configPort)
+	listenWS := fmt.Sprintf("/ip4/0.0.0.0/tcp/%d/ws", n.configPort+1)
+
+	opts := []libp2p.Option{
+		libp2p.ListenAddrStrings(listenAddr, listenWS),
 		libp2p.Identity(priv),
-		libp2p.Transport(tcp.NewTCPTransport),
-		libp2p.Transport(websocket.New),
 		libp2p.Security(libp2ptls.ID, libp2ptls.New),
-	)
+	}
+
+	if len(n.configTransports) == 0 {
+		opts = append(opts, libp2p.Transport(websocket.New))
+	} else {
+		for _, t := range n.configTransports {
+			switch t {
+			case "ws":
+				opts = append(opts, libp2p.Transport(websocket.New))
+			case "tcp":
+				opts = append(opts, libp2p.Transport(tcp.NewTCPTransport))
+			}
+		}
+	}
+
+	host, err := libp2p.New(opts...)
 	if err != nil {
-		log.Fatal(err)
+		return fmt.Errorf("failed to create libp2p host: %w", err)
 	}
 	n.host = host
 	n.host.SetStreamHandler(protocolID, n.handleStream)
 	n.host.SetStreamHandler(syncProtocolID, n.handleSyncStream)
 	n.host.SetStreamHandler(pingProtocolID, n.handlePingStream)
 
-	mdnsService := mdns.NewMdnsService(n.host, "sbicore", n)
+	mdnsService := mdns.NewMdnsService(n.host, "_isotope._tcp.local", n)
 	if err := mdnsService.Start(); err != nil {
-		log.Fatal(err)
+		return fmt.Errorf("failed to start mDNS: %w", err)
 	}
 	log.Println("[INIT] Node started with ID:", host.ID())
 	log.Println("[INIT] Listening on:", host.Addrs())
@@ -958,6 +1010,11 @@ func (n *Node) start() {
 		}
 	}()
 
+	return nil
+}
+
+// StartHTTP — запускает HTTP-сервер на указанном порту (блокирует)
+func (n *Node) StartHTTP(port int) error {
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		http.ServeFile(w, r, "index.html")
 	})
@@ -988,11 +1045,101 @@ func (n *Node) start() {
 		}
 	})
 
+	log.Printf("[INIT] HTTP server listening on :%d", port)
+	return http.ListenAndServe(fmt.Sprintf(":%d", port), nil)
+}
+
+// StartMobile — запускает узел для мобильного (без HTTP, без блокировки)
+func (n *Node) StartMobile(stateFile string) error {
+	n.stateFile = stateFile
+	n.adaptive = NewAdaptiveParams()
+	n.channels = NewChannelStore()
+	return n.InitP2P()
+}
+
+// Stop — корректно завершает узел
+func (n *Node) Stop() error {
+	if err := n.saveState(); err != nil {
+		log.Printf("[ERROR] Ошибка сохранения состояния при остановке: %v", err)
+		return err
+	}
+	if n.host != nil {
+		return n.host.Close()
+	}
+	return nil
+}
+
+// GetMessages — возвращает все сообщения
+func (n *Node) GetMessages() []Message {
+	return n.memory.GetAll()
+}
+
+// GetPeers — возвращает список пиров
+func (n *Node) GetPeers() []string {
+	if n.host == nil {
+		return []string{}
+	}
+	peers := n.host.Network().Peers()
+	result := make([]string, 0, len(peers))
+	for _, p := range peers {
+		result = append(result, p.String())
+	}
+	return result
+}
+
+// GetWeight — возвращает вес узла
+func (n *Node) GetWeight() float64 {
+	msgs := n.memory.GetActiveMessages(0.5)
+	if len(msgs) == 0 {
+		return 0.5
+	}
+	total := 0.0
+	for _, m := range msgs {
+		total += m.Weight
+	}
+	return total / float64(len(msgs))
+}
+
+// GetStatus — возвращает JSON-статус узла
+func (n *Node) GetStatus() string {
+	if n.host == nil {
+		return `{"id":"","peers":0,"memory":0,"layers":0}`
+	}
+	return fmt.Sprintf(`{"id":"%s","peers":%d,"memory":%d,"layers":%d}`,
+		n.host.ID().String(),
+		len(n.host.Network().Peers()),
+		n.memory.Count(),
+		len(n.layers),
+	)
+}
+
+// SendMessage — отправляет сообщение
+func (n *Node) SendMessage(text string, ttl int) (string, error) {
+	if n.host == nil {
+		return "", fmt.Errorf("node not started")
+	}
+
+	var expiresAt time.Time
+	if ttl > 0 {
+		expiresAt = time.Now().Add(time.Duration(ttl) * time.Second)
+	}
+
+	id := generateMsgID(text)
+	n.processMessageWithTTL(text, n.host.ID().String()[:8], true, expiresAt)
+
 	go func() {
-		log.Println("[INIT] HTTP server listening on :8081")
-		if err := http.ListenAndServe(":8081", nil); err != nil {
-			log.Fatal(err)
+		for _, p := range n.host.Network().Peers() {
+			randomDelay(5, 25)
+			obfuscated := n.obfuscate(text)
+			ctx := context.Background()
+			s, err := n.host.NewStream(ctx, p, protocolID)
+			if err != nil {
+				continue
+			}
+			fmt.Fprintf(s, "%s\n", obfuscated)
+			s.Close()
 		}
 	}()
-	select {}
+
+	return id, nil
 }

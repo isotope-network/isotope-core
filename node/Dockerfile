@@ -1,17 +1,19 @@
-FROM golang:1.25-alpine AS builder
+FROM golang:1.25-alpine
 
 WORKDIR /app
+
+# Копируем go.mod и go.sum для кэширования зависимостей
 COPY go.mod go.sum ./
 RUN go mod download
-COPY . .
-RUN go build -o sbimain .   
 
-FROM alpine:latest
-RUN apk --no-cache add ca-certificates
-WORKDIR /root/
-COPY --from=builder /app/sbimain .
-COPY genesis/ethics_hash.txt ./genesis/
-COPY index.html /root/index.html
-COPY layers.html /root/layers.html
-EXPOSE 9000 9001
+# Копируем исходники
+COPY . .
+
+# Собираем из main/main.go
+RUN go build -o sbimain ./main
+
+# Порт для HTTP
+EXPOSE 8081
+
+# Запускаем
 CMD ["./sbimain"]

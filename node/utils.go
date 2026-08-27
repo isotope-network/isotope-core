@@ -1,4 +1,4 @@
-package main
+package core
 
 import (
 	"crypto/sha256"
@@ -9,7 +9,8 @@ import (
 
 const VectorDim = 100
 
-func hashText(text string) string {
+// HashText — хеширует текст (SHA-256, первые 8 байт в hex)
+func HashText(text string) string {
 	h := sha256.Sum256([]byte(text))
 	return fmt.Sprintf("%x", h[:8])
 }
