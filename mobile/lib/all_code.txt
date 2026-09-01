@@ -1,0 +1,1199 @@
+import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+import 'providers/chat_provider.dart';
+import 'screens/connect_screen.dart';
+
+void main() {
+  runApp(const IsoApp());
+}
+
+class IsoApp extends StatelessWidget {
+  const IsoApp({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return ChangeNotifierProvider(
+      create: (_) => ChatProvider(),
+      child: MaterialApp(
+        title: 'ИСО',
+        debugShowCheckedModeBanner: false,
+        theme: ThemeData(
+          useMaterial3: true,
+          colorSchemeSeed: Colors.green,
+          appBarTheme: const AppBarTheme(
+            backgroundColor: Colors.green,
+            foregroundColor: Colors.white,
+            elevation: 1,
+          ),
+        ),
+        home: const ConnectScreen(),
+      ),
+    );
+  }
+}=================  
+import 'package:flutter/foundation.dart';
+import '../models/message.dart';
+import '../services/api_service.dart';
+import '../services/ws_service.dart';
+import '../services/p2p_service.dart';
+
+class ChatProvider extends ChangeNotifier {
+  late ApiService api;
+  late WsService ws;
+  P2PService? p2p;
+
+  final Map<String, Message> _messagesMap = {};
+  final Set<String> _ownMessageIds = {};
+  String _activeChannel = 'general';
+  List<Map<String, dynamic>> _channels = [];
+  bool _wsConnected = false;
+  bool _loading = false;
+  String? _error;
+
+  List<Message> get messages {
+    final list = _messagesMap.values
+        .where((m) => m.sender != '🌐 Сеть')
+        .map((m) {
+          return Message(
+            id: m.id,
+            text: m.text,
+            sender: m.sender,
+            time: m.time,
+            isOwn: _ownMessageIds.contains(m.id),
+            score: m.score,
+            weight: m.weight,
+            archived: m.archived,
+            deliveryStatus: m.deliveryStatus,
+            channel: m.channel,
+          );
+        })
+        .toList();
+    list.sort((a, b) => a.time.compareTo(b.time));
+    return list;
+  }
+
+  String get activeChannel => _activeChannel;
+  List<Map<String, dynamic>> get channels => _channels;
+  bool get wsConnected => _wsConnected;
+  bool get loading => _loading;
+  String? get error => _error;
+
+  void configure({required ApiService api, required WsService ws, P2PService? p2p}) {
+    this.api = api;
+    this.ws = ws;
+    this.p2p = p2p;
+
+    // Подписываемся на входящие P2P-сообщения
+    p2p?.onMessage.listen((data) {
+      final msg = Message(
+        id: data['id'] ?? DateTime.now().millisecondsSinceEpoch.toString(),
+        text: data['text'] ?? '',
+        sender: data['sender'] ?? 'P2P',
+        time: data['time'] ?? DateTime.now().toIso8601String(),
+        isOwn: data['isOwn'] ?? false,
+        score: data['score'] ?? 0,
+        weight: data['weight'] ?? 0.5,
+        archived: data['archived'] ?? false,
+        channel: data['channel'] ?? _activeChannel,
+      );
+      _addMessage(msg);
+    });
+  }
+
+  void initWs() {
+    ws.onMessage = (msg) {
+      _addMessage(msg);
+    };
+
+    ws.onDisconnected = () {
+      _wsConnected = false;
+      notifyListeners();
+    };
+
+    ws.connect();
+    _wsConnected = ws.isConnected;
+    notifyListeners();
+  }
+
+  /// Добавляет внешнее сообщение (из P2P-истории)
+  void addExternalMessage(Map<String, dynamic> data) {
+    final msg = Message(
+      id: data['id'] ?? DateTime.now().millisecondsSinceEpoch.toString(),
+      text: data['text'] ?? '',
+      sender: data['sender'] ?? 'P2P',
+      time: data['time'] ?? DateTime.now().toIso8601String(),
+      isOwn: data['isOwn'] ?? false,
+      score: data['score'] ?? 0,
+      weight: data['weight'] ?? 0.5,
+      archived: data['archived'] ?? false,
+      channel: data['channel'] ?? _activeChannel,
+    );
+    _addMessage(msg);
+  }
+
+  String _messageKey(Message msg) {
+    final timeKey = msg.time.length >= 16 ? msg.time.substring(0, 16) : msg.time;
+    return '${msg.sender}|$timeKey|${msg.text}';
+  }
+
+  void _addMessage(Message msg) {
+    final key = _messageKey(msg);
+    if (!_messagesMap.containsKey(key)) {
+      _messagesMap[key] = msg;
+      notifyListeners();
+    }
+  }
+
+  Future<void> loadMessages() async {
+    _loading = true;
+    notifyListeners();
+
+    try {
+      final loaded = await api.getMessages();
+      for (final msg in loaded) {
+        _addMessage(msg);
+      }
+    } catch (_) {}
+
+    _loading = false;
+    notifyListeners();
+  }
+
+  Future<void> loadChannels() async {
+    try {
+      _channels = await api.getChannels();
+      notifyListeners();
+    } catch (_) {}
+  }
+
+  Future<void> sendMessage(String text) async {
+    if (text.trim().isEmpty) return;
+
+    final result = await api.sendMessage(text, channel: _activeChannel);
+    if (result != null) {
+      final msgId = result['id'] ?? DateTime.now().millisecondsSinceEpoch.toString();
+      _ownMessageIds.add(msgId);
+      final now = DateTime.now().toIso8601String();
+      _addMessage(Message(
+        id: msgId,
+        text: text,
+        sender: 'Вы',
+        time: now,
+        isOwn: true,
+        score: 0,
+        weight: 0.5,
+        archived: false,
+        channel: _activeChannel,
+      ));
+    }
+  }
+
+  void switchChannel(String channel) {
+    if (channel == _activeChannel) return;
+    _activeChannel = channel;
+    notifyListeners();
+  }
+
+  Future<void> sendFeedback(String id, int score) async {
+    await api.sendFeedback(id, score);
+    notifyListeners();
+  }
+}=================  
+import 'dart:async';
+import 'dart:convert';
+import 'dart:io';
+import 'package:flutter/services.dart';
+import 'package:flutter_blue_plus/flutter_blue_plus.dart';
+import 'package:multicast_dns/multicast_dns.dart';
+
+/// P2P-сервис: mDNS discovery + Bluetooth LE + HTTP-сервер
+class P2PService {
+  static const MethodChannel _nsdChannel = MethodChannel('isotope/nsd');
+
+  // mDNS
+  static const String _serviceName = '_isotope._tcp.local';
+  MDnsClient? _mdnsClient;
+  List<String> discoveredNodes = [];
+
+  // Bluetooth
+  static const String _blePrefix = 'ISOTOPE-';
+  List<BluetoothDevice> bleDevices = [];
+
+  // HTTP-сервер
+  HttpServer? _httpServer;
+  String? _localIp;
+
+  // История сообщений по узлам
+  final Map<String, List<Map<String, dynamic>>> _messageHistory = {};
+  final Map<String, int> _unreadCounts = {};
+
+  // Стримы
+  final _nodeController = StreamController<String>.broadcast();
+  Stream<String> get onNodeFound => _nodeController.stream;
+
+  final _messageController = StreamController<Map<String, dynamic>>.broadcast();
+  Stream<Map<String, dynamic>> get onMessage => _messageController.stream;
+
+  final _unreadController = StreamController<String>.broadcast();
+  Stream<String> get onUnread => _unreadController.stream;
+
+  final _logController = StreamController<String>.broadcast();
+  Stream<String> get onLog => _logController.stream;
+
+  /// Запускает HTTP-сервер
+  Future<String?> startHttpServer() async {
+    try {
+      _httpServer = await HttpServer.bind(InternetAddress.anyIPv4, 8081);
+      _localIp = await _getLocalIp();
+
+      _httpServer!.listen((request) async {
+        if (request.uri.path == '/status') {
+          request.response.headers.contentType = ContentType.json;
+          request.response.write('{"status":"ok","peer":"$_localIp"}');
+          request.response.close();
+        } else if (request.uri.path == '/messages') {
+          request.response.headers.contentType = ContentType.json;
+          request.response.write(json.encode(_messageHistory[_localIp] ?? []));
+          request.response.close();
+        } else if (request.uri.path == '/send' && request.method == 'POST') {
+          final body = await utf8.decodeStream(request);
+          try {
+            final data = json.decode(body);
+            final text = data['message'] ?? '';
+            final senderIp = request.connectionInfo?.remoteAddress.address ?? 'unknown';
+
+            if (text.isNotEmpty) {
+              final msg = {
+                'id': DateTime.now().millisecondsSinceEpoch.toString(),
+                'text': text,
+                'sender': senderIp,
+                'time': DateTime.now().toIso8601String(),
+                'isOwn': false,
+              };
+
+              if (!_messageHistory.containsKey(senderIp)) {
+                _messageHistory[senderIp] = [];
+              }
+              _messageHistory[senderIp]!.add(msg);
+
+              _unreadCounts[senderIp] = (_unreadCounts[senderIp] ?? 0) + 1;
+
+              _messageController.add(msg);
+              _unreadController.add(senderIp);
+              _logController.add('Получено от $senderIp: $text');
+
+              request.response.headers.contentType = ContentType.json;
+              request.response.write('{"status":"ok"}');
+            } else {
+              request.response.statusCode = 400;
+            }
+          } catch (e) {
+            request.response.statusCode = 400;
+          }
+          request.response.close();
+        } else {
+          request.response.statusCode = 404;
+          request.response.close();
+        }
+      });
+
+      _logController.add('HTTP-сервер запущен на $_localIp:8081');
+      return _localIp;
+    } catch (e) {
+      _logController.add('HTTP-сервер ошибка: $e');
+      return null;
+    }
+  }
+
+  /// Получает локальный IP
+  Future<String?> _getLocalIp() async {
+    try {
+      final interfaces = await NetworkInterface.list();
+      for (final interface in interfaces) {
+        for (final addr in interface.addresses) {
+          if (addr.type == InternetAddressType.IPv4 && !addr.isLoopback) {
+            return addr.address;
+          }
+        }
+      }
+    } catch (e) {
+      _logController.add('IP error: $e');
+    }
+    return null;
+  }
+
+  /// Возвращает историю сообщений с узла
+  List<Map<String, dynamic>> getHistory(String nodeIp) {
+    return _messageHistory[nodeIp] ?? [];
+  }
+
+  /// Возвращает счётчик непрочитанных
+  int getUnreadCount(String nodeIp) {
+    return _unreadCounts[nodeIp] ?? 0;
+  }
+
+  /// Сбрасывает счётчик непрочитанных
+  void resetUnread(String nodeIp) {
+    _unreadCounts[nodeIp] = 0;
+  }
+
+  /// Анонсирует себя через нативный NsdManager
+  Future<void> announceNative(String serviceName, String ip) async {
+    try {
+      final result = await _nsdChannel.invokeMethod('announce', {
+        'serviceName': serviceName,
+        'ip': ip,
+      });
+      _logController.add('NSD: $result');
+    } catch (e) {
+      _logController.add('NSD announce error: $e');
+    }
+  }
+
+  /// Сканирует сеть через нативный NsdManager
+  Future<List<String>> discoverNative() async {
+    try {
+      final result = await _nsdChannel.invokeMethod('discover');
+      if (result is List) {
+        return result.cast<String>();
+      }
+    } catch (e) {
+      _logController.add('NSD discover error: $e');
+    }
+    return [];
+  }
+
+  /// Останавливает анонс
+  Future<void> stopAnnounce() async {
+    try {
+      await _nsdChannel.invokeMethod('stopAnnounce');
+    } catch (_) {}
+  }
+
+  /// Останавливает сканирование
+  Future<void> stopDiscover() async {
+    try {
+      await _nsdChannel.invokeMethod('stopDiscover');
+    } catch (_) {}
+  }
+
+  /// Запускает Bluetooth-сканирование
+  Future<void> startBluetoothScan() async {
+    try {
+      if (!await FlutterBluePlus.isSupported) {
+        _logController.add('Bluetooth not supported');
+        return;
+      }
+
+      await FlutterBluePlus.adapterState
+          .where((s) => s == BluetoothAdapterState.on)
+          .first;
+
+      FlutterBluePlus.scanResults.listen((results) {
+        for (final result in results) {
+          final name = result.device.platformName;
+          if (name.startsWith(_blePrefix)) {
+            if (!bleDevices.contains(result.device)) {
+              bleDevices.add(result.device);
+              _nodeController.add(name);
+              _logController.add('BLE найден: $name');
+            }
+          }
+        }
+      });
+
+      await FlutterBluePlus.startScan(
+        timeout: const Duration(seconds: 10),
+      );
+    } catch (e) {
+      _logController.add('Bluetooth scan error: $e');
+    }
+  }
+
+  /// Останавливает всё
+  void dispose() {
+    _mdnsClient?.stop();
+    FlutterBluePlus.stopScan();
+    stopAnnounce();
+    stopDiscover();
+    _httpServer?.close();
+    _nodeController.close();
+    _messageController.close();
+    _unreadController.close();
+    _logController.close();
+  }
+}=================  
+import 'dart:async';
+import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import '../providers/chat_provider.dart';
+import '../services/api_service.dart';
+import '../services/ws_service.dart';
+import '../services/p2p_service.dart';
+import '../widgets/message_bubble.dart';
+import 'connect_screen.dart';
+import 'diagnostic_screen.dart';
+
+class ChatScreen extends StatefulWidget {
+  final String nodeAddress;
+
+  const ChatScreen({super.key, required this.nodeAddress});
+
+  @override
+  State<ChatScreen> createState() => _ChatScreenState();
+}
+
+class _ChatScreenState extends State<ChatScreen> {
+  final _controller = TextEditingController();
+  final _scrollController = ScrollController();
+  String _debugInfo = '';
+  final P2PService _p2pService = P2PService();
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _setup();
+    });
+  }
+
+  void _setup() {
+    if (!mounted) return;
+
+    final api = ApiService(baseUrl: 'http://${widget.nodeAddress}');
+    final ws = WsService(wsUrl: 'ws://${widget.nodeAddress}/ws');
+
+    final provider = context.read<ChatProvider>();
+    provider.configure(api: api, ws: ws, p2p: _p2pService);
+
+    setState(() => _debugInfo = 'HTTP: ${widget.nodeAddress}\nWS: ws://${widget.nodeAddress}/ws');
+
+    // Загружаем историю сообщений с этого узла
+    final history = _p2pService.getHistory(widget.nodeAddress);
+    for (final msg in history) {
+      provider.addExternalMessage(msg);
+    }
+
+    // Сбрасываем счётчик непрочитанных
+    _p2pService.resetUnread(widget.nodeAddress);
+
+    provider.loadMessages().then((_) {
+      if (mounted) setState(() => _debugInfo += '\n✓ HTTP /messages OK (${provider.messages.length} сообщений)');
+    }).catchError((e) {
+      if (mounted) setState(() => _debugInfo += '\n✗ HTTP /messages: $e');
+    });
+
+    provider.loadChannels().then((_) {
+      if (mounted) setState(() => _debugInfo += '\n✓ HTTP /channels OK (${provider.channels.length} каналов)');
+    }).catchError((e) {
+      if (mounted) setState(() => _debugInfo += '\n✗ HTTP /channels: $e');
+    });
+
+    provider.initWs();
+
+    Future.delayed(const Duration(seconds: 3), () {
+      if (mounted) {
+        setState(() {
+          _debugInfo += '\nWS connected: ${provider.wsConnected}';
+        });
+      }
+    });
+  }
+
+  void _openDiagnostics() {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => DiagnosticScreen(nodeAddress: widget.nodeAddress),
+      ),
+    );
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    _scrollController.dispose();
+    _p2pService.dispose();
+    super.dispose();
+  }
+
+  void _scrollToBottom() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (_scrollController.hasClients) {
+        _scrollController.animateTo(
+          _scrollController.position.maxScrollExtent,
+          duration: const Duration(milliseconds: 300),
+          curve: Curves.easeOut,
+        );
+      }
+    });
+  }
+
+  void _sendMessage() {
+    final text = _controller.text.trim();
+    if (text.isEmpty) return;
+
+    final provider = context.read<ChatProvider>();
+    provider.sendMessage(text);
+    _controller.clear();
+    _scrollToBottom();
+
+    if (mounted) {
+      setState(() {
+        _debugInfo += '\n→ Отправлено: $text';
+        _debugInfo += '\nWS: ${provider.wsConnected}';
+      });
+    }
+  }
+
+  Future<void> _disconnect() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove('node_address');
+
+    if (mounted) {
+      Navigator.pushAndRemoveUntil(
+        context,
+        MaterialPageRoute(builder: (_) => const ConnectScreen()),
+        (route) => false,
+      );
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: Consumer<ChatProvider>(
+          builder: (_, provider, __) {
+            final status = provider.wsConnected ? '✓ WS' : '✗ WS';
+            return Text('ИСО [$status]');
+          },
+        ),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.bug_report),
+            onPressed: _openDiagnostics,
+            tooltip: 'Диагностика',
+          ),
+          IconButton(
+            icon: const Icon(Icons.chat_bubble_outline),
+            onPressed: () => _showChannelsSheet(context),
+          ),
+          IconButton(
+            icon: const Icon(Icons.link_off),
+            onPressed: _disconnect,
+            tooltip: 'Отключиться',
+          ),
+        ],
+      ),
+      body: Column(
+        children: [
+          Container(
+            width: double.infinity,
+            color: Colors.yellow.shade100,
+            padding: const EdgeInsets.all(8),
+            child: Text(
+              _debugInfo.isEmpty ? 'Инициализация...' : _debugInfo,
+              style: const TextStyle(fontSize: 12),
+            ),
+          ),
+          Expanded(
+            child: Consumer<ChatProvider>(
+              builder: (_, provider, __) {
+                final messages = provider.messages;
+
+                if (provider.loading && messages.isEmpty) {
+                  return const Center(child: CircularProgressIndicator());
+                }
+
+                if (messages.isEmpty) {
+                  return const Center(child: Text('Нет сообщений'));
+                }
+
+                return ListView.builder(
+                  controller: _scrollController,
+                  itemCount: messages.length,
+                  itemBuilder: (_, index) {
+                    final msg = messages[index];
+                    return MessageBubble(
+                      key: ValueKey(msg.id),
+                      message: msg,
+                      onLike: () => provider.sendFeedback(msg.id, 1),
+                      onDislike: () => provider.sendFeedback(msg.id, -1),
+                    );
+                  },
+                );
+              },
+            ),
+          ),
+          Container(
+            padding: const EdgeInsets.all(8),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              border: Border(top: BorderSide(color: Colors.grey.shade200)),
+            ),
+            child: SafeArea(
+              child: Row(
+                children: [
+                  Expanded(
+                    child: TextField(
+                      controller: _controller,
+                      decoration: InputDecoration(
+                        hintText: 'Сообщение...',
+                        filled: true,
+                        fillColor: Colors.grey.shade100,
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(24),
+                          borderSide: BorderSide.none,
+                        ),
+                        contentPadding: const EdgeInsets.symmetric(
+                          horizontal: 16,
+                          vertical: 10,
+                        ),
+                      ),
+                      onSubmitted: (_) => _sendMessage(),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  CircleAvatar(
+                    backgroundColor: Colors.green,
+                    child: IconButton(
+                      icon: const Icon(Icons.send, color: Colors.white, size: 20),
+                      onPressed: _sendMessage,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showChannelsSheet(BuildContext context) {
+    final provider = context.read<ChatProvider>();
+    showModalBottomSheet(
+      context: context,
+      builder: (_) {
+        return ListView(
+          shrinkWrap: true,
+          children: [
+            const Padding(
+              padding: EdgeInsets.all(16),
+              child: Text('Каналы', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
+            ),
+            ...provider.channels.map((ch) {
+              final isActive = ch['id'] == provider.activeChannel;
+              return ListTile(
+                title: Text('#${ch['name']}'),
+                subtitle: Text('${ch['subscribers']} подписчиков'),
+                leading: Icon(isActive ? Icons.radio_button_checked : Icons.radio_button_off,
+                    color: isActive ? Colors.green : Colors.grey),
+                onTap: () {
+                  provider.switchChannel(ch['id']);
+                  Navigator.pop(context);
+                },
+              );
+            }),
+          ],
+        );
+      },
+    );
+  }
+}=================  
+import 'package:flutter/material.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import '../services/mdns_service.dart';
+import '../services/p2p_service.dart';
+import 'chat_screen.dart';
+
+class ConnectScreen extends StatefulWidget {
+  const ConnectScreen({super.key});
+
+  @override
+  State<ConnectScreen> createState() => _ConnectScreenState();
+}
+
+class _ConnectScreenState extends State<ConnectScreen> {
+  final TextEditingController _manualController = TextEditingController(text: 'http://192.168.31.203:8081');
+  final P2PService _p2pService = P2PService();
+  List<String> _discoveredNodes = [];
+  List<String> _logs = [];
+  bool _scanning = false;
+  bool _connecting = false;
+  String? _error;
+  String? _status;
+  String? _localIp;
+  bool _announced = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _checkSavedNode();
+    _listenToP2P();
+    _startServer();
+  }
+
+  Future<void> _startServer() async {
+    final ip = await _p2pService.startHttpServer();
+    if (mounted) {
+      setState(() {
+        _localIp = ip;
+        if (ip != null) {
+          _status = 'Телефон-узел: $ip:8081';
+        }
+      });
+    }
+
+    await Future.delayed(const Duration(seconds: 2));
+    _announce();
+  }
+
+  void _announce() {
+    if (_announced) return;
+    final shortId = _localIp?.replaceAll('.', '') ?? 'node';
+    _p2pService.announceNative('ISOTOPE-$shortId', _localIp ?? '');
+    _announced = true;
+    _logs.add('Анонс: ISOTOPE-$shortId');
+  }
+
+  void _listenToP2P() {
+    _p2pService.onNodeFound.listen((node) {
+      if (mounted && !_discoveredNodes.contains(node)) {
+        setState(() {
+          _discoveredNodes.add(node);
+        });
+      }
+    });
+
+    _p2pService.onLog.listen((log) {
+      if (mounted) {
+        setState(() {
+          _logs.add(log);
+        });
+      }
+    });
+
+    _p2pService.onUnread.listen((senderIp) {
+      if (mounted) {
+        setState(() {});
+      }
+    });
+  }
+
+  Future<void> _checkSavedNode() async {
+    final prefs = await SharedPreferences.getInstance();
+    final saved = prefs.getString('node_address');
+    if (saved != null && saved.isNotEmpty && mounted) {
+      setState(() {
+        _status = 'Подключение к $saved...';
+        _connecting = true;
+      });
+      _connectToNode(saved);
+    }
+  }
+
+  Future<void> _scanNetwork() async {
+    setState(() {
+      _scanning = true;
+      _error = null;
+      _status = 'Поиск узлов...';
+      _logs.add('Сканирование начато');
+    });
+
+    _announced = false;
+    _announce();
+
+    await Future.delayed(const Duration(seconds: 1));
+
+    final nodes = await _p2pService.discoverNative();
+    _logs.add('NSD вернул: ${nodes.length} узлов');
+    for (final node in nodes) {
+      if (node.startsWith('127.') || node.startsWith('localhost')) continue;
+
+      if (mounted && !_discoveredNodes.contains(node)) {
+        setState(() {
+          _discoveredNodes.add(node);
+        });
+      }
+    }
+
+    _p2pService.startBluetoothScan();
+
+    Future.delayed(const Duration(seconds: 5), () {
+      if (mounted) {
+        setState(() {
+          _scanning = false;
+          if (_discoveredNodes.isEmpty) {
+            _status = 'Узлы не найдены';
+            _error = 'Нажмите 🔄 ещё раз';
+          } else {
+            _status = 'Найдено узлов: ${_discoveredNodes.length}';
+          }
+        });
+      }
+    });
+  }
+
+  Future<void> _connectToNode(String address) async {
+    setState(() {
+      _connecting = true;
+      _status = 'Подключение к $address...';
+      _error = null;
+    });
+
+    var clean = address.trim();
+    clean = clean.replaceFirst('http://', '');
+    clean = clean.replaceFirst('https://', '');
+    clean = clean.replaceFirst('ws://', '');
+    clean = clean.replaceFirst('wss://', '');
+
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('node_address', clean);
+
+    if (mounted) {
+      Navigator.pushReplacement(
+        context,
+        MaterialPageRoute(builder: (_) => ChatScreen(nodeAddress: clean)),
+      );
+    }
+  }
+
+  Future<void> _connectManual() async {
+    final address = _manualController.text.trim();
+    if (address.isEmpty) return;
+
+    if (!address.contains(':')) {
+      setState(() => _error = 'Формат: IP:порт (например 192.168.1.5:8081)');
+      return;
+    }
+
+    await _connectToNode(address);
+  }
+
+  @override
+  void dispose() {
+    _p2pService.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('ISOTOPE — Подключение'),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.refresh),
+            onPressed: (_scanning || _connecting) ? null : _scanNetwork,
+          ),
+        ],
+      ),
+      body: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            if (_localIp != null)
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: Colors.green.shade50,
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Text(
+                  '📍 Ваш адрес: $_localIp:8081',
+                  style: const TextStyle(fontWeight: FontWeight.bold),
+                  textAlign: TextAlign.center,
+                ),
+              ),
+            if (_status != null)
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: Colors.blue.shade50,
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Row(
+                  children: [
+                    if (_connecting || _scanning)
+                      const SizedBox(
+                        width: 16,
+                        height: 16,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      ),
+                    const SizedBox(width: 8),
+                    Expanded(child: Text(_status!)),
+                  ],
+                ),
+              ),
+            if (_error != null)
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: Colors.orange.shade50,
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Text(_error!, style: const TextStyle(color: Colors.orange)),
+              ),
+            const SizedBox(height: 16),
+            const Text(
+              'Найденные узлы:',
+              style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+            ),
+            const SizedBox(height: 8),
+            Expanded(
+              flex: 2,
+              child: ListView.builder(
+                itemCount: _discoveredNodes.length,
+                itemBuilder: (context, index) {
+                  final node = _discoveredNodes[index];
+                  final unread = _p2pService.getUnreadCount(node);
+                  return ListTile(
+                    leading: const Icon(Icons.router),
+                    title: Text(node),
+                    subtitle: const Text('Узел ISOTOPE'),
+                    trailing: unread > 0
+                        ? Container(
+                            padding: const EdgeInsets.all(6),
+                            decoration: BoxDecoration(
+                              color: Colors.red,
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                            child: Text(
+                              '$unread',
+                              style: const TextStyle(color: Colors.white, fontSize: 12),
+                            ),
+                          )
+                        : null,
+                    onTap: _connecting ? null : () => _connectToNode(node),
+                  );
+                },
+              ),
+            ),
+            const SizedBox(height: 8),
+            const Text(
+              'Журнал:',
+              style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold),
+            ),
+            const SizedBox(height: 4),
+            Expanded(
+              flex: 2,
+              child: Container(
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  color: Colors.black87,
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: ListView.builder(
+                  itemCount: _logs.length,
+                  itemBuilder: (context, index) {
+                    return Text(
+                      _logs[index],
+                      style: const TextStyle(color: Colors.greenAccent, fontSize: 11),
+                    );
+                  },
+                ),
+              ),
+            ),
+            const SizedBox(height: 16),
+            const Text(
+              'Или введи адрес вручную:',
+              style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+            ),
+            const SizedBox(height: 8),
+            TextField(
+              controller: _manualController,
+              decoration: const InputDecoration(
+                hintText: 'http://192.168.31.203:8081',
+                border: OutlineInputBorder(),
+              ),
+              enabled: !_connecting,
+            ),
+            const SizedBox(height: 12),
+            ElevatedButton(
+              onPressed: _connecting ? null : _connectManual,
+              child: Text(_connecting ? 'Подключение...' : 'Подключиться'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}=================  
+package com.example.iso_mobile
+
+import android.content.Context
+import android.net.nsd.NsdManager
+import android.net.nsd.NsdServiceInfo
+import io.flutter.embedding.android.FlutterActivity
+import io.flutter.embedding.engine.FlutterEngine
+import io.flutter.plugin.common.MethodChannel
+
+class MainActivity : FlutterActivity() {
+    private val CHANNEL = "isotope/nsd"
+    private var nsdManager: NsdManager? = null
+    private var registrationListener: NsdManager.RegistrationListener? = null
+    private var discoveryListener: NsdManager.DiscoveryListener? = null
+    private var resolveListener: NsdManager.ResolveListener? = null
+    private var discoveryResult: MethodChannel.Result? = null
+    private val foundServices = mutableListOf<String>()
+    private var isDiscovering = false
+
+    override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
+        super.configureFlutterEngine(flutterEngine)
+        nsdManager = getSystemService(Context.NSD_SERVICE) as NsdManager
+
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, CHANNEL)
+            .setMethodCallHandler { call, result ->
+                when (call.method) {
+                    "announce" -> {
+                        val serviceName = call.argument<String>("serviceName") ?: "ISOTOPE"
+                        announceService(serviceName, result)
+                    }
+                    "discover" -> {
+                        discoverServices(result)
+                    }
+                    "stopAnnounce" -> {
+                        stopAnnounce(result)
+                    }
+                    "stopDiscover" -> {
+                        stopDiscover(result)
+                    }
+                    else -> result.notImplemented()
+                }
+            }
+    }
+
+    private fun announceService(serviceName: String, result: MethodChannel.Result) {
+        try {
+            // Останавливаем предыдущий анонс
+            registrationListener?.let {
+                runCatching { nsdManager?.unregisterService(it) }
+            }
+
+            val serviceInfo = NsdServiceInfo().apply {
+                this.serviceName = serviceName
+                serviceType = "_isotope._tcp."
+                port = 8081
+            }
+
+            registrationListener = object : NsdManager.RegistrationListener {
+                override fun onServiceRegistered(serviceInfo: NsdServiceInfo) {
+                    // Проверяем, что result ещё не был использован
+                    runCatching { result.success("registered: ${serviceInfo.serviceName}") }
+                }
+
+                override fun onRegistrationFailed(serviceInfo: NsdServiceInfo, errorCode: Int) {
+                    runCatching { result.error("REGISTER_FAILED", "Error code: $errorCode", null) }
+                }
+
+                override fun onServiceUnregistered(serviceInfo: NsdServiceInfo) {
+                    // Ничего
+                }
+
+                override fun onUnregistrationFailed(serviceInfo: NsdServiceInfo, errorCode: Int) {
+                    // Ничего
+                }
+            }
+
+            nsdManager?.registerService(serviceInfo, NsdManager.PROTOCOL_DNS_SD, registrationListener)
+        } catch (e: Exception) {
+            runCatching { result.error("ANNOUNCE_ERROR", e.message, null) }
+        }
+    }
+
+    private fun discoverServices(result: MethodChannel.Result) {
+        try {
+            // Останавливаем предыдущее сканирование
+            discoveryListener?.let {
+                runCatching { nsdManager?.stopServiceDiscovery(it) }
+            }
+
+            foundServices.clear()
+            discoveryResult = result
+            isDiscovering = true
+
+            discoveryListener = object : NsdManager.DiscoveryListener {
+                override fun onDiscoveryStarted(serviceType: String) {
+                    // Начали
+                }
+
+                override fun onServiceFound(serviceInfo: NsdServiceInfo) {
+                    // Резолвим найденный сервис
+                    resolveListener = object : NsdManager.ResolveListener {
+                        override fun onResolveFailed(serviceInfo: NsdServiceInfo, errorCode: Int) {
+                            // Пропускаем
+                        }
+
+                        override fun onServiceResolved(serviceInfo: NsdServiceInfo) {
+                            val host = serviceInfo.host?.hostAddress ?: return
+                            val port = serviceInfo.port
+                            val address = "$host:$port"
+                            if (!foundServices.contains(address)) {
+                                foundServices.add(address)
+                            }
+                            // Не вызываем result.success здесь — ждём таймаут
+                        }
+                    }
+                    runCatching { nsdManager?.resolveService(serviceInfo, resolveListener) }
+                }
+
+                override fun onServiceLost(serviceInfo: NsdServiceInfo) {
+                    // Сервис потерян
+                }
+
+                override fun onDiscoveryStopped(serviceType: String) {
+                    isDiscovering = false
+                }
+
+                override fun onStartDiscoveryFailed(serviceType: String, errorCode: Int) {
+                    isDiscovering = false
+                    runCatching { result.error("DISCOVERY_FAILED", "Error code: $errorCode", null) }
+                }
+
+                override fun onStopDiscoveryFailed(serviceType: String, errorCode: Int) {
+                    // Ничего
+                }
+            }
+
+            nsdManager?.discoverServices("_isotope._tcp.", NsdManager.PROTOCOL_DNS_SD, discoveryListener)
+
+            // Таймаут — через 5 секунд возвращаем найденные узлы
+            android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+                if (isDiscovering) {
+                    isDiscovering = false
+                    runCatching { result.success(foundServices.toList()) }
+                }
+            }, 5000)
+        } catch (e: Exception) {
+            isDiscovering = false
+            runCatching { result.error("DISCOVERY_ERROR", e.message, null) }
+        }
+    }
+
+    private fun stopAnnounce(result: MethodChannel.Result) {
+        try {
+            registrationListener?.let {
+                nsdManager?.unregisterService(it)
+            }
+            result.success(null)
+        } catch (e: Exception) {
+            runCatching { result.error("STOP_ANNOUNCE_ERROR", e.message, null) }
+        }
+    }
+
+    private fun stopDiscover(result: MethodChannel.Result) {
+        try {
+            discoveryListener?.let {
+                nsdManager?.stopServiceDiscovery(it)
+            }
+            isDiscovering = false
+            result.success(null)
+        } catch (e: Exception) {
+            runCatching { result.error("STOP_DISCOVER_ERROR", e.message, null) }
+        }
+    }
+}

@@ -8,7 +8,6 @@ import (
 	"encoding/json"
 	"io"
 	"os"
-	"strconv"
 )
 
 // ============================================================
@@ -74,7 +73,7 @@ func decryptData(data []byte, password string) ([]byte, error) {
 	return gcm.Open(nil, nonce, ciphertext, nil)
 }
 
-// saveState — сохраняет состояние узла в файл (с шифрованием, если задан пароль)
+// saveState — сохраняет состояние узла в файл
 func (n *Node) saveState() error {
 	if n.stateFile == "" {
 		return nil
@@ -110,10 +109,6 @@ func (n *Node) saveState() error {
 		}
 	}
 
-	if err := os.MkdirAll("state", 0755); err != nil {
-		return err
-	}
-
 	return os.WriteFile(n.stateFile, data, 0644)
 }
 
@@ -135,15 +130,14 @@ func (n *Node) loadStateData() ([]byte, error) {
 	return data, nil
 }
 
-// savePrivateKey — сохраняет приватный ключ в отдельный файл
+// savePrivateKey — сохраняет приватный ключ рядом с stateFile
 func (n *Node) savePrivateKey(key []byte) error {
-	if err := os.MkdirAll("state", 0755); err != nil {
-		return err
-	}
-	return os.WriteFile("state/private_key_"+strconv.Itoa(n.nodeID)+".bin", key, 0600)
+	keyFile := n.stateFile + ".key"
+	return os.WriteFile(keyFile, key, 0600)
 }
 
 // loadPrivateKey — загружает приватный ключ
 func (n *Node) loadPrivateKey() ([]byte, error) {
-	return os.ReadFile("state/private_key_" + strconv.Itoa(n.nodeID) + ".bin")
+	keyFile := n.stateFile + ".key"
+	return os.ReadFile(keyFile)
 }

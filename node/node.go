@@ -45,6 +45,8 @@ type Config struct {
 	Transports []string // ["ws"] или ["ws", "tcp"]
 	Bootstrap  []string // адреса bootstrap-пиров
 	Port       int      // порт для P2P (0 = автоматический)
+	EnableMDNS bool     // true = запускать mDNS (десктоп), false = не запускать (мобильный)
+	ListenIP   string   // IP для прослушивания (пусто = 0.0.0.0)
 }
 
 // Node — основной узел сети
@@ -65,6 +67,8 @@ type Node struct {
 	configTransports []string
 	configPort       int
 	configBootstrap  []string
+	configEnableMDNS bool
+	configListenIP   string
 	mu               sync.Mutex
 	lastPing         map[string]time.Time
 	deadPeers        map[string]bool
@@ -79,11 +83,18 @@ func NewNode(cfg Config) *Node {
 		port = 9000
 	}
 
+	listenIP := cfg.ListenIP
+	if listenIP == "" {
+		listenIP = "0.0.0.0"
+	}
+
 	return &Node{
 		ethHash:          cfg.EthHash,
 		configTransports: cfg.Transports,
 		configPort:       port,
 		configBootstrap:  cfg.Bootstrap,
+		configEnableMDNS: cfg.EnableMDNS,
+		configListenIP:   listenIP,
 		memory: Memory{
 			seen: make(map[string]bool),
 		},
@@ -860,7 +871,6 @@ func (n *Node) loadState() error {
 
 // InitP2P — инициализирует P2P (libp2p, mDNS, bootstrap, обработчики)
 func (n *Node) InitP2P() error {
-	// Не трогаем stateFile, если он уже задан (например, из StartMobile)
 	if n.stateFile == "" {
 		nodeIDStr := os.Getenv("NODE_ID")
 		if nodeIDStr == "" {
@@ -902,8 +912,8 @@ func (n *Node) InitP2P() error {
 		log.Printf("[INIT] Загружен стабильный ключ узла")
 	}
 
-	listenAddr := fmt.Sprintf("/ip4/0.0.0.0/tcp/%d", n.configPort)
-	listenWS := fmt.Sprintf("/ip4/0.0.0.0/tcp/%d/ws", n.configPort+1)
+	listenAddr := fmt.Sprintf("/ip4/%s/tcp/%d", n.configListenIP, n.configPort)
+	listenWS := fmt.Sprintf("/ip4/%s/tcp/%d/ws", n.configListenIP, n.configPort+1)
 
 	opts := []libp2p.Option{
 		libp2p.ListenAddrStrings(listenAddr, listenWS),
@@ -933,10 +943,16 @@ func (n *Node) InitP2P() error {
 	n.host.SetStreamHandler(syncProtocolID, n.handleSyncStream)
 	n.host.SetStreamHandler(pingProtocolID, n.handlePingStream)
 
-	mdnsService := mdns.NewMdnsService(n.host, "_isotope._tcp.local", n)
-	if err := mdnsService.Start(); err != nil {
-		return fmt.Errorf("failed to start mDNS: %w", err)
+	if n.configEnableMDNS {
+		mdnsService := mdns.NewMdnsService(n.host, "_isotope._tcp.local", n)
+		if err := mdnsService.Start(); err != nil {
+			return fmt.Errorf("failed to start mDNS: %w", err)
+		}
+		log.Println("[INIT] mDNS запущен")
+	} else {
+		log.Println("[INIT] mDNS отключён (мобильный режим)")
 	}
+
 	log.Println("[INIT] Node started with ID:", host.ID())
 	log.Println("[INIT] Listening on:", host.Addrs())
 
@@ -1049,8 +1065,11 @@ func (n *Node) StartHTTP(port int) error {
 	return http.ListenAndServe(fmt.Sprintf(":%d", port), nil)
 }
 
-// StartMobile — запускает узел для мобильного (без HTTP, без блокировки)
+// StartMobile — запускает узел для мобильного
 func (n *Node) StartMobile(stateFile string) error {
+	if stateFile == "" {
+		return fmt.Errorf("stateFile is required")
+	}
 	n.stateFile = stateFile
 	n.adaptive = NewAdaptiveParams()
 	n.channels = NewChannelStore()
@@ -1111,6 +1130,35 @@ func (n *Node) GetStatus() string {
 		n.memory.Count(),
 		len(n.layers),
 	)
+}
+
+// GetMultiaddrs — возвращает все адреса узла с PeerID
+func (n *Node) GetMultiaddrs() []string {
+	if n.host == nil {
+		return []string{}
+	}
+	var result []string
+	for _, addr := range n.host.Addrs() {
+		result = append(result, addr.String()+"/p2p/"+n.host.ID().String())
+	}
+	return result
+}
+
+// ConnectToPeer — подключение к пиру по multiaddr
+func (n *Node) ConnectToPeer(multiaddr string) error {
+	if n.host == nil {
+		return fmt.Errorf("node not started")
+	}
+	peerInfo, err := peer.AddrInfoFromString(multiaddr)
+	if err != nil {
+		return fmt.Errorf("invalid multiaddr: %w", err)
+	}
+	ctx := context.Background()
+	if err := n.host.Connect(ctx, *peerInfo); err != nil {
+		return fmt.Errorf("failed to connect: %w", err)
+	}
+	log.Printf("[P2P] Подключен к пиру: %s", peerInfo.ID.String()[:16])
+	return nil
 }
 
 // SendMessage — отправляет сообщение

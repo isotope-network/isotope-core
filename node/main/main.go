@@ -37,6 +37,7 @@ func main() {
 		EthHash:    ethHash,
 		Transports: []string{"ws", "tcp"},
 		Port:       port,
+		EnableMDNS: true,
 	}
 
 	// Создаём узел
