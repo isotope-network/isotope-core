@@ -165,7 +165,7 @@ Once a day — a single notification:
 
 ## Status
 
-**v1.18 — stable.**
+**v1.19.0 — stable (mobile stabilization).**
 
 Implemented:
 - P2P network: libp2p + mDNS + DHT + Gossip
@@ -184,10 +184,33 @@ Implemented:
 - Self-adaptation: automatic threshold adjustment
 - Channels with weight levels
 - REST API + WebSocket
-- Mobile app (Flutter)
+- Mobile app (Flutter + gomobile FFI)
+- libp2p on mobile via .aar (67 MB)
+- Stable PeerID on mobile (isotope_state.json.key)
+- Network change handling (connectivity_plus, debounce 10 sec)
+- NodeInfo model with heartbeat and dead detection
+- Log transfer from Go core to Flutter
+- Dynamic port search (8081+)
+- NSD discovery with PeerID and multiaddr
 - Network health monitoring
 - 67 autotests
 - 5 nodes in docker-compose
+
+**Mobile (v1.19.0):**
+- HTTP communication between phones
+- libp2p P2P connection
+- NSD discovery with PeerID and multiaddr
+- Send/receive messages
+- Unread badges
+- Message history
+- Stable PeerID
+- Network change handling
+
+**Deferred:**
+- BLE — unstable, disabled
+- Samsung Android 10 — crash on startup (needs investigation)
+- DHT — core only, not in mobile
+- TTL circular dial — UI improvement
 
 In development:
 - PWA + F-Droid
@@ -222,12 +245,35 @@ Nodes:
 - http://localhost:8084 (node 4)
 - http://localhost:8085 (node 5)
 
+### Build from Source
+
+    go build -o isotope-node ./node/main
+    ./isotope-node --config config.json
+
+### Use as a Library
+
+import core "sbimain"
+
+config := core.Config{
+    NodeID:     "node-1",
+    Port:       9001,
+    Transports: []string{"ws"},
+}
+
+node := core.NewNode(config)
+core.InitP2P(node)
+core.StartHTTP(node)
+defer core.Stop(node)
+
 ---
 
 ## Repository Architecture
 
     isotope-core/
     ├── node/           # Go core (P2P, neural network, memory, API)
+    │   ├── *.go        # package core (library)
+    │   ├── main/       # entry point (package main)
+    │   └── mobile/     # gomobile binding
     ├── mobile/         # Flutter app
     ├── tests/          # Autotests
     ├── docs/           # Documentation and philosophy

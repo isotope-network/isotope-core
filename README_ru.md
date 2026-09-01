@@ -168,7 +168,7 @@ P2P, этический хеш, иммунитет, самообучение.
 
 ## Статус
 
-**v1.18 — стабильная.**
+**v1.19.0 — стабильная (мобильная стабилизация).**
 
 Реализовано:
 - P2P-сеть: libp2p + mDNS + DHT + Gossip
@@ -187,10 +187,33 @@ P2P, этический хеш, иммунитет, самообучение.
 - Самоадаптация: автоподстройка порогов
 - Каналы с весовыми уровнями
 - REST API + WebSocket
-- Мобильное приложение (Flutter)
+- Мобильное приложение (Flutter + gomobile FFI)
+- libp2p на мобильном через .aar (67 МБ)
+- Стабильный PeerID на мобильном (isotope_state.json.key)
+- Обработка смены сети (connectivity_plus, debounce 10 сек)
+- Модель NodeInfo с heartbeat и определением dead-узлов
+- Передача логов из Go-ядра во Flutter
+- Динамический поиск порта (8081+)
+- NSD-обнаружение с PeerID и multiaddr
 - Мониторинг здоровья сети
 - 67 автотестов
 - 5 узлов в docker-compose
+
+**Мобильная версия (v1.19.0):**
+- HTTP-связь между телефонами
+- libp2p P2P-соединение
+- NSD-обнаружение с PeerID и multiaddr
+- Отправка/приём сообщений
+- Бейджи непрочитанных
+- История сообщений
+- Стабильный PeerID
+- Обработка смены сети
+
+**Отложено:**
+- BLE — нестабилен, отключён
+- Samsung Android 10 — краш при запуске (нужен разбор)
+- DHT — только в ядре, не в мобильном
+- Круговой циферблат TTL — улучшение UI
 
 В разработке:
 - PWA + F-Droid
@@ -225,12 +248,35 @@ P2P, этический хеш, иммунитет, самообучение.
 - http://localhost:8084 (узел 4)
 - http://localhost:8085 (узел 5)
 
+### Сборка из исходников
+
+    go build -o isotope-node ./node/main
+    ./isotope-node --config config.json
+
+### Использование как библиотека
+
+import core "sbimain"
+
+config := core.Config{
+    NodeID:     "node-1",
+    Port:       9001,
+    Transports: []string{"ws"},
+}
+
+node := core.NewNode(config)
+core.InitP2P(node)
+core.StartHTTP(node)
+defer core.Stop(node)
+
 ---
 
 ## Архитектура репозитория
 
     isotope-core/
     ├── node/           # Ядро на Go (P2P, нейросеть, память, API)
+    │   ├── *.go        # package core (библиотека)
+    │   ├── main/       # точка входа (package main)
+    │   └── mobile/     # обёртка gomobile
     ├── mobile/         # Flutter-приложение
     ├── tests/          # Автотесты
     ├── docs/           # Документация и философия

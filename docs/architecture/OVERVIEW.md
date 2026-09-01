@@ -13,6 +13,101 @@ ISOTOPE — инфраструктура для этичного, неуязви
 
 ---
 
+## Структура ядра (v1.19.0)
+
+Ядро ISOTOPE — **библиотека** (пакет `core`).
+
+node/
+├── *.go              # package core (ядро)
+├── main/main.go      # package main (точка входа для десктопа)
+└── mobile/mobile.go  # package mobile (обёртка gomobile)
+
+### Экспортированный API ядра
+
+package core
+
+type Config struct {
+    EthHash    string
+    Transports []string
+    Bootstrap  []string
+    Port       int
+    ListenIP   string
+}
+
+func NewNode(config Config) *Node
+func InitP2P(node *Node) error
+func StartHTTP(node *Node) error
+func StartMobile(node *Node) error
+func Stop(node *Node) error
+func HashText(text string) string
+func GetMultiaddrs(node *Node) []string
+func ConnectToPeer(node *Node, addr string) error
+
+### Методы Node
+
+func (n *Node) SendMessage(text string, ttl int) (string, error)
+func (n *Node) GetMessages() []Message
+func (n *Node) GetPeers() []string
+func (n *Node) GetWeight() float64
+func (n *Node) GetStatus() string
+
+### Точка входа (десктоп)
+
+go build -o isotope-node ./node/main
+./isotope-node --config config.json
+
+### Использование как библиотеки
+
+import core "sbimain"
+
+config := core.Config{
+    Transports: []string{"ws"},
+    Port:       9001,
+}
+
+node := core.NewNode(config)
+core.InitP2P(node)
+core.StartHTTP(node)
+defer core.Stop(node)
+
+---
+
+## Мобильная обёртка (mobile.go)
+
+**Статус:** работает (v1.19.0)
+
+### Методы (возвращают JSON-строки)
+
+| Метод | Описание |
+|-------|----------|
+| Start(stateFile string) | Запуск узла, восстановление PeerID |
+| Send(text string, ttl int) | Отправка сообщения |
+| GetMessages() | Список сообщений |
+| GetPeers() | Список пиров |
+| GetWeight() | Вес узла |
+| GetStatus() | JSON-статус |
+| GetMultiaddrs() | Список адресов узла |
+| ConnectToPeer(addr string) | Подключение к пиру по адресу |
+
+### Ключевые особенности
+
+- **libp2p через FFI:** .aar (67 МБ), MethodChannel во Flutter
+- **Стабильный PeerID:** приватный ключ в isotope_state.json.key
+- **Смена сети:** connectivity_plus, debounce 10 сек, перезапуск узла
+- **NodeInfo:** PeerID, multiaddrs, lastSeen, status
+- **Heartbeat:** 3 неудачи → dead, снятие при получении сообщения
+- **Логирование:** Go → Flutter, сохранение через Android Intent
+- **Порты:** динамический поиск (8081+), передача через NSD
+- **Обнаружение:** NSD с PeerID и multiaddr
+
+### Не решено
+
+- BLE — нестабилен, отключён
+- Samsung Android 10 — краш при запуске
+- DHT — только в ядре, не в мобильном
+
+---
+
 ## Три столпа ISOTOPE
 
 **Данные.**
@@ -42,14 +137,12 @@ P2P, этический хеш, иммунитет, самообучение.
 ### 1. P2P-сеть (libp2p)
 
 - **Транспорт:** TCP + WebSocket + TLS
-- **Обнаружение:** mDNS (локалка) + DHT Kademlia (WAN)
+- **Обнаружение:** mDNS (локалка) + DHT Kademlia (WAN) + NSD (мобильный)
 - **Синхронизация:** Gossip-протокол (TTL=3, fanout=√N)
-- **Маршрутизация:** Onion Routing v2
-  (цепочка из 4-5 relay-пиров, выбор по весу > 0.7)
+- **Маршрутизация:** Onion Routing v2 (цепочка из 4-5 relay-пиров, выбор по весу > 0.7)
 - **Маскировка:** WebSocket + TLS + обфускация AES-GCM
 - **Приоритеты:** Priority Gossip — TTL зависит от веса узла
-- **Память:** ассоциативная — узлы запоминают,
-  кто у кого что спрашивал
+- **Память:** ассоциативная — узлы запоминают, кто у кого что спрашивал
 - **Восстановление:** репликация на 2 случайных живых узла
 - **Адаптация:** самонастройка порогов и интервалов
 
@@ -76,8 +169,7 @@ P2P, этический хеш, иммунитет, самообучение.
 
 - **Channel, ChannelStore**
 - Пороги доступа: full=0.3, comment=0.5, vote=0.7
-- Эндпоинты: POST/GET /channels,
-  POST/GET /channels/{id}/messages
+- Эндпоинты: POST/GET /channels, POST/GET /channels/{id}/messages
 - Доступ зависит от веса узла
 
 ### 5. Безопасность
@@ -86,7 +178,7 @@ P2P, этический хеш, иммунитет, самообучение.
 - **Маскировка:** WebSocket + TLS + обфускация
 - **Стеганография:** LSB в WAV (голос пользователя)
 - **Селф-хилинг:** heartbeat каждые 30 сек
-- **Стабильный ID:** приватный ключ в state/
+- **Стабильный ID:** приватный ключ в state/ (десктоп), isotope_state.json.key (мобильный)
 
 ### 6. Весовая модель доступа
 
@@ -129,15 +221,11 @@ P2P, этический хеш, иммунитет, самообучение.
 ## Принципы
 
 1. **Децентрализация.** Нет сервера, нет единой точки отказа
-2. **Этический иммунитет.**
-   Сеть отличает добро от зла математически
+2. **Этический иммунитет.** Сеть отличает добро от зла математически
 3. **Самообучение.** Сообщество учит сеть через оценки
-4. **Приватность.**
-   Данные не покидают устройство без согласия
-5. **Неуязвимость.**
-   Сеть нельзя заблокировать, отключить или взломать
-6. **Унификация.**
-   Каждый механизм — кирпич для множества применений
+4. **Приватность.** Данные не покидают устройство без согласия
+5. **Неуязвимость.** Сеть нельзя заблокировать, отключить или взломать
+6. **Унификация.** Каждый механизм — кирпич для множества применений
 
 ---
 
