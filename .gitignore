@@ -8,6 +8,8 @@ vendor/
 *.so
 *.dylib
 sbimain
+*.aar
+*.jar
 
 # Временные файлы
 *.log
@@ -15,15 +17,20 @@ sbimain
 *.swp
 *.swo
 
-# Состояние (содержит приватные данные)
-state/state_node*.json
+# Состояние (приватные данные)
+state/
 
 # Этический хеш (не публикуется в открытом доступе)
-genesis/ethics_hash.txt
+genesis/
+node/genesis/
 
 # Конфигурация
 *.env
 *.env.local
+
+# Приватные ключи
+*.key
+*.pem
 
 # IDE
 .vscode/
@@ -47,10 +54,7 @@ mobile/.flutter-plugins
 coverage/
 *.coverprofile
 
-# Genesis в node
-node/genesis/
-
-# Временные JSON-файлы (результаты тестов)
+# Временные JSON
 *.json.tmp
 n2.json
 node2_messages.json
