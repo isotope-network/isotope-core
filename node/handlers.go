@@ -468,6 +468,72 @@ func (n *Node) handleGetHashes(w http.ResponseWriter, r *http.Request) {
 }
 
 // ============================================================
+// DHT ОБРАБОТЧИКИ
+// ============================================================
+
+// handleDHTFindPeer — поиск пира по PeerID через DHT
+func (n *Node) handleDHTFindPeer(w http.ResponseWriter, r *http.Request) {
+	peerID := r.URL.Query().Get("peer")
+	if peerID == "" {
+		http.Error(w, "missing peer parameter", http.StatusBadRequest)
+		return
+	}
+
+	if n.dhtNode == nil {
+		http.Error(w, "DHT not initialized", http.StatusServiceUnavailable)
+		return
+	}
+
+	addrs, err := n.dhtNode.FindPeer(peerID)
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(fmt.Sprintf(`{"status":"error","error":"%s"}`, err.Error())))
+		return
+	}
+
+	var result []string
+	for _, ai := range addrs {
+		for _, addr := range ai.Addrs {
+			result = append(result, addr.String()+"/p2p/"+ai.ID.String())
+		}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"status": "found",
+		"addrs":  result,
+	})
+}
+
+// handleDHTProvide — анонсирует себя в DHT
+func (n *Node) handleDHTProvide(w http.ResponseWriter, r *http.Request) {
+	if n.dhtNode == nil {
+		http.Error(w, "DHT not initialized", http.StatusServiceUnavailable)
+		return
+	}
+
+	if err := n.dhtNode.Provide(); err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(fmt.Sprintf(`{"status":"error","error":"%s"}`, err.Error())))
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.Write([]byte(`{"status":"provided"}`))
+}
+
+// handleDHTInfo — информация о DHT
+func (n *Node) handleDHTInfo(w http.ResponseWriter, r *http.Request) {
+	if n.dhtNode == nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"started":false}`))
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Write([]byte(n.dhtNode.GetDHTInfo()))
+}
+
+// ============================================================
 // WEBSOCKET
 // ============================================================
 

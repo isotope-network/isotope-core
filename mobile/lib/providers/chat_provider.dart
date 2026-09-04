@@ -1,4 +1,5 @@
 import 'package:flutter/foundation.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import '../models/message.dart';
 import '../services/api_service.dart';
 import '../services/ws_service.dart';
@@ -105,10 +106,14 @@ class ChatProvider extends ChangeNotifier {
       final ethHash = EthicsService.ethicsHash;
       LogService.log('libp2p: ethHash=${ethHash.length > 0 ? "да" : "нет"}');
 
+      final prefs = await SharedPreferences.getInstance();
+      final bootstrapPeers = prefs.getString('bootstrap_peers') ?? '';
+      LogService.log('libp2p: bootstrapPeers=${bootstrapPeers.isNotEmpty ? bootstrapPeers : "нет"}');
+
       final result = await LibP2PService.start(
         ethHash: ethHash,
-        bootstrapPeers: '',
-        port: 0,
+        bootstrapPeers: bootstrapPeers,
+        enableMDNS: false,
       );
 
       if (result.containsKey('error')) {

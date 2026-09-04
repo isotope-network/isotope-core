@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"io"
 	"os"
+	"path/filepath"
 )
 
 // ============================================================
@@ -133,6 +134,13 @@ func (n *Node) loadStateData() ([]byte, error) {
 // savePrivateKey — сохраняет приватный ключ рядом с stateFile
 func (n *Node) savePrivateKey(key []byte) error {
 	keyFile := n.stateFile + ".key"
+	
+	// Создаём директорию, если не существует
+	dir := filepath.Dir(keyFile)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return err
+	}
+	
 	return os.WriteFile(keyFile, key, 0600)
 }
 

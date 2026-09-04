@@ -22,6 +22,7 @@ class ConnectScreen extends StatefulWidget {
 
 class _ConnectScreenState extends State<ConnectScreen> {
   final TextEditingController _manualController = TextEditingController(text: 'http://192.168.31.203:8081');
+  final TextEditingController _bootstrapController = TextEditingController();
   final NetworkService _networkService = NetworkService();
 
   List<NodeInfo> _discoveredNodes = [];
@@ -36,6 +37,7 @@ class _ConnectScreenState extends State<ConnectScreen> {
   bool _libp2pStarted = false;
   String _localPeerId = '';
   String _localMultiaddr = '';
+  String _bootstrapPeers = '';
   StreamSubscription? _nodeSub;
   StreamSubscription? _ipSub;
 
@@ -43,10 +45,27 @@ class _ConnectScreenState extends State<ConnectScreen> {
   void initState() {
     super.initState();
     LogService.log('=== ConnectScreen initState ===');
+    _loadBootstrapPeers();
     _checkSavedNode();
     _listenToP2P();
     _startServer();
     _startNetworkMonitoring();
+  }
+
+  Future<void> _loadBootstrapPeers() async {
+    final prefs = await SharedPreferences.getInstance();
+    final saved = prefs.getString('bootstrap_peers') ?? '';
+    _bootstrapPeers = saved;
+    _bootstrapController.text = saved;
+    LogService.log('Bootstrap: загружен адрес: ${saved.isNotEmpty ? saved : "нет"}');
+    if (mounted) setState(() {});
+  }
+
+  Future<void> _saveBootstrapPeers(String value) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('bootstrap_peers', value.trim());
+    _bootstrapPeers = value.trim();
+    LogService.log('Bootstrap: сохранён адрес: ${_bootstrapPeers.isNotEmpty ? _bootstrapPeers : "нет"}');
   }
 
   void _startNetworkMonitoring() {
@@ -125,14 +144,13 @@ class _ConnectScreenState extends State<ConnectScreen> {
           : savedPeerId ?? 'нет';
       LogService.log('libp2p: saved PeerID=$savedStr');
 
-      final listenIP = _localIp ?? '0.0.0.0';
-      LogService.log('libp2p: listenIP=$listenIP');
+      final bootstrapPeers = _bootstrapPeers;
+      LogService.log('libp2p: bootstrapPeers=${bootstrapPeers.isNotEmpty ? bootstrapPeers : "нет"}');
 
       final result = await LibP2PService.start(
         ethHash: ethHash,
-        bootstrapPeers: '',
-        port: 0,
-        listenIP: listenIP,
+        bootstrapPeers: bootstrapPeers,
+        enableMDNS: false,
       );
       final resultStr = result.toString();
       LogService.log('libp2p: start result=${resultStr.length > 100 ? resultStr.substring(0, 100) : resultStr}');
@@ -454,6 +472,50 @@ class _ConnectScreenState extends State<ConnectScreen> {
     );
   }
 
+  void _showBootstrapDialog() {
+    showDialog(
+      context: context,
+      builder: (ctx) {
+        return AlertDialog(
+          title: const Text('Bootstrap-адрес'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                controller: _bootstrapController,
+                decoration: const InputDecoration(
+                  hintText: '/ip4/192.168.1.100/tcp/9001/ws/p2p/Qm...',
+                  labelText: 'Multiaddr bootstrap-узла',
+                ),
+                maxLines: 3,
+                minLines: 1,
+              ),
+              const SizedBox(height: 8),
+              const Text(
+                'Оставьте пустым, если bootstrap-узел не нужен.',
+                style: TextStyle(fontSize: 12, color: Colors.grey),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('Отмена'),
+            ),
+            TextButton(
+              onPressed: () {
+                _saveBootstrapPeers(_bootstrapController.text);
+                Navigator.pop(ctx);
+                if (mounted) setState(() {});
+              },
+              child: const Text('Сохранить'),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
   void _openLogs() {
     Navigator.push(
       context,
@@ -478,6 +540,11 @@ class _ConnectScreenState extends State<ConnectScreen> {
       appBar: AppBar(
         title: const Text('ISOTOPE — Подключение'),
         actions: [
+          IconButton(
+            icon: const Icon(Icons.settings),
+            onPressed: _showBootstrapDialog,
+            tooltip: 'Bootstrap-адрес',
+          ),
           IconButton(
             icon: const Icon(Icons.article_outlined),
             onPressed: _openLogs,
@@ -510,6 +577,19 @@ class _ConnectScreenState extends State<ConnectScreen> {
                 child: Text(
                   '📍 Ваш адрес: $_localIp:8081',
                   style: const TextStyle(fontWeight: FontWeight.bold),
+                  textAlign: TextAlign.center,
+                ),
+              ),
+            if (_bootstrapPeers.isNotEmpty)
+              Container(
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  color: Colors.orange.shade50,
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Text(
+                  '🔗 Bootstrap: ${_bootstrapPeers.length > 50 ? _bootstrapPeers.substring(0, 50) : _bootstrapPeers}...',
+                  style: const TextStyle(fontSize: 10),
                   textAlign: TextAlign.center,
                 ),
               ),

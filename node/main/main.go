@@ -32,6 +32,14 @@ func main() {
 		}
 	}
 
+	// HTTP-порт из ENV
+	httpPort := 8081
+	if portStr := os.Getenv("ISOTOPE_HTTP_PORT"); portStr != "" {
+		if p, err := strconv.Atoi(portStr); err == nil {
+			httpPort = p
+		}
+	}
+
 	// Создаём конфигурацию
 	cfg := core.Config{
 		EthHash:    ethHash,
@@ -50,7 +58,7 @@ func main() {
 
 	// Запускаем HTTP-сервер
 	go func() {
-		if err := node.StartHTTP(8081); err != nil {
+		if err := node.StartHTTP(httpPort); err != nil {
 			log.Fatal("HTTP server error:", err)
 		}
 	}()

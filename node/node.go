@@ -24,6 +24,7 @@ import (
 	"github.com/libp2p/go-libp2p/core/host"
 	"github.com/libp2p/go-libp2p/core/network"
 	"github.com/libp2p/go-libp2p/core/peer"
+	dht "github.com/libp2p/go-libp2p-kad-dht"
 	"github.com/libp2p/go-libp2p/p2p/discovery/mdns"
 	libp2ptls "github.com/libp2p/go-libp2p/p2p/security/tls"
 	"github.com/libp2p/go-libp2p/p2p/transport/tcp"
@@ -52,6 +53,7 @@ type Config struct {
 // Node — основной узел сети
 type Node struct {
 	host             host.Host
+	dhtNode          *DHTNode
 	ethHash          string
 	preHash          string
 	antiHash         string
@@ -973,6 +975,24 @@ func (n *Node) InitP2P() error {
 		}(addr)
 	}
 
+	// DHT инициализация
+	if n.configEnableMDNS || len(bootstrapPeers) > 0 {
+		mode := dht.ModeClient
+		if n.configEnableMDNS {
+			mode = dht.ModeServer
+		}
+
+		dhtNode, err := NewDHT(host, mode)
+		if err != nil {
+			log.Printf("[DHT] Failed to create DHT: %v", err)
+		} else {
+			n.dhtNode = dhtNode
+			if err := dhtNode.JoinDHT(bootstrapPeers); err != nil {
+				log.Printf("[DHT] Failed to join DHT: %v", err)
+			}
+		}
+	}
+
 	if len(n.layers) == 0 {
 		n.layers = append(n.layers, make([]float64, VectorDim))
 		hashVec := hashToVector(n.ethHash)
@@ -1046,6 +1066,9 @@ func (n *Node) StartHTTP(port int) error {
 	http.HandleFunc("/setantihash", n.handleSetAntiHash)
 	http.HandleFunc("/gethashes", n.handleGetHashes)
 	http.HandleFunc("/ws", n.handleWebSocket)
+	http.HandleFunc("/dht/find", n.handleDHTFindPeer)
+	http.HandleFunc("/dht/provide", n.handleDHTProvide)
+	http.HandleFunc("/dht/info", n.handleDHTInfo)
 	http.HandleFunc("/channels", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodPost {
 			n.handleCreateChannel(w, r)
@@ -1078,6 +1101,11 @@ func (n *Node) StartMobile(stateFile string) error {
 
 // Stop — корректно завершает узел
 func (n *Node) Stop() error {
+	if n.dhtNode != nil {
+		if err := n.dhtNode.Close(); err != nil {
+			log.Printf("[ERROR] Ошибка закрытия DHT: %v", err)
+		}
+	}
 	if err := n.saveState(); err != nil {
 		log.Printf("[ERROR] Ошибка сохранения состояния при остановке: %v", err)
 		return err
@@ -1190,4 +1218,19 @@ func (n *Node) SendMessage(text string, ttl int) (string, error) {
 	}()
 
 	return id, nil
+}
+
+// GetHost — возвращает libp2p host
+func (n *Node) GetHost() host.Host {
+	return n.host
+}
+
+// SetDHT — устанавливает DHT
+func (n *Node) SetDHT(d *DHTNode) {
+	n.dhtNode = d
+}
+
+// GetDHT — возвращает DHT
+func (n *Node) GetDHT() *DHTNode {
+	return n.dhtNode
 }

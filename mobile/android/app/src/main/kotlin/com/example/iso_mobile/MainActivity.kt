@@ -135,15 +135,9 @@ class MainActivity : FlutterActivity() {
                 when (call.method) {
                     "start" -> {
                         val ethHash = call.argument<String>("ethHash") ?: ""
-                        val stateFile = call.argument<String>("stateFile") ?: ""
                         val bootstrapPeers = call.argument<String>("bootstrapPeers") ?: ""
-                        val listenIP = call.argument<String>("listenIP") ?: ""
-                        val port = when (val p = call.argument<Any>("port")) {
-                            is Long -> p
-                            is Int -> p.toLong()
-                            else -> 0L
-                        }
-                        val response = Mobile.start(ethHash, stateFile, bootstrapPeers, port, listenIP)
+                        val enableMDNS = call.argument<Boolean>("enableMDNS") ?: false
+                        val response = Mobile.start(ethHash, bootstrapPeers, enableMDNS)
                         result.success(response)
                     }
                     "send" -> {
@@ -153,7 +147,7 @@ class MainActivity : FlutterActivity() {
                             is Int -> t.toLong()
                             else -> 0L
                         }
-                        val response = Mobile.send(text, ttl)
+                        val response = Mobile.sendMessage(text, ttl)
                         result.success(response)
                     }
                     "getMessages" -> {
@@ -161,9 +155,6 @@ class MainActivity : FlutterActivity() {
                     }
                     "getPeers" -> {
                         result.success(Mobile.getPeers())
-                    }
-                    "getWeight" -> {
-                        result.success(Mobile.getWeight())
                     }
                     "getStatus" -> {
                         result.success(Mobile.getStatus())
@@ -199,6 +190,23 @@ class MainActivity : FlutterActivity() {
                     }
                     "stop" -> {
                         result.success(Mobile.stop())
+                    }
+                    "joinDHT" -> {
+                        val bootstrapPeers = call.argument<String>("bootstrapPeers") ?: ""
+                        val response = Mobile.joinDHT(bootstrapPeers)
+                        result.success(response)
+                    }
+                    "findPeer" -> {
+                        val peerID = call.argument<String>("peerID") ?: ""
+                        val response = Mobile.findPeer(peerID)
+                        result.success(response)
+                    }
+                    "provide" -> {
+                        val response = Mobile.provide()
+                        result.success(response)
+                    }
+                    "getDHTInfo" -> {
+                        result.success(Mobile.getDHTInfo())
                     }
                     else -> result.notImplemented()
                 }

@@ -4,16 +4,25 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"os"
+	"strings"
 	"sync"
+	"time"
 
-	core "sbimain"
+	dht "github.com/libp2p/go-libp2p-kad-dht"
+	sbimain "sbimain"
 )
 
-var node *core.Node
-var logMu sync.Mutex
-var logs []string
+var (
+	node     *sbimain.Node
+	nodeMu   sync.Mutex
+	logs     []string
+	logsMu   sync.Mutex
+	logFile  *os.File
+	filesDir string
+)
 
-// logWriter — перехватывает логи из ядра
+// logWriter — перехватывает логи ядра
 type logWriter struct{}
 
 func (w *logWriter) Write(p []byte) (int, error) {
@@ -23,209 +32,326 @@ func (w *logWriter) Write(p []byte) (int, error) {
 
 // addLog — добавляет запись в журнал
 func addLog(format string, args ...interface{}) {
-	logMu.Lock()
-	defer logMu.Unlock()
-	entry := fmt.Sprintf(format, args...)
-	logs = append(logs, entry)
-	if len(logs) > 300 {
-		logs = logs[1:]
+	msg := fmt.Sprintf(format, args...)
+	line := time.Now().Format("2006-01-02 15:04:05") + " " + msg
+
+	logsMu.Lock()
+	logs = append(logs, line)
+	if len(logs) > 500 {
+		logs = logs[len(logs)-500:]
 	}
-	fmt.Printf("[MOBILE] %s\n", entry)
+	logsMu.Unlock()
+
+	if logFile != nil {
+		logFile.WriteString(line + "\n")
+	}
 }
 
-// GetLogs — возвращает все логи в JSON
+// GetLogs — возвращает последние логи
 func GetLogs() string {
-	logMu.Lock()
-	defer logMu.Unlock()
-	return toJSON(logs)
+	logsMu.Lock()
+	defer logsMu.Unlock()
+	return strings.Join(logs, "\n")
+}
+
+// SaveLog — сохраняет логи в файл
+func SaveLog() string {
+	if logFile != nil {
+		logFile.Sync()
+	}
+	path := filesDir + "/isotope.log"
+	return path
+}
+
+// SetFilesDir — устанавливает директорию для файлов
+func SetFilesDir(dir string) {
+	filesDir = dir
+
+	if dir != "" {
+		var err error
+		logFile, err = os.OpenFile(dir+"/isotope.log", os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
+		if err != nil {
+			logFile = nil
+		}
+	}
 }
 
 // Start — запускает узел
-func Start(ethHash string, stateFile string, bootstrapPeers string, port int64, listenIP string) string {
-	addLog("Start: начало, stateFile=%s", stateFile)
+func Start(ethHash string, bootstrapPeers string, enableMDNS bool) string {
+	nodeMu.Lock()
+	defer nodeMu.Unlock()
 
-	// Перехватываем логи из ядра
+	if node != nil {
+		return `{"status":"already_started"}`
+	}
+
 	log.SetOutput(&logWriter{})
-	addLog("Start: перехват логов ядра установлен")
+	addLog("[MOBILE] Starting node...")
 
-	if stateFile == "" {
-		addLog("Start: ОШИБКА — stateFile пуст")
-		return errorJSON("start", fmt.Errorf("stateFile is required"))
+	if filesDir == "" {
+		filesDir = "."
 	}
 
-	var bootstrap []string
-	if bootstrapPeers != "" {
-		for _, p := range splitComma(bootstrapPeers) {
-			if p != "" {
-				bootstrap = append(bootstrap, p)
-			}
-		}
-	}
-	addLog("Start: bootstrap узлов: %d", len(bootstrap))
-
-	cfg := core.Config{
+	cfg := sbimain.Config{
 		EthHash:    ethHash,
-		Transports: []string{"ws"},
-		Bootstrap:  bootstrap,
-		Port:       int(port),
-		EnableMDNS: false,
-		ListenIP:   listenIP,
+		Transports: []string{"ws", "tcp"},
+		Bootstrap:  parseBootstrapPeers(bootstrapPeers),
+		Port:       0,
+		EnableMDNS: enableMDNS,
+		ListenIP:   "0.0.0.0",
 	}
 
-	n := core.NewNode(cfg)
-	addLog("Start: Node создан")
-
+	n := sbimain.NewNode(cfg)
+	stateFile := filesDir + "/isotope_state.json"
 	if err := n.StartMobile(stateFile); err != nil {
-		addLog("Start: ОШИБКА StartMobile: %v", err)
-		return errorJSON("start", err)
+		addLog("[MOBILE] Failed to start node: %v", err)
+		return fmt.Sprintf(`{"status":"error","error":"%s"}`, err.Error())
 	}
-	addLog("Start: StartMobile успешен")
 
 	node = n
-	addLog("Start: завершён, stateFile=%s", stateFile)
-	return fmt.Sprintf(`{"status":"started","stateFile":"%s"}`, stateFile)
-}
+	addLog("[MOBILE] Node started successfully")
+	addLog("[MOBILE] PeerID: %s", n.GetStatus())
 
-// Send — отправляет сообщение
-func Send(text string, ttl int64) string {
-	if node == nil {
-		addLog("Send: ОШИБКА — узел не запущен")
-		return errorJSON("send", fmt.Errorf("node not started"))
-	}
-	addLog("Send: text=%s, ttl=%d", text, ttl)
-	msgID, err := node.SendMessage(text, int(ttl))
-	if err != nil {
-		addLog("Send: ОШИБКА: %v", err)
-		return errorJSON("send", err)
-	}
-	addLog("Send: успешно, msgID=%s", msgID)
-	return fmt.Sprintf(`{"message_id":"%s","status":"sent"}`, msgID)
-}
-
-// GetMessages — возвращает все сообщения в JSON
-func GetMessages() string {
-	if node == nil {
-		addLog("GetMessages: ОШИБКА — узел не запущен")
-		return errorJSON("get_messages", fmt.Errorf("node not started"))
-	}
-	msgs := node.GetMessages()
-	addLog("GetMessages: %d сообщений", len(msgs))
-	return toJSON(msgs)
-}
-
-// GetPeers — возвращает список пиров в JSON
-func GetPeers() string {
-	if node == nil {
-		addLog("GetPeers: ОШИБКА — узел не запущен")
-		return errorJSON("get_peers", fmt.Errorf("node not started"))
-	}
-	peers := node.GetPeers()
-	addLog("GetPeers: %d пиров", len(peers))
-	return toJSON(peers)
-}
-
-// GetWeight — возвращает вес узла в JSON
-func GetWeight() string {
-	if node == nil {
-		addLog("GetWeight: ОШИБКА — узел не запущен")
-		return errorJSON("get_weight", fmt.Errorf("node not started"))
-	}
-	weight := node.GetWeight()
-	addLog("GetWeight: %.4f", weight)
-	return fmt.Sprintf(`{"weight":%f}`, weight)
-}
-
-// GetStatus — возвращает статус узла
-func GetStatus() string {
-	if node == nil {
-		addLog("GetStatus: ОШИБКА — узел не запущен")
-		return errorJSON("get_status", fmt.Errorf("node not started"))
-	}
-	status := node.GetStatus()
-	addLog("GetStatus: %s", status)
-	return status
-}
-
-// GetMultiaddrs — возвращает адреса узла
-func GetMultiaddrs() string {
-	if node == nil {
-		addLog("GetMultiaddrs: ОШИБКА — узел не запущен")
-		return errorJSON("get_multiaddrs", fmt.Errorf("node not started"))
-	}
-	addrs := node.GetMultiaddrs()
-	addLog("GetMultiaddrs: %d адресов", len(addrs))
-	return toJSON(addrs)
-}
-
-// ConnectToPeer — подключение к пиру
-func ConnectToPeer(multiaddr string) string {
-	if node == nil {
-		addLog("ConnectToPeer: ОШИБКА — узел не запущен")
-		return errorJSON("connect_to_peer", fmt.Errorf("node not started"))
-	}
-	addLog("ConnectToPeer: %s", multiaddr)
-	if err := node.ConnectToPeer(multiaddr); err != nil {
-		addLog("ConnectToPeer: ОШИБКА: %v", err)
-		return errorJSON("connect_to_peer", err)
-	}
-	addLog("ConnectToPeer: успешно")
-	return fmt.Sprintf(`{"status":"connected","multiaddr":"%s"}`, multiaddr)
+	return `{"status":"started"}`
 }
 
 // Stop — останавливает узел
 func Stop() string {
+	nodeMu.Lock()
+	defer nodeMu.Unlock()
+
 	if node == nil {
-		addLog("Stop: ОШИБКА — узел не запущен")
-		return errorJSON("stop", fmt.Errorf("node not started"))
+		return `{"status":"not_started"}`
 	}
-	addLog("Stop: остановка...")
+
 	if err := node.Stop(); err != nil {
-		addLog("Stop: ОШИБКА: %v", err)
-		return errorJSON("stop", err)
+		addLog("[MOBILE] Failed to stop node: %v", err)
+		return fmt.Sprintf(`{"status":"error","error":"%s"}`, err.Error())
 	}
+
 	node = nil
-	addLog("Stop: остановлен")
+	addLog("[MOBILE] Node stopped")
 	return `{"status":"stopped"}`
 }
 
-// toJSON — сериализует в JSON
-func toJSON(v interface{}) string {
-	data, err := json.Marshal(v)
+// GetStatus — возвращает статус узла
+func GetStatus() string {
+	nodeMu.Lock()
+	defer nodeMu.Unlock()
+
+	if node == nil {
+		return `{"id":"","peers":0,"memory":0,"layers":0}`
+	}
+	return node.GetStatus()
+}
+
+// GetMessages — возвращает все сообщения
+func GetMessages() string {
+	nodeMu.Lock()
+	defer nodeMu.Unlock()
+
+	if node == nil {
+		return `[]`
+	}
+
+	messages := node.GetMessages()
+	data, _ := json.Marshal(messages)
+	return string(data)
+}
+
+// SendMessage — отправляет сообщение
+func SendMessage(text string, ttl int) string {
+	nodeMu.Lock()
+	defer nodeMu.Unlock()
+
+	if node == nil {
+		return `{"status":"error","error":"node not started"}`
+	}
+
+	id, err := node.SendMessage(text, ttl)
 	if err != nil {
-		return `{"error":"json_marshal_failed"}`
+		return fmt.Sprintf(`{"status":"error","error":"%s"}`, err.Error())
 	}
+
+	return fmt.Sprintf(`{"status":"ok","id":"%s"}`, id)
+}
+
+// GetPeers — возвращает список пиров
+func GetPeers() string {
+	nodeMu.Lock()
+	defer nodeMu.Unlock()
+
+	if node == nil {
+		return `[]`
+	}
+
+	peers := node.GetPeers()
+	data, _ := json.Marshal(peers)
 	return string(data)
 }
 
-// errorJSON — создаёт JSON с ошибкой
-func errorJSON(operation string, err error) string {
-	result := map[string]string{
-		"error":     err.Error(),
-		"operation": operation,
+// GetMultiaddrs — возвращает multiaddr узла
+func GetMultiaddrs() string {
+	nodeMu.Lock()
+	defer nodeMu.Unlock()
+
+	if node == nil {
+		return `[]`
 	}
-	data, marshalErr := json.Marshal(result)
-	if marshalErr != nil {
-		return `{"error":"json_marshal_failed","operation":"` + operation + `"}`
-	}
+
+	addrs := node.GetMultiaddrs()
+	data, _ := json.Marshal(addrs)
 	return string(data)
 }
 
-// splitComma — разделяет строку по запятой
-func splitComma(s string) []string {
-	var result []string
-	current := ""
-	for _, ch := range s {
-		if ch == ',' {
-			if current != "" {
-				result = append(result, current)
-				current = ""
-			}
-		} else if ch != ' ' {
-			current += string(ch)
+// ConnectToPeer — подключается к пиру
+func ConnectToPeer(multiaddr string) string {
+	nodeMu.Lock()
+	defer nodeMu.Unlock()
+
+	if node == nil {
+		return `{"status":"error","error":"node not started"}`
+	}
+
+	if err := node.ConnectToPeer(multiaddr); err != nil {
+		return fmt.Sprintf(`{"status":"error","error":"%s"}`, err.Error())
+	}
+
+	return `{"status":"connected"}`
+}
+
+// ============================================================
+// DHT ОБЁРТКИ
+// ============================================================
+
+// JoinDHT — вход в DHT сеть
+func JoinDHT(bootstrapPeers string) string {
+	nodeMu.Lock()
+	defer nodeMu.Unlock()
+
+	if node == nil {
+		return `{"status":"error","error":"node not started"}`
+	}
+
+	peers := parseBootstrapPeers(bootstrapPeers)
+	if len(peers) == 0 {
+		return `{"status":"error","error":"no bootstrap peers"}`
+	}
+
+	host := node.GetHost()
+	if host == nil {
+		return `{"status":"error","error":"host not available"}`
+	}
+
+	dhtNode, err := sbimain.NewDHT(host, dht.ModeClient)
+	if err != nil {
+		addLog("[DHT] Failed to create DHT: %v", err)
+		return fmt.Sprintf(`{"status":"error","error":"%s"}`, err.Error())
+	}
+
+	if err := dhtNode.JoinDHT(peers); err != nil {
+		addLog("[DHT] Failed to join DHT: %v", err)
+		return fmt.Sprintf(`{"status":"error","error":"%s"}`, err.Error())
+	}
+
+	node.SetDHT(dhtNode)
+	addLog("[DHT] Joined DHT network")
+	return `{"status":"joined"}`
+}
+
+// FindPeer — поиск пира по PeerID
+func FindPeer(peerID string) string {
+	nodeMu.Lock()
+	defer nodeMu.Unlock()
+
+	if node == nil {
+		return `{"status":"error","error":"node not started"}`
+	}
+
+	dhtNode := node.GetDHT()
+	if dhtNode == nil {
+		return `{"status":"error","error":"DHT not initialized"}`
+	}
+
+	addrInfos, err := dhtNode.FindPeer(peerID)
+	if err != nil {
+		addLog("[DHT] FindPeer failed: %v", err)
+		return fmt.Sprintf(`{"status":"error","error":"%s"}`, err.Error())
+	}
+
+	if len(addrInfos) == 0 {
+		return `{"status":"not_found","addrs":[]}`
+	}
+
+	var addrs []string
+	for _, ai := range addrInfos {
+		for _, addr := range ai.Addrs {
+			addrs = append(addrs, addr.String()+"/p2p/"+ai.ID.String())
 		}
 	}
-	if current != "" {
-		result = append(result, current)
+
+	result := map[string]interface{}{
+		"status": "found",
+		"addrs":  addrs,
 	}
-	return result
+	data, _ := json.Marshal(result)
+	return string(data)
+}
+
+// Provide — анонсирует себя в DHT
+func Provide() string {
+	nodeMu.Lock()
+	defer nodeMu.Unlock()
+
+	if node == nil {
+		return `{"status":"error","error":"node not started"}`
+	}
+
+	dhtNode := node.GetDHT()
+	if dhtNode == nil {
+		return `{"status":"error","error":"DHT not initialized"}`
+	}
+
+	if err := dhtNode.Provide(); err != nil {
+		addLog("[DHT] Provide failed: %v", err)
+		return fmt.Sprintf(`{"status":"error","error":"%s"}`, err.Error())
+	}
+
+	return `{"status":"provided"}`
+}
+
+// GetDHTInfo — информация о DHT
+func GetDHTInfo() string {
+	nodeMu.Lock()
+	defer nodeMu.Unlock()
+
+	if node == nil {
+		return `{"started":false}`
+	}
+
+	dhtNode := node.GetDHT()
+	if dhtNode == nil {
+		return `{"started":false}`
+	}
+
+	return dhtNode.GetDHTInfo()
+}
+
+// ============================================================
+// ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ
+// ============================================================
+
+// parseBootstrapPeers — разбирает строку bootstrap-пиров
+func parseBootstrapPeers(bootstrapPeers string) []string {
+	if bootstrapPeers == "" {
+		return []string{}
+	}
+
+	var peers []string
+	for _, p := range strings.Split(bootstrapPeers, ",") {
+		if p = strings.TrimSpace(p); p != "" {
+			peers = append(peers, p)
+		}
+	}
+	return peers
 }

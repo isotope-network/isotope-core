@@ -8,6 +8,9 @@ class LibP2PService {
   /// Глобальный флаг — запущен ли узел
   static bool _started = false;
 
+  /// Глобальный флаг — запущен ли DHT
+  static bool _dhtStarted = false;
+
   /// Возвращает путь к файлу состояния (через нативный filesDir)
   static Future<String> _getStateFilePath() async {
     final filesDir = await _channel.invokeMethod<String>('getFilesDir');
@@ -18,11 +21,8 @@ class LibP2PService {
   static Future<List<String>> getCoreLogs() async {
     try {
       final response = await _channel.invokeMethod<String>('getLogs');
-      final decoded = jsonDecode(response ?? '[]');
-      if (decoded is List) {
-        return decoded.cast<String>();
-      }
-      return [];
+      if (response == null || response.isEmpty) return [];
+      return response.split('\n');
     } on PlatformException {
       return [];
     }
@@ -32,22 +32,17 @@ class LibP2PService {
   static Future<Map<String, dynamic>> start({
     required String ethHash,
     String bootstrapPeers = '',
-    int port = 0,
-    String listenIP = '',
+    bool enableMDNS = false,
   }) async {
     if (_started) {
       return {'status': 'already_started'};
     }
 
     try {
-      final stateFile = await _getStateFilePath();
-
       final response = await _channel.invokeMethod<String>('start', {
         'ethHash': ethHash,
-        'stateFile': stateFile,
         'bootstrapPeers': bootstrapPeers,
-        'port': port,
-        'listenIP': listenIP,
+        'enableMDNS': enableMDNS,
       });
       final decoded = jsonDecode(response ?? '{"error":"empty_response"}');
       if (!decoded.containsKey('error')) {
@@ -97,17 +92,6 @@ class LibP2PService {
     }
   }
 
-  /// Получает вес узла
-  static Future<double> getWeight() async {
-    try {
-      final response = await _channel.invokeMethod<String>('getWeight');
-      final decoded = jsonDecode(response ?? '{"weight":0.5}');
-      return (decoded['weight'] as num?)?.toDouble() ?? 0.5;
-    } on PlatformException {
-      return 0.5;
-    }
-  }
-
   /// Получает статус узла
   static Future<Map<String, dynamic>> getStatus() async {
     try {
@@ -144,6 +128,54 @@ class LibP2PService {
     }
   }
 
+  /// Входит в DHT сеть
+  static Future<Map<String, dynamic>> joinDHT(String bootstrapPeers) async {
+    try {
+      final response = await _channel.invokeMethod<String>('joinDHT', {
+        'bootstrapPeers': bootstrapPeers,
+      });
+      final decoded = jsonDecode(response ?? '{"error":"empty_response"}');
+      if (decoded['status'] == 'joined') {
+        _dhtStarted = true;
+      }
+      return decoded;
+    } on PlatformException catch (e) {
+      return {'error': e.message ?? 'platform_error', 'operation': 'join_dht'};
+    }
+  }
+
+  /// Ищет пира по PeerID через DHT
+  static Future<Map<String, dynamic>> findPeer(String peerID) async {
+    try {
+      final response = await _channel.invokeMethod<String>('findPeer', {
+        'peerID': peerID,
+      });
+      return jsonDecode(response ?? '{"error":"empty_response"}');
+    } on PlatformException catch (e) {
+      return {'error': e.message ?? 'platform_error', 'operation': 'find_peer'};
+    }
+  }
+
+  /// Анонсирует себя в DHT
+  static Future<Map<String, dynamic>> provide() async {
+    try {
+      final response = await _channel.invokeMethod<String>('provide');
+      return jsonDecode(response ?? '{"error":"empty_response"}');
+    } on PlatformException catch (e) {
+      return {'error': e.message ?? 'platform_error', 'operation': 'provide'};
+    }
+  }
+
+  /// Получает информацию о DHT
+  static Future<Map<String, dynamic>> getDHTInfo() async {
+    try {
+      final response = await _channel.invokeMethod<String>('getDHTInfo');
+      return jsonDecode(response ?? '{"started":false}');
+    } on PlatformException {
+      return {'started': false};
+    }
+  }
+
   /// Останавливает узел
   static Future<Map<String, dynamic>> stop() async {
     if (!_started) {
@@ -155,6 +187,7 @@ class LibP2PService {
       final decoded = jsonDecode(response ?? '{"error":"empty_response"}');
       if (!decoded.containsKey('error')) {
         _started = false;
+        _dhtStarted = false;
       }
       return decoded;
     } on PlatformException catch (e) {
@@ -164,4 +197,7 @@ class LibP2PService {
 
   /// Проверяет, запущен ли узел
   static bool get isStarted => _started;
+
+  /// Проверяет, запущен ли DHT
+  static bool get isDHTStarted => _dhtStarted;
 }
