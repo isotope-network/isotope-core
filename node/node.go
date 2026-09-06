@@ -24,7 +24,6 @@ import (
 	"github.com/libp2p/go-libp2p/core/host"
 	"github.com/libp2p/go-libp2p/core/network"
 	"github.com/libp2p/go-libp2p/core/peer"
-	dht "github.com/libp2p/go-libp2p-kad-dht"
 	"github.com/libp2p/go-libp2p/p2p/discovery/mdns"
 	libp2ptls "github.com/libp2p/go-libp2p/p2p/security/tls"
 	"github.com/libp2p/go-libp2p/p2p/transport/tcp"
@@ -44,7 +43,7 @@ const RESTORE_PREFIX = "[RESTORE]"
 type Config struct {
 	EthHash    string   // этический хеш
 	Transports []string // ["ws"] или ["ws", "tcp"]
-	Bootstrap  []string // адреса bootstrap-пиров
+	Bootstrap  []string // адреса известных узлов
 	Port       int      // порт для P2P (0 = автоматический)
 	EnableMDNS bool     // true = запускать mDNS (десктоп), false = не запускать (мобильный)
 	ListenIP   string   // IP для прослушивания (пусто = 0.0.0.0)
@@ -215,6 +214,32 @@ func (n *Node) handleStream(stream network.Stream) {
 				stream.Write([]byte(REPLICA_PREFIX + string(data) + "\n"))
 			}
 			log.Printf("[RESTORE] Отправлено %d реплик для узла %s", len(replicas), nodeID[:8])
+		}
+		return
+	}
+
+	if strings.HasPrefix(msg, "PEERS:") {
+		payload := strings.TrimPrefix(msg, "PEERS:")
+		var peerAddrs []string
+		if err := json.Unmarshal([]byte(payload), &peerAddrs); err == nil {
+			for _, addr := range peerAddrs {
+				peerInfo, err := peer.AddrInfoFromString(addr)
+				if err == nil {
+					n.host.Peerstore().AddAddrs(peerInfo.ID, peerInfo.Addrs, time.Hour*24)
+				}
+			}
+			log.Printf("[PEERS] Получен список от %s: %d узлов", stream.Conn().RemotePeer().String()[:8], len(peerAddrs))
+
+			// Отправить свой полный список в ответ
+			allAddrs := n.GetKnownPeers()
+			myAddrs := n.GetMultiaddrs()
+			for _, addr := range myAddrs {
+				if !strings.Contains(addr, "127.0.0.1") {
+					allAddrs = append(allAddrs, addr)
+				}
+			}
+			data, _ := json.Marshal(allAddrs)
+			stream.Write([]byte("PEERS:" + string(data) + "\n"))
 		}
 		return
 	}
@@ -841,11 +866,12 @@ func (n *Node) loadState() error {
 		return err
 	}
 	var state struct {
-		Messages []Message   `json:"messages"`
-		Layers   [][]float64 `json:"layers"`
-		MsgCount int         `json:"msgCount"`
-		PreHash  string      `json:"preHash"`
-		AntiHash string      `json:"antiHash"`
+		Messages     []Message   `json:"messages"`
+		Layers       [][]float64 `json:"layers"`
+		MsgCount     int         `json:"msgCount"`
+		PreHash      string      `json:"preHash"`
+		AntiHash     string      `json:"antiHash"`
+		RoutingTable []string    `json:"routingTable"`
 	}
 	if err := json.Unmarshal(data, &state); err != nil {
 		return err
@@ -867,11 +893,18 @@ func (n *Node) loadState() error {
 	if n.antiHash != "" {
 		log.Printf("[ANTIHASH] Загружен анти-хеш: %s", n.antiHash)
 	}
-	log.Printf("[STATE] Загружено состояние: %d сообщений, %d слоёв", len(state.Messages), len(state.Layers))
+	if len(state.RoutingTable) > 0 {
+		if n.dhtNode != nil {
+			data, _ := json.Marshal(state.RoutingTable)
+			n.dhtNode.LoadRoutingTable(data)
+		}
+	}
+	log.Printf("[STATE] Загружено состояние: %d сообщений, %d слоёв, %d узлов в routing table",
+		len(state.Messages), len(state.Layers), len(state.RoutingTable))
 	return nil
 }
 
-// InitP2P — инициализирует P2P (libp2p, mDNS, bootstrap, обработчики)
+// InitP2P — инициализирует P2P (libp2p, mDNS, DHT, обработчики)
 func (n *Node) InitP2P() error {
 	if n.stateFile == "" {
 		nodeIDStr := os.Getenv("NODE_ID")
@@ -921,6 +954,8 @@ func (n *Node) InitP2P() error {
 		libp2p.ListenAddrStrings(listenAddr, listenWS),
 		libp2p.Identity(priv),
 		libp2p.Security(libp2ptls.ID, libp2ptls.New),
+		libp2p.EnableHolePunching(),
+		libp2p.EnableRelay(),
 	}
 
 	if len(n.configTransports) == 0 {
@@ -972,24 +1007,24 @@ func (n *Node) InitP2P() error {
 				return
 			}
 			log.Printf("[BOOTSTRAP] Connected to %s", addr)
+
+			go func(peerID peer.ID) {
+				time.Sleep(2 * time.Second)
+				if err := n.ExchangePeers(peerID.String()); err != nil {
+					log.Printf("[PEERS] Exchange failed: %v", err)
+				}
+			}(peerInfo.ID)
 		}(addr)
 	}
 
-	// DHT инициализация
-	if n.configEnableMDNS || len(bootstrapPeers) > 0 {
-		mode := dht.ModeClient
-		if n.configEnableMDNS {
-			mode = dht.ModeServer
-		}
-
-		dhtNode, err := NewDHT(host, mode)
-		if err != nil {
-			log.Printf("[DHT] Failed to create DHT: %v", err)
-		} else {
-			n.dhtNode = dhtNode
-			if err := dhtNode.JoinDHT(bootstrapPeers); err != nil {
-				log.Printf("[DHT] Failed to join DHT: %v", err)
-			}
+	// DHT инициализация — все узлы равноправны
+	dhtNode, err := NewDHT(host)
+	if err != nil {
+		log.Printf("[DHT] Failed to create DHT: %v", err)
+	} else {
+		n.dhtNode = dhtNode
+		if err := dhtNode.JoinDHT(bootstrapPeers); err != nil {
+			log.Printf("[DHT] Failed to join DHT: %v", err)
 		}
 	}
 
@@ -1121,7 +1156,7 @@ func (n *Node) GetMessages() []Message {
 	return n.memory.GetAll()
 }
 
-// GetPeers — возвращает список пиров
+// GetPeers — возвращает список активных пиров
 func (n *Node) GetPeers() []string {
 	if n.host == nil {
 		return []string{}
@@ -1186,6 +1221,14 @@ func (n *Node) ConnectToPeer(multiaddr string) error {
 		return fmt.Errorf("failed to connect: %w", err)
 	}
 	log.Printf("[P2P] Подключен к пиру: %s", peerInfo.ID.String()[:16])
+
+	go func() {
+		time.Sleep(2 * time.Second)
+		if err := n.ExchangePeers(peerInfo.ID.String()); err != nil {
+			log.Printf("[PEERS] Exchange failed: %v", err)
+		}
+	}()
+
 	return nil
 }
 
@@ -1218,6 +1261,91 @@ func (n *Node) SendMessage(text string, ttl int) (string, error) {
 	}()
 
 	return id, nil
+}
+
+// GetKnownPeers — возвращает список всех известных multiaddr (из peerstore)
+func (n *Node) GetKnownPeers() []string {
+	if n.host == nil {
+		return []string{}
+	}
+
+	var addrs []string
+	peers := n.host.Peerstore().Peers()
+	for _, p := range peers {
+		peerInfo := n.host.Peerstore().PeerInfo(p)
+		for _, addr := range peerInfo.Addrs {
+			addrStr := addr.String() + "/p2p/" + p.String()
+			if strings.Contains(addrStr, "127.0.0.1") {
+				continue
+			}
+			addrs = append(addrs, addrStr)
+		}
+	}
+	return addrs
+}
+
+// ExchangePeers — обменивается списками всех известных узлов с пиром
+func (n *Node) ExchangePeers(peerID string) error {
+	if n.host == nil {
+		return fmt.Errorf("node not started")
+	}
+
+	pid, err := peer.Decode(peerID)
+	if err != nil {
+		return fmt.Errorf("invalid peer ID: %w", err)
+	}
+
+	allKnownAddrs := n.GetKnownPeers()
+
+	myAddrs := n.GetMultiaddrs()
+	for _, addr := range myAddrs {
+		if !strings.Contains(addr, "127.0.0.1") {
+			found := false
+			for _, known := range allKnownAddrs {
+				if known == addr {
+					found = true
+					break
+				}
+			}
+			if !found {
+				allKnownAddrs = append(allKnownAddrs, addr)
+			}
+		}
+	}
+
+	ctx := context.Background()
+	s, err := n.host.NewStream(ctx, pid, protocolID)
+	if err != nil {
+		return fmt.Errorf("failed to open stream: %w", err)
+	}
+	defer s.Close()
+
+	data, _ := json.Marshal(allKnownAddrs)
+	fmt.Fprintf(s, "PEERS:%s\n", string(data))
+
+	buf := make([]byte, 256*1024)
+	s.SetReadDeadline(time.Now().Add(15 * time.Second))
+	nr, err := s.Read(buf)
+	if err != nil && nr == 0 {
+		return fmt.Errorf("failed to read response: %w", err)
+	}
+
+	response := strings.TrimSpace(string(buf[:nr]))
+	if strings.HasPrefix(response, "PEERS:") {
+		payload := strings.TrimPrefix(response, "PEERS:")
+		var peerAddrs []string
+		if err := json.Unmarshal([]byte(payload), &peerAddrs); err == nil {
+			for _, addr := range peerAddrs {
+				peerInfo, err := peer.AddrInfoFromString(addr)
+				if err == nil {
+					n.host.Peerstore().AddAddrs(peerInfo.ID, peerInfo.Addrs, time.Hour*24)
+				}
+			}
+			log.Printf("[PEERS] Получен список от %s: %d адресов", peerID[:16], len(peerAddrs))
+		}
+	}
+
+	return nil
 }
 
 // GetHost — возвращает libp2p host

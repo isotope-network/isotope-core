@@ -9,7 +9,6 @@ import (
 	"sync"
 	"time"
 
-	dht "github.com/libp2p/go-libp2p-kad-dht"
 	sbimain "sbimain"
 )
 
@@ -217,6 +216,10 @@ func ConnectToPeer(multiaddr string) string {
 		return fmt.Sprintf(`{"status":"error","error":"%s"}`, err.Error())
 	}
 
+	if dhtNode := node.GetDHT(); dhtNode != nil {
+		dhtNode.RefreshOnDemand()
+	}
+
 	return `{"status":"connected"}`
 }
 
@@ -243,7 +246,7 @@ func JoinDHT(bootstrapPeers string) string {
 		return `{"status":"error","error":"host not available"}`
 	}
 
-	dhtNode, err := sbimain.NewDHT(host, dht.ModeClient)
+	dhtNode, err := sbimain.NewDHT(host)
 	if err != nil {
 		addLog("[DHT] Failed to create DHT: %v", err)
 		return fmt.Sprintf(`{"status":"error","error":"%s"}`, err.Error())
@@ -259,7 +262,7 @@ func JoinDHT(bootstrapPeers string) string {
 	return `{"status":"joined"}`
 }
 
-// FindPeer — поиск пира по PeerID
+// FindPeer — поиск пира по PeerID (сначала локально, потом DHT)
 func FindPeer(peerID string) string {
 	nodeMu.Lock()
 	defer nodeMu.Unlock()
@@ -268,31 +271,88 @@ func FindPeer(peerID string) string {
 		return `{"status":"error","error":"node not started"}`
 	}
 
-	dhtNode := node.GetDHT()
-	if dhtNode == nil {
-		return `{"status":"error","error":"DHT not initialized"}`
-	}
-
-	addrInfos, err := dhtNode.FindPeer(peerID)
-	if err != nil {
-		addLog("[DHT] FindPeer failed: %v", err)
-		return fmt.Sprintf(`{"status":"error","error":"%s"}`, err.Error())
-	}
-
-	if len(addrInfos) == 0 {
-		return `{"status":"not_found","addrs":[]}`
-	}
-
-	var addrs []string
-	for _, ai := range addrInfos {
-		for _, addr := range ai.Addrs {
-			addrs = append(addrs, addr.String()+"/p2p/"+ai.ID.String())
+	// 1. Локальный поиск в peerstore
+	knownPeers := node.GetKnownPeers()
+	for _, addr := range knownPeers {
+		if strings.Contains(addr, peerID) {
+			addLog("[PEERS] Найден локально: %s", addr)
+			result := map[string]interface{}{
+				"status": "found",
+				"addrs":  []string{addr},
+			}
+			data, _ := json.Marshal(result)
+			return string(data)
 		}
 	}
 
+	// 2. DHT поиск (если DHT активен)
+	dhtNode := node.GetDHT()
+	if dhtNode != nil && dhtNode.IsDHTActive() {
+		addLog("[DHT] DHT активен, ищу %s...", peerID[:16])
+		dhtNode.RefreshOnDemand()
+
+		addrInfos, err := dhtNode.FindPeer(peerID)
+		if err == nil && len(addrInfos) > 0 {
+			var addrs []string
+			for _, ai := range addrInfos {
+				for _, addr := range ai.Addrs {
+					addrs = append(addrs, addr.String()+"/p2p/"+ai.ID.String())
+				}
+			}
+			result := map[string]interface{}{
+				"status": "found",
+				"addrs":  addrs,
+			}
+			data, _ := json.Marshal(result)
+			return string(data)
+		}
+		addLog("[DHT] FindPeer failed: %v", err)
+	} else {
+		addLog("[PEERS] DHT не активен (малая сеть), только локальный поиск")
+	}
+
+	return `{"status":"not_found","addrs":[]}`
+}
+
+// FindPeersViaNetwork — запрашивает список известных узлов у подключённых пиров
+func FindPeersViaNetwork() string {
+	nodeMu.Lock()
+	defer nodeMu.Unlock()
+
+	if node == nil {
+		return `{"status":"error","error":"node not started"}`
+	}
+
+	peers := node.GetPeers()
+	if len(peers) == 0 {
+		return `{"status":"error","error":"no connected peers"}`
+	}
+
+	addLog("[PEERS] Обмениваюсь списками с %d пирами...", len(peers))
+
+	// Обмениваемся с каждым пиром
+	for _, peerID := range peers {
+		if err := node.ExchangePeers(peerID); err != nil {
+			addLog("[PEERS] Exchange with %s failed: %v", peerID[:16], err)
+			continue
+		}
+	}
+
+	// Собираем все известные адреса
+	var allAddrs []string
+	knownPeers := node.GetKnownPeers()
+	myID := node.GetHost().ID().String()
+	for _, addr := range knownPeers {
+		if !strings.Contains(addr, myID) {
+			allAddrs = append(allAddrs, addr)
+		}
+	}
+
+	addLog("[PEERS] Найдено узлов: %d", len(allAddrs))
+
 	result := map[string]interface{}{
 		"status": "found",
-		"addrs":  addrs,
+		"addrs":  allAddrs,
 	}
 	data, _ := json.Marshal(result)
 	return string(data)
