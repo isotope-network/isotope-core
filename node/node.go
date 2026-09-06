@@ -25,6 +25,7 @@ import (
 	"github.com/libp2p/go-libp2p/core/network"
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/libp2p/go-libp2p/p2p/discovery/mdns"
+	"github.com/libp2p/go-libp2p/p2p/protocol/circuitv2/relay"
 	libp2ptls "github.com/libp2p/go-libp2p/p2p/security/tls"
 	"github.com/libp2p/go-libp2p/p2p/transport/tcp"
 	"github.com/libp2p/go-libp2p/p2p/transport/websocket"
@@ -41,40 +42,42 @@ const RESTORE_PREFIX = "[RESTORE]"
 
 // Config — конфигурация узла
 type Config struct {
-	EthHash    string   // этический хеш
-	Transports []string // ["ws"] или ["ws", "tcp"]
-	Bootstrap  []string // адреса известных узлов
-	Port       int      // порт для P2P (0 = автоматический)
-	EnableMDNS bool     // true = запускать mDNS (десктоп), false = не запускать (мобильный)
-	ListenIP   string   // IP для прослушивания (пусто = 0.0.0.0)
+	EthHash           string   // этический хеш
+	Transports        []string // ["ws"] или ["ws", "tcp"]
+	Bootstrap         []string // адреса известных узлов
+	Port              int      // порт для P2P (0 = автоматический)
+	EnableMDNS        bool     // true = запускать mDNS (десктоп), false = не запускать (мобильный)
+	ListenIP          string   // IP для прослушивания (пусто = 0.0.0.0)
+	EnableRelayServer bool     // true = быть relay-сервером (VPS), false = только клиент (телефоны)
 }
 
 // Node — основной узел сети
 type Node struct {
-	host             host.Host
-	dhtNode          *DHTNode
-	ethHash          string
-	preHash          string
-	antiHash         string
-	lastSyncSent     time.Time
-	lastSyncedLayers [][]float64
-	layersDirty      bool
-	memory           Memory
-	assoc            AssocMemory
-	layers           [][]float64
-	msgCount         int
-	nodeID           int
-	stateFile        string
-	configTransports []string
-	configPort       int
-	configBootstrap  []string
-	configEnableMDNS bool
-	configListenIP   string
-	mu               sync.Mutex
-	lastPing         map[string]time.Time
-	deadPeers        map[string]bool
-	adaptive         *AdaptiveParams
-	channels         *ChannelStore
+	host                  host.Host
+	dhtNode               *DHTNode
+	ethHash               string
+	preHash               string
+	antiHash              string
+	lastSyncSent          time.Time
+	lastSyncedLayers      [][]float64
+	layersDirty           bool
+	memory                Memory
+	assoc                 AssocMemory
+	layers                [][]float64
+	msgCount              int
+	nodeID                int
+	stateFile             string
+	configTransports      []string
+	configPort            int
+	configBootstrap       []string
+	configEnableMDNS      bool
+	configListenIP        string
+	configEnableRelayServer bool
+	mu                    sync.Mutex
+	lastPing              map[string]time.Time
+	deadPeers             map[string]bool
+	adaptive              *AdaptiveParams
+	channels              *ChannelStore
 }
 
 // NewNode — создаёт новый узел
@@ -90,12 +93,13 @@ func NewNode(cfg Config) *Node {
 	}
 
 	return &Node{
-		ethHash:          cfg.EthHash,
-		configTransports: cfg.Transports,
-		configPort:       port,
-		configBootstrap:  cfg.Bootstrap,
-		configEnableMDNS: cfg.EnableMDNS,
-		configListenIP:   listenIP,
+		ethHash:                cfg.EthHash,
+		configTransports:       cfg.Transports,
+		configPort:             port,
+		configBootstrap:        cfg.Bootstrap,
+		configEnableMDNS:       cfg.EnableMDNS,
+		configListenIP:         listenIP,
+		configEnableRelayServer: cfg.EnableRelayServer,
 		memory: Memory{
 			seen: make(map[string]bool),
 		},
@@ -230,7 +234,6 @@ func (n *Node) handleStream(stream network.Stream) {
 			}
 			log.Printf("[PEERS] Получен список от %s: %d узлов", stream.Conn().RemotePeer().String()[:8], len(peerAddrs))
 
-			// Отправить свой полный список в ответ
 			allAddrs := n.GetKnownPeers()
 			myAddrs := n.GetMultiaddrs()
 			for _, addr := range myAddrs {
@@ -979,6 +982,15 @@ func (n *Node) InitP2P() error {
 	n.host.SetStreamHandler(protocolID, n.handleStream)
 	n.host.SetStreamHandler(syncProtocolID, n.handleSyncStream)
 	n.host.SetStreamHandler(pingProtocolID, n.handlePingStream)
+
+	// Relay-сервер (для VPS)
+	if n.configEnableRelayServer {
+		if _, err := relay.New(host); err != nil {
+			log.Printf("[RELAY] Failed to enable relay server: %v", err)
+		} else {
+			log.Println("[RELAY] Relay server enabled")
+		}
+	}
 
 	if n.configEnableMDNS {
 		mdnsService := mdns.NewMdnsService(n.host, "_isotope._tcp.local", n)
