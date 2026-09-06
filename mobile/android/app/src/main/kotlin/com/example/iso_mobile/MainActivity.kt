@@ -36,11 +36,13 @@ class MainActivity : FlutterActivity() {
     private val EVENT_CHANNEL = "isotope/nsd/events"
     private val BLE_METHOD_CHANNEL = "isotope/ble"
     private val LIBP2P_METHOD_CHANNEL = "isotope/libp2p"
+    private val MESSAGES_EVENT_CHANNEL = "isotope/messages"
 
     private var nsdManager: NsdManager? = null
     private var registrationListener: NsdManager.RegistrationListener? = null
     private var discoveryListener: NsdManager.DiscoveryListener? = null
     private var eventSink: EventChannel.EventSink? = null
+    private var messageEventSink: EventChannel.EventSink? = null
     private var isDiscovering = false
 
     // BLE
@@ -201,6 +203,10 @@ class MainActivity : FlutterActivity() {
                         val response = Mobile.findPeer(peerID)
                         result.success(response)
                     }
+                    "findPeersViaNetwork" -> {
+                        val response = Mobile.findPeersViaNetwork()
+                        result.success(response)
+                    }
                     "provide" -> {
                         val response = Mobile.provide()
                         result.success(response)
@@ -211,6 +217,27 @@ class MainActivity : FlutterActivity() {
                     else -> result.notImplemented()
                 }
             }
+
+        // EventChannel для новых сообщений
+        EventChannel(flutterEngine.dartExecutor.binaryMessenger, MESSAGES_EVENT_CHANNEL)
+            .setStreamHandler(object : EventChannel.StreamHandler {
+                override fun onListen(arguments: Any?, events: EventChannel.EventSink?) {
+                    messageEventSink = events
+                    // Устанавливаем колбэк для сообщений
+                    Mobile.setMessageCallback(object : mobile.MessageCallback {
+                        override fun onMessage(message: String) {
+                            runOnUiThread {
+                                runCatching { messageEventSink?.success(message) }
+                            }
+                        }
+                    })
+                }
+
+                override fun onCancel(arguments: Any?) {
+                    Mobile.setMessageCallback(null)
+                    messageEventSink = null
+                }
+            })
 
         // Инициализация Bluetooth
         val bluetoothManager = getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager

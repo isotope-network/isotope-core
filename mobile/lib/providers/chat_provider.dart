@@ -1,3 +1,5 @@
+import 'dart:async';
+import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../models/message.dart';
@@ -27,6 +29,7 @@ class ChatProvider extends ChangeNotifier {
   bool _libp2pStarted = false;
   bool _libp2pAvailable = false;
   String _libp2pPeerId = '';
+  StreamSubscription? _messageSub;
 
   List<Message> get allMessages {
     final list = _messagesMap.values
@@ -93,6 +96,24 @@ class ChatProvider extends ChangeNotifier {
     });
 
     _startLibP2P();
+    _subscribeToMessages();
+  }
+
+  /// Подписка на новые P2P-сообщения из ядра
+  void _subscribeToMessages() {
+    _messageSub?.cancel();
+    _messageSub = LibP2PService.getMessageStream().listen((messageJSON) {
+      LogService.log('P2P: новое сообщение из ядра');
+      try {
+        final map = jsonDecode(messageJSON) as Map<String, dynamic>;
+        addExternalMessage(map);
+      } catch (e) {
+        LogService.log('P2P: ошибка парсинга сообщения: $e');
+      }
+    }, onError: (e) {
+      LogService.log('P2P: ошибка стрима: $e');
+    });
+    LogService.log('P2P: подписка на стрим сообщений');
   }
 
   /// Запускает libp2p узел в фоне
@@ -233,7 +254,7 @@ class ChatProvider extends ChangeNotifier {
       time: data['time'] ?? DateTime.now().toIso8601String(),
       isOwn: data['isOwn'] ?? false,
       score: data['score'] ?? 0,
-      weight: data['weight'] ?? 0.5,
+      weight: (data['weight'] as num?)?.toDouble() ?? 0.5,
       archived: data['archived'] ?? false,
       channel: data['channel'] ?? _activeChannel,
       ttl: data['ttl'] ?? 0,
@@ -416,6 +437,7 @@ class ChatProvider extends ChangeNotifier {
 
   @override
   void dispose() {
+    _messageSub?.cancel();
     stopLibP2P();
     super.dispose();
   }

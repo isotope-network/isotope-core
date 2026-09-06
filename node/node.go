@@ -73,6 +73,7 @@ type Node struct {
 	configEnableMDNS       bool
 	configListenIP         string
 	configEnableRelayServer bool
+	messageHook            func(string)
 	mu                     sync.Mutex
 	lastPing               map[string]time.Time
 	deadPeers              map[string]bool
@@ -104,6 +105,13 @@ func NewNode(cfg Config) *Node {
 			seen: make(map[string]bool),
 		},
 	}
+}
+
+// SetMessageHook — устанавливает колбэк для новых сообщений
+func (n *Node) SetMessageHook(hook func(string)) {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	n.messageHook = hook
 }
 
 func (n *Node) getObfuscationKey() []byte {
@@ -204,6 +212,10 @@ func (n *Node) handleStream(stream network.Stream) {
 			replicaMsg.ReplicatedAt = time.Now()
 			if n.memory.Add(replicaMsg) {
 				log.Printf("[REPLICA] Сохранена реплика от %s: %s", replicaMsg.Sender[:8], replicaMsg.Text)
+				if n.messageHook != nil {
+					data, _ := json.Marshal(replicaMsg)
+					n.messageHook(string(data))
+				}
 			}
 		}
 		return
@@ -337,6 +349,10 @@ func (n *Node) handleReplicaData(data string) {
 				replicaMsg.ReplicatedAt = time.Now()
 				if n.memory.Add(replicaMsg) {
 					log.Printf("[REPLICA] Сохранена реплика от %s: %s", replicaMsg.Sender[:8], replicaMsg.Text)
+					if n.messageHook != nil {
+						data, _ := json.Marshal(replicaMsg)
+						n.messageHook(string(data))
+					}
 				}
 			}
 		}
@@ -467,6 +483,10 @@ func (n *Node) processMessageRelayed(msg string, senderID string) {
 	if n.memory.Add(newMsg) {
 		log.Printf("[ONION] Сообщение доставлено через relay и сохранено: %s", msg)
 		n.replicateMessage(newMsg)
+		if n.messageHook != nil {
+			data, _ := json.Marshal(newMsg)
+			n.messageHook(string(data))
+		}
 	}
 
 	go func() {
@@ -813,6 +833,11 @@ func (n *Node) processMessageInternal(msg string, senderID string, isOwn bool, e
 		n.mu.Unlock()
 
 		n.replicateMessage(newMsg)
+
+		if n.messageHook != nil {
+			data, _ := json.Marshal(newMsg)
+			n.messageHook(string(data))
+		}
 	} else {
 		log.Printf("[MSG] Сообщение-дубликат: %s", msg)
 	}
@@ -833,6 +858,10 @@ func (n *Node) processMessageInternal(msg string, senderID string, isOwn bool, e
 		if n.memory.Add(answerMsg) {
 			log.Printf("[MSG] Ответ сети сохранён: %s", answer)
 			n.replicateMessage(answerMsg)
+			if n.messageHook != nil {
+				data, _ := json.Marshal(answerMsg)
+				n.messageHook(string(data))
+			}
 		}
 	}
 

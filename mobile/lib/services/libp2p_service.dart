@@ -1,9 +1,11 @@
+import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/services.dart';
 
 /// Сервис для работы с libp2p через gomobile (.aar)
 class LibP2PService {
   static const MethodChannel _channel = MethodChannel('isotope/libp2p');
+  static const EventChannel _messageChannel = EventChannel('isotope/messages');
 
   /// Глобальный флаг — запущен ли узел
   static bool _started = false;
@@ -26,6 +28,11 @@ class LibP2PService {
     } on PlatformException {
       return [];
     }
+  }
+
+  /// Поток новых сообщений из ядра
+  static Stream<String> getMessageStream() {
+    return _messageChannel.receiveBroadcastStream().map((event) => event as String);
   }
 
   /// Запускает узел
@@ -153,6 +160,16 @@ class LibP2PService {
       return jsonDecode(response ?? '{"error":"empty_response"}');
     } on PlatformException catch (e) {
       return {'error': e.message ?? 'platform_error', 'operation': 'find_peer'};
+    }
+  }
+
+  /// Запрашивает список известных узлов у подключённых пиров
+  static Future<Map<String, dynamic>> findPeersViaNetwork() async {
+    try {
+      final response = await _channel.invokeMethod<String>('findPeersViaNetwork');
+      return jsonDecode(response ?? '{"error":"empty_response"}');
+    } on PlatformException catch (e) {
+      return {'error': e.message ?? 'platform_error', 'operation': 'find_peers_network'};
     }
   }
 

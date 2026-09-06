@@ -12,13 +12,19 @@ import (
 	sbimain "sbimain"
 )
 
+// MessageCallback — интерфейс для уведомления Flutter о новых сообщениях
+type MessageCallback interface {
+	OnMessage(message string)
+}
+
 var (
-	node     *sbimain.Node
-	nodeMu   sync.Mutex
-	logs     []string
-	logsMu   sync.Mutex
-	logFile  *os.File
-	filesDir string
+	node            *sbimain.Node
+	nodeMu          sync.Mutex
+	logs            []string
+	logsMu          sync.Mutex
+	logFile         *os.File
+	filesDir        string
+	messageCallback MessageCallback
 )
 
 // logWriter — перехватывает логи ядра
@@ -101,6 +107,14 @@ func Start(ethHash string, bootstrapPeers string, enableMDNS bool) string {
 	}
 
 	n := sbimain.NewNode(cfg)
+
+	// Устанавливаем hook для сообщений
+	n.SetMessageHook(func(msg string) {
+		if messageCallback != nil {
+			messageCallback.OnMessage(msg)
+		}
+	})
+
 	stateFile := filesDir + "/isotope_state.json"
 	if err := n.StartMobile(stateFile); err != nil {
 		addLog("[MOBILE] Failed to start node: %v", err)
@@ -408,6 +422,11 @@ func GetDHTInfo() string {
 	}
 
 	return dhtNode.GetDHTInfo()
+}
+
+// SetMessageCallback — устанавливает колбэк для новых сообщений
+func SetMessageCallback(callback MessageCallback) {
+	messageCallback = callback
 }
 
 // ============================================================
