@@ -209,6 +209,11 @@ func (n *Node) handleStream(stream network.Stream) {
 		payload := strings.TrimPrefix(msg, REPLICA_PREFIX)
 		var replicaMsg Message
 		if err := json.Unmarshal([]byte(payload), &replicaMsg); err == nil {
+			// Деобфусцируем текст реплики перед сохранением
+			if plaintext, ok := n.deobfuscate(replicaMsg.Text); ok {
+				replicaMsg.Text = plaintext
+				log.Printf("[REPLICA] Деобфусцировано: %s", plaintext)
+			}
 			replicaMsg.ReplicatedAt = time.Now()
 			if n.memory.Add(replicaMsg) {
 				log.Printf("[REPLICA] Сохранена реплика от %s: %s", replicaMsg.Sender[:8], replicaMsg.Text)
@@ -346,6 +351,9 @@ func (n *Node) handleReplicaData(data string) {
 			payload := strings.TrimPrefix(line, REPLICA_PREFIX)
 			var replicaMsg Message
 			if err := json.Unmarshal([]byte(payload), &replicaMsg); err == nil {
+				if plaintext, ok := n.deobfuscate(replicaMsg.Text); ok {
+					replicaMsg.Text = plaintext
+				}
 				replicaMsg.ReplicatedAt = time.Now()
 				if n.memory.Add(replicaMsg) {
 					log.Printf("[REPLICA] Сохранена реплика от %s: %s", replicaMsg.Sender[:8], replicaMsg.Text)
