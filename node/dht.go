@@ -15,17 +15,15 @@ import (
 	"github.com/multiformats/go-multihash"
 )
 
-// DHTNode — обёртка над Kademlia DHT
+// DHTNode — равноправный DHT-узел (без Server/Client разделения)
 type DHTNode struct {
 	dht     *dht.IpfsDHT
 	host    host.Host
-	mode    dht.ModeOpt
 	started bool
 }
 
 // NewDHT — создаёт DHT-узел
-// mode: dht.ModeServer (desktop/bootstrap) или dht.ModeClient (mobile)
-func NewDHT(h host.Host, mode dht.ModeOpt) (*DHTNode, error) {
+func NewDHT(h host.Host) (*DHTNode, error) {
 	if h == nil {
 		return nil, fmt.Errorf("host is nil")
 	}
@@ -33,7 +31,6 @@ func NewDHT(h host.Host, mode dht.ModeOpt) (*DHTNode, error) {
 	kdht, err := dht.New(
 		context.Background(),
 		h,
-		dht.Mode(mode),
 		dht.ProtocolPrefix("/isotope/kad"),
 	)
 	if err != nil {
@@ -43,18 +40,17 @@ func NewDHT(h host.Host, mode dht.ModeOpt) (*DHTNode, error) {
 	return &DHTNode{
 		dht:     kdht,
 		host:    h,
-		mode:    mode,
 		started: false,
 	}, nil
 }
 
-// JoinDHT — подключается к bootstrap-пирам и запускает DHT
+// JoinDHT — подключается к известным узлам и запускает DHT
 func (dn *DHTNode) JoinDHT(bootstrapPeers []string) error {
 	if dn == nil || dn.dht == nil {
 		return fmt.Errorf("DHT not initialized")
 	}
 
-	// Подключаемся к bootstrap-пирам
+	// Подключаемся к известным узлам
 	var connected int
 	for _, addrStr := range bootstrapPeers {
 		addrStr = strings.TrimSpace(addrStr)
@@ -64,7 +60,7 @@ func (dn *DHTNode) JoinDHT(bootstrapPeers []string) error {
 
 		peerInfo, err := peer.AddrInfoFromString(addrStr)
 		if err != nil {
-			log.Printf("[DHT] Invalid bootstrap addr %s: %v", addrStr, err)
+			log.Printf("[DHT] Invalid addr %s: %v", addrStr, err)
 			continue
 		}
 
@@ -72,40 +68,38 @@ func (dn *DHTNode) JoinDHT(bootstrapPeers []string) error {
 		err = dn.host.Connect(ctx, *peerInfo)
 		cancel()
 		if err != nil {
-			log.Printf("[DHT] Failed to connect to bootstrap %s: %v", addrStr, err)
+			log.Printf("[DHT] Failed to connect to %s: %v", addrStr, err)
 			continue
 		}
 		connected++
-		log.Printf("[DHT] Connected to bootstrap: %s", peerInfo.ID.String()[:16])
+		log.Printf("[DHT] Connected to known peer: %s", peerInfo.ID.String()[:16])
 	}
 
-	if connected == 0 && len(bootstrapPeers) > 0 {
-		return fmt.Errorf("failed to connect to any bootstrap peer")
-	}
-
-	// Bootstrap DHT (только если есть bootstrap-пиры)
+	// Bootstrap DHT (только если есть к кому)
 	if connected > 0 {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
-
 		if err := dn.dht.Bootstrap(ctx); err != nil {
-			return fmt.Errorf("DHT bootstrap failed: %w", err)
+			log.Printf("[DHT] Bootstrap warning: %v", err)
 		}
+		
+		// Обновить routing table после подключения
+		dn.RefreshOnDemand()
 	}
 
 	dn.started = true
-	log.Printf("[DHT] DHT started (mode=%v, bootstraps=%d)", dn.mode, connected)
+	log.Printf("[DHT] DHT started (peers=%d)", connected)
 
-	// Фоновая поддержка routing table (только для server-режима)
-	if dn.mode == dht.ModeServer {
-		go dn.refreshLoop()
-	}
-
-	// Анонсируем себя
+	// Анонсируем себя (с задержкой и повторными попытками)
 	go func() {
-		time.Sleep(2 * time.Second)
-		if err := dn.Provide(); err != nil {
-			log.Printf("[DHT] Initial provide failed: %v", err)
+		for i := 0; i < 5; i++ {
+			time.Sleep(time.Duration(2+i*2) * time.Second)
+			if err := dn.Provide(); err != nil {
+				log.Printf("[DHT] Provide attempt %d failed: %v", i+1, err)
+			} else {
+				log.Printf("[DHT] Provided self to DHT (attempt %d)", i+1)
+				break
+			}
 		}
 	}()
 
@@ -121,7 +115,6 @@ func (dn *DHTNode) Provide() error {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 
-	// Создаём CID из PeerID
 	mh, err := multihash.Sum([]byte(dn.host.ID().String()), multihash.SHA2_256, -1)
 	if err != nil {
 		return fmt.Errorf("failed to create multihash: %w", err)
@@ -160,23 +153,76 @@ func (dn *DHTNode) FindPeer(peerID string) ([]peer.AddrInfo, error) {
 	return []peer.AddrInfo{peerInfo}, nil
 }
 
-// refreshLoop — фоновая поддержка routing table (только desktop/bootstrap)
-func (dn *DHTNode) refreshLoop() {
-	ticker := time.NewTicker(10 * time.Minute)
-	defer ticker.Stop()
+// RefreshOnDemand — обновление routing table по требованию
+func (dn *DHTNode) RefreshOnDemand() {
+	if dn == nil || dn.dht == nil || !dn.started {
+		return
+	}
 
-	for range ticker.C {
-		if !dn.started {
-			return
-		}
+	err := dn.dht.RefreshRoutingTable()
+	if err != nil {
+		log.Printf("[DHT] Refresh on demand failed: %v", err)
+	} else {
+		log.Printf("[DHT] Routing table refreshed (on demand)")
+	}
+}
 
-		err := dn.dht.RefreshRoutingTable()
-		if err != nil {
-			log.Printf("[DHT] Routing table refresh failed: %v", err)
-		} else {
-			log.Printf("[DHT] Routing table refreshed")
+// GetRoutingTableSize — размер routing table
+func (dn *DHTNode) GetRoutingTableSize() int {
+	if dn == nil || dn.dht == nil {
+		return 0
+	}
+	rt := dn.dht.RoutingTable()
+	return rt.Size()
+}
+
+// IsDHTActive — DHT активен, если таблица достаточно большая
+func (dn *DHTNode) IsDHTActive() bool {
+	return dn.GetRoutingTableSize() >= 10
+}
+
+// SaveRoutingTable — сериализует routing table для state
+func (dn *DHTNode) SaveRoutingTable() []byte {
+	if dn == nil || dn.dht == nil {
+		return []byte("[]")
+	}
+
+	rt := dn.dht.RoutingTable()
+	peers := rt.ListPeers()
+
+	var addrs []string
+	for _, p := range peers {
+		peerInfo := dn.host.Peerstore().PeerInfo(p)
+		for _, addr := range peerInfo.Addrs {
+			addrs = append(addrs, addr.String()+"/p2p/"+p.String())
 		}
 	}
+
+	data, _ := json.Marshal(addrs)
+	return data
+}
+
+// LoadRoutingTable — восстанавливает routing table из state
+func (dn *DHTNode) LoadRoutingTable(data []byte) error {
+	if dn == nil || dn.dht == nil {
+		return fmt.Errorf("DHT not initialized")
+	}
+
+	var addrs []string
+	if err := json.Unmarshal(data, &addrs); err != nil {
+		return err
+	}
+
+	for _, addr := range addrs {
+		peerInfo, err := peer.AddrInfoFromString(addr)
+		if err != nil {
+			continue
+		}
+		dn.host.Peerstore().AddAddrs(peerInfo.ID, peerInfo.Addrs, time.Hour*24)
+	}
+
+	log.Printf("[DHT] Loaded %d known peers from routing table", len(addrs))
+	return nil
 }
 
 // Close — корректное завершение DHT
@@ -205,10 +251,10 @@ func (dn *DHTNode) GetDHTInfo() string {
 
 	info := map[string]interface{}{
 		"started":  dn.started,
-		"mode":     fmt.Sprintf("%v", dn.mode),
 		"peer_id":  dn.host.ID().String(),
 		"rt_size":  len(peers),
 		"rt_peers": peersList,
+		"dht_active": dn.IsDHTActive(),
 	}
 
 	data, _ := json.Marshal(info)

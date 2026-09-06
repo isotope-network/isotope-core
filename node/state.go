@@ -17,12 +17,13 @@ import (
 
 // State — структура, которая сохраняется на диск.
 type State struct {
-	Layers   [][]float64     `json:"layers"`
-	MsgCount int             `json:"msgCount"`
-	Messages []Message       `json:"messages"`
-	Seen     map[string]bool `json:"seen"`
-	PreHash  string          `json:"preHash"`
-	AntiHash string          `json:"antiHash"`
+	Layers       [][]float64     `json:"layers"`
+	MsgCount     int             `json:"msgCount"`
+	Messages     []Message       `json:"messages"`
+	Seen         map[string]bool `json:"seen"`
+	PreHash      string          `json:"preHash"`
+	AntiHash     string          `json:"antiHash"`
+	RoutingTable []string        `json:"routingTable"`
 }
 
 // getEncryptionKey — возвращает 32-байтный ключ из пароля
@@ -88,13 +89,20 @@ func (n *Node) saveState() error {
 		seen = make(map[string]bool)
 	}
 
+	var routingTable []string
+	if n.dhtNode != nil {
+		data := n.dhtNode.SaveRoutingTable()
+		_ = json.Unmarshal(data, &routingTable)
+	}
+
 	state := State{
-		Layers:   n.layers,
-		MsgCount: n.msgCount,
-		Messages: n.memory.GetAll(),
-		Seen:     seen,
-		PreHash:  n.preHash,
-		AntiHash: n.antiHash,
+		Layers:       n.layers,
+		MsgCount:     n.msgCount,
+		Messages:     n.memory.GetAll(),
+		Seen:         seen,
+		PreHash:      n.preHash,
+		AntiHash:     n.antiHash,
+		RoutingTable: routingTable,
 	}
 
 	data, err := json.MarshalIndent(state, "", "  ")
@@ -134,13 +142,13 @@ func (n *Node) loadStateData() ([]byte, error) {
 // savePrivateKey — сохраняет приватный ключ рядом с stateFile
 func (n *Node) savePrivateKey(key []byte) error {
 	keyFile := n.stateFile + ".key"
-	
+
 	// Создаём директорию, если не существует
 	dir := filepath.Dir(keyFile)
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return err
 	}
-	
+
 	return os.WriteFile(keyFile, key, 0600)
 }
 
