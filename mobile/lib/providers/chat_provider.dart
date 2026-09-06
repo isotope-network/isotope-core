@@ -92,7 +92,6 @@ class ChatProvider extends ChangeNotifier {
       addExternalMessage(data);
     });
 
-    // Автоматический запуск libp2p при старте
     _startLibP2P();
   }
 
@@ -108,7 +107,6 @@ class ChatProvider extends ChangeNotifier {
 
       final prefs = await SharedPreferences.getInstance();
       final bootstrapPeers = prefs.getString('bootstrap_peers') ?? '';
-      LogService.log('libp2p: bootstrapPeers=${bootstrapPeers.isNotEmpty ? bootstrapPeers : "нет"}');
 
       final result = await LibP2PService.start(
         ethHash: ethHash,
@@ -127,7 +125,6 @@ class ChatProvider extends ChangeNotifier {
       _libp2pAvailable = true;
       LogService.log('libp2p: запущен успешно');
 
-      // Получаем статус для PeerID
       final status = await LibP2PService.getStatus();
       _libp2pPeerId = status['id'] ?? '';
       final peerIdStr = _libp2pPeerId.isNotEmpty && _libp2pPeerId.length > 16
@@ -145,29 +142,29 @@ class ChatProvider extends ChangeNotifier {
     }
   }
 
-  /// Отправляет сообщение через libp2p (fallback к HTTP)
+  /// Отправляет сообщение через libp2p P2P
   Future<bool> sendViaLibP2P(String text) async {
     if (!_libp2pStarted) {
-      LogService.log('libp2p отправка: НЕТ (не запущен)');
+      LogService.log('P2P отправка: НЕТ (libp2p не запущен)');
       return false;
     }
 
     try {
-      LogService.log('libp2p отправка: пробую...');
+      LogService.log('P2P отправка: пробую...');
       final result = await LibP2PService.send(text: text, ttl: _currentTtl);
       if (result.containsKey('error')) {
-        LogService.log('libp2p отправка: ОШИБКА: ${result['error']}');
+        LogService.log('P2P отправка: ОШИБКА: ${result['error']}');
         return false;
       }
-      LogService.log('libp2p отправка: ДА (id=${result['message_id']})');
+      LogService.log('P2P отправка: ДА (id=${result['id']})');
       return true;
     } catch (e) {
-      LogService.log('libp2p отправка: ИСКЛЮЧЕНИЕ: $e');
+      LogService.log('P2P отправка: ИСКЛЮЧЕНИЕ: $e');
       return false;
     }
   }
 
-  /// Получает сообщения из libp2p (fallback к HTTP)
+  /// Получает сообщения из libp2p
   Future<List<Message>> getMessagesViaLibP2P() async {
     if (!_libp2pStarted) {
       LogService.log('libp2p загрузка: НЕТ (не запущен)');
@@ -283,20 +280,16 @@ class ChatProvider extends ChangeNotifier {
     notifyListeners();
 
     try {
-      LogService.log('HTTP загрузка: пробую...');
-      final loaded = await api.getMessages();
-      LogService.log('HTTP загрузка: ДА (${loaded.length} сообщений)');
-      for (final msg in loaded) {
-        _addMessage(msg);
-      }
-    } catch (_) {
-      LogService.log('HTTP загрузка: НЕТ (недоступен)');
+      LogService.log('Загрузка сообщений...');
       if (_libp2pStarted) {
         final fromLibP2P = await getMessagesViaLibP2P();
         for (final msg in fromLibP2P) {
           _addMessage(msg);
         }
+        LogService.log('Загружено из libp2p: ${fromLibP2P.length}');
       }
+    } catch (e) {
+      LogService.log('Загрузка сообщений: ОШИБКА: $e');
     }
 
     _loading = false;
@@ -345,20 +338,18 @@ class ChatProvider extends ChangeNotifier {
 
     _addMessage(msg);
 
-    // Сохраняем своё сообщение в историю P2PService
     p2p?.saveOwnMessage(_currentNodeIp, msg);
 
-    // Пробуем HTTP
-    try {
-      await api.sendMessage(text, channel: _activeChannel, ttl: _currentTtl, id: msgId);
-      LogService.log('HTTP отправка: ДА');
-      return true;
-    } catch (_) {
-      LogService.log('HTTP отправка: НЕТ (недоступен)');
-      if (_libp2pStarted) {
-        final sent = await sendViaLibP2P(text);
-        if (sent) return true;
+    // Только P2P отправка
+    if (_libp2pStarted) {
+      final sent = await sendViaLibP2P(text);
+      if (sent) {
+        LogService.log('P2P отправка: ДА');
+        return true;
       }
+      LogService.log('P2P отправка: НЕТ');
+    } else {
+      LogService.log('P2P: libp2p не запущен');
     }
 
     LogService.log('Отправка: только локально');

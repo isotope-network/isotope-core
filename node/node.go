@@ -42,42 +42,42 @@ const RESTORE_PREFIX = "[RESTORE]"
 
 // Config — конфигурация узла
 type Config struct {
-	EthHash           string   // этический хеш
-	Transports        []string // ["ws"] или ["ws", "tcp"]
-	Bootstrap         []string // адреса известных узлов
-	Port              int      // порт для P2P (0 = автоматический)
-	EnableMDNS        bool     // true = запускать mDNS (десктоп), false = не запускать (мобильный)
-	ListenIP          string   // IP для прослушивания (пусто = 0.0.0.0)
-	EnableRelayServer bool     // true = быть relay-сервером (VPS), false = только клиент (телефоны)
+	EthHash           string
+	Transports        []string
+	Bootstrap         []string
+	Port              int
+	EnableMDNS        bool
+	ListenIP          string
+	EnableRelayServer bool
 }
 
 // Node — основной узел сети
 type Node struct {
-	host                  host.Host
-	dhtNode               *DHTNode
-	ethHash               string
-	preHash               string
-	antiHash              string
-	lastSyncSent          time.Time
-	lastSyncedLayers      [][]float64
-	layersDirty           bool
-	memory                Memory
-	assoc                 AssocMemory
-	layers                [][]float64
-	msgCount              int
-	nodeID                int
-	stateFile             string
-	configTransports      []string
-	configPort            int
-	configBootstrap       []string
-	configEnableMDNS      bool
-	configListenIP        string
+	host                   host.Host
+	dhtNode                *DHTNode
+	ethHash                string
+	preHash                string
+	antiHash               string
+	lastSyncSent           time.Time
+	lastSyncedLayers       [][]float64
+	layersDirty            bool
+	memory                 Memory
+	assoc                  AssocMemory
+	layers                 [][]float64
+	msgCount               int
+	nodeID                 int
+	stateFile              string
+	configTransports       []string
+	configPort             int
+	configBootstrap        []string
+	configEnableMDNS       bool
+	configListenIP         string
 	configEnableRelayServer bool
-	mu                    sync.Mutex
-	lastPing              map[string]time.Time
-	deadPeers             map[string]bool
-	adaptive              *AdaptiveParams
-	channels              *ChannelStore
+	mu                     sync.Mutex
+	lastPing               map[string]time.Time
+	deadPeers              map[string]bool
+	adaptive               *AdaptiveParams
+	channels               *ChannelStore
 }
 
 // NewNode — создаёт новый узел
@@ -243,6 +243,35 @@ func (n *Node) handleStream(stream network.Stream) {
 			}
 			data, _ := json.Marshal(allAddrs)
 			stream.Write([]byte("PEERS:" + string(data) + "\n"))
+		}
+		return
+	}
+
+	if strings.HasPrefix(msg, "RELAY:") {
+		parts := strings.SplitN(strings.TrimPrefix(msg, "RELAY:"), ":", 2)
+		if len(parts) == 2 {
+			targetPeerID := parts[0]
+			actualMsg := parts[1]
+			log.Printf("[RELAY] Пересылка для %s: %s", targetPeerID[:16], actualMsg)
+
+			if plaintext, ok := n.deobfuscate(actualMsg); ok {
+				actualMsg = plaintext
+			}
+
+			targetPID, err := peer.Decode(targetPeerID)
+			if err == nil {
+				go func() {
+					ctx := context.Background()
+					s, err := n.host.NewStream(ctx, targetPID, protocolID)
+					if err != nil {
+						log.Printf("[RELAY] Failed to forward to %s: %v", targetPeerID[:16], err)
+						return
+					}
+					defer s.Close()
+					fmt.Fprintf(s, "%s\n", n.obfuscate(actualMsg))
+					log.Printf("[RELAY] Переслано %s", targetPeerID[:16])
+				}()
+			}
 		}
 		return
 	}
@@ -983,7 +1012,6 @@ func (n *Node) InitP2P() error {
 	n.host.SetStreamHandler(syncProtocolID, n.handleSyncStream)
 	n.host.SetStreamHandler(pingProtocolID, n.handlePingStream)
 
-	// Relay-сервер (для VPS)
 	if n.configEnableRelayServer {
 		if _, err := relay.New(host); err != nil {
 			log.Printf("[RELAY] Failed to enable relay server: %v", err)
@@ -1029,7 +1057,6 @@ func (n *Node) InitP2P() error {
 		}(addr)
 	}
 
-	// DHT инициализация — все узлы равноправны
 	dhtNode, err := NewDHT(host)
 	if err != nil {
 		log.Printf("[DHT] Failed to create DHT: %v", err)
@@ -1244,7 +1271,7 @@ func (n *Node) ConnectToPeer(multiaddr string) error {
 	return nil
 }
 
-// SendMessage — отправляет сообщение
+// SendMessage — отправляет сообщение всем подключённым пирам
 func (n *Node) SendMessage(text string, ttl int) (string, error) {
 	if n.host == nil {
 		return "", fmt.Errorf("node not started")
@@ -1269,6 +1296,68 @@ func (n *Node) SendMessage(text string, ttl int) (string, error) {
 			}
 			fmt.Fprintf(s, "%s\n", obfuscated)
 			s.Close()
+		}
+	}()
+
+	return id, nil
+}
+
+// SendToPeer — отправляет сообщение конкретному пиру по PeerID
+func (n *Node) SendToPeer(peerID string, text string, ttl int) (string, error) {
+	if n.host == nil {
+		return "", fmt.Errorf("node not started")
+	}
+
+	pid, err := peer.Decode(peerID)
+	if err != nil {
+		return "", fmt.Errorf("invalid peer ID: %w", err)
+	}
+
+	var expiresAt time.Time
+	if ttl > 0 {
+		expiresAt = time.Now().Add(time.Duration(ttl) * time.Second)
+	}
+
+	id := generateMsgID(text)
+	n.processMessageWithTTL(text, n.host.ID().String()[:8], true, expiresAt)
+
+	connected := false
+	for _, p := range n.host.Network().Peers() {
+		if p == pid {
+			connected = true
+			break
+		}
+	}
+
+	if connected {
+		go func() {
+			randomDelay(5, 25)
+			obfuscated := n.obfuscate(text)
+			ctx := context.Background()
+			s, err := n.host.NewStream(ctx, pid, protocolID)
+			if err != nil {
+				log.Printf("[P2P] Failed to send to %s: %v", peerID[:16], err)
+				return
+			}
+			defer s.Close()
+			fmt.Fprintf(s, "%s\n", obfuscated)
+			log.Printf("[P2P] Отправлено напрямую: %s", peerID[:16])
+		}()
+		return id, nil
+	}
+
+	go func() {
+		for _, p := range n.host.Network().Peers() {
+			randomDelay(5, 25)
+			obfuscated := n.obfuscate(text)
+			ctx := context.Background()
+			s, err := n.host.NewStream(ctx, p, protocolID)
+			if err != nil {
+				continue
+			}
+			fmt.Fprintf(s, "RELAY:%s:%s\n", peerID, obfuscated)
+			s.Close()
+			log.Printf("[P2P] Отправлено через relay %s для %s", p.String()[:16], peerID[:16])
 		}
 	}()
 

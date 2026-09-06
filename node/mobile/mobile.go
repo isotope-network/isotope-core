@@ -158,7 +158,7 @@ func GetMessages() string {
 	return string(data)
 }
 
-// SendMessage — отправляет сообщение
+// SendMessage — отправляет сообщение всем пирам
 func SendMessage(text string, ttl int) string {
 	nodeMu.Lock()
 	defer nodeMu.Unlock()
@@ -168,6 +168,23 @@ func SendMessage(text string, ttl int) string {
 	}
 
 	id, err := node.SendMessage(text, ttl)
+	if err != nil {
+		return fmt.Sprintf(`{"status":"error","error":"%s"}`, err.Error())
+	}
+
+	return fmt.Sprintf(`{"status":"ok","id":"%s"}`, id)
+}
+
+// SendToPeer — отправляет сообщение конкретному пиру по PeerID
+func SendToPeer(peerID string, text string, ttl int) string {
+	nodeMu.Lock()
+	defer nodeMu.Unlock()
+
+	if node == nil {
+		return `{"status":"error","error":"node not started"}`
+	}
+
+	id, err := node.SendToPeer(peerID, text, ttl)
 	if err != nil {
 		return fmt.Sprintf(`{"status":"error","error":"%s"}`, err.Error())
 	}
@@ -271,7 +288,6 @@ func FindPeer(peerID string) string {
 		return `{"status":"error","error":"node not started"}`
 	}
 
-	// 1. Локальный поиск в peerstore
 	knownPeers := node.GetKnownPeers()
 	for _, addr := range knownPeers {
 		if strings.Contains(addr, peerID) {
@@ -285,7 +301,6 @@ func FindPeer(peerID string) string {
 		}
 	}
 
-	// 2. DHT поиск (если DHT активен)
 	dhtNode := node.GetDHT()
 	if dhtNode != nil && dhtNode.IsDHTActive() {
 		addLog("[DHT] DHT активен, ищу %s...", peerID[:16])
@@ -330,7 +345,6 @@ func FindPeersViaNetwork() string {
 
 	addLog("[PEERS] Обмениваюсь списками с %d пирами...", len(peers))
 
-	// Обмениваемся с каждым пиром
 	for _, peerID := range peers {
 		if err := node.ExchangePeers(peerID); err != nil {
 			addLog("[PEERS] Exchange with %s failed: %v", peerID[:16], err)
@@ -338,7 +352,6 @@ func FindPeersViaNetwork() string {
 		}
 	}
 
-	// Собираем все известные адреса
 	var allAddrs []string
 	knownPeers := node.GetKnownPeers()
 	myID := node.GetHost().ID().String()
