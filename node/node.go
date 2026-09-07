@@ -991,7 +991,7 @@ func (n *Node) SendMessage(text string, ttl int) (string, error) {
 		expiresAt = time.Now().Add(time.Duration(ttl) * time.Second)
 	}
 	id := generateMsgID(text)
-	n.processMessageWithTTL(text, n.host.ID().String()[:8], true, expiresAt)
+	n.processMessageWithTTL(text, n.host.ID().String(), true, expiresAt)
 
 	go func() {
 		for _, p := range n.host.Network().Peers() {
@@ -1019,7 +1019,7 @@ func (n *Node) SendToPeer(peerID string, text string, ttl int) (string, error) {
 		expiresAt = time.Now().Add(time.Duration(ttl) * time.Second)
 	}
 	id := generateMsgID(text)
-	n.processMessageWithTTL(text, n.host.ID().String()[:8], true, expiresAt)
+	n.processMessageWithTTL(text, n.host.ID().String(), true, expiresAt)
 
 	go func() {
 		for _, p := range n.host.Network().Peers() {
