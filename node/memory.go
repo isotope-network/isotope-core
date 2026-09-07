@@ -23,7 +23,7 @@ type Message struct {
 	Priority        int       `json:"priority"`
 	Mode            int       `json:"mode"`
 	Relayed         bool      `json:"relayed"`
-	ExpiresAt       time.Time `json:"expiresAt"`
+	ExpiresAt       time.Time `json:"expiresAt,omitempty"`
 	ReplicatedFrom  string    `json:"replicatedFrom"` // от какого узла реплика
 	ReplicatedAt    time.Time `json:"replicatedAt"`   // когда реплицировано
 }
