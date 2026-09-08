@@ -267,7 +267,7 @@ func (n *Node) handleStream(stream network.Stream) {
 		return
 	}
 
-	remoteID := stream.Conn().RemotePeer().String()[:8]
+	remoteID := stream.Conn().RemotePeer().String()
 
 	if strings.HasPrefix(msg, "CHAIN:") {
 		parts := strings.SplitN(msg, ":", 3)
