@@ -1,6 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
-import 'package:flutter/foundation.dart';
+import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../models/message.dart';
 import '../services/api_service.dart';
@@ -25,11 +25,11 @@ class ChatProvider extends ChangeNotifier {
   String? _error;
   int _currentTtl = 86400;
 
-  // libp2p состояние
   bool _libp2pStarted = false;
   bool _libp2pAvailable = false;
   String _libp2pPeerId = '';
   StreamSubscription? _messageSub;
+  int _unreadCount = 0;
 
   List<Message> get allMessages {
     final list = _messagesMap.values
@@ -56,15 +56,7 @@ class ChatProvider extends ChangeNotifier {
     return list;
   }
 
-  List<Message> get messages {
-    if (_currentNodeIp.isEmpty) return allMessages;
-
-    final currentKey = _currentNodeIp.split(':')[0];
-    return allMessages.where((m) {
-      final senderKey = m.sender.split(':')[0];
-      return senderKey == currentKey || m.isOwn;
-    }).toList();
-  }
+  List<Message> get messages => allMessages;
 
   String get activeChannel => _activeChannel;
   String get currentNodeIp => _currentNodeIp;
@@ -76,7 +68,17 @@ class ChatProvider extends ChangeNotifier {
   bool get libp2pStarted => _libp2pStarted;
   bool get libp2pAvailable => _libp2pAvailable;
   String get libp2pPeerId => _libp2pPeerId;
+  int get unreadCount => _unreadCount;
   List<String> get logs => LogService.logs;
+
+  void initialize({String bootstrapPeers = ''}) {
+    LogService.log('ChatProvider: initialize() CALLED');
+    try {
+      _startLibP2P(bootstrapPeers: bootstrapPeers);
+    } catch (e) {
+      LogService.log('ChatProvider: initialize() ERROR: $e');
+    }
+  }
 
   void configure({
     required ApiService api,
@@ -90,55 +92,62 @@ class ChatProvider extends ChangeNotifier {
     _currentNodeIp = nodeIp.split(':')[0];
 
     LogService.log('ChatProvider.configure: nodeIp=$nodeIp');
-
-    p2p?.onMessage.listen((data) {
-      addExternalMessage(data);
-    });
-
-    _startLibP2P();
-    _subscribeToMessages();
   }
 
-  /// Подписка на новые P2P-сообщения из ядра
   void _subscribeToMessages() {
     _messageSub?.cancel();
     _messageSub = LibP2PService.getMessageStream().listen((messageJSON) {
-      LogService.log('P2P: новое сообщение из ядра');
       try {
         final map = jsonDecode(messageJSON) as Map<String, dynamic>;
+        final isOwn = map['isOwn'] ?? false;
+        final sender = map['sender'] ?? '';
+        final replicatedFrom = map['replicatedFrom'] ?? '';
+
+        if (isOwn || sender == '🌐 Сеть' || sender == _libp2pPeerId || replicatedFrom == _libp2pPeerId) {
+          return;
+        }
+
+        LogService.log('P2P: входящее от $sender: ${map['text']}');
+        _unreadCount++;
         addExternalMessage(map);
       } catch (e) {
-        LogService.log('P2P: ошибка парсинга сообщения: $e');
+        LogService.log('P2P: ошибка парсинга: $e');
       }
     }, onError: (e) {
       LogService.log('P2P: ошибка стрима: $e');
     });
-    LogService.log('P2P: подписка на стрим сообщений');
+    LogService.log('P2P: подписка на стрим сообщений (глобально)');
   }
 
-  /// Запускает libp2p узел в фоне
-  Future<void> _startLibP2P() async {
+  Future<void> _startLibP2P({String bootstrapPeers = ''}) async {
     if (_libp2pStarted) return;
 
     LogService.log('libp2p: попытка запуска...');
 
     try {
       final ethHash = EthicsService.ethicsHash;
-      LogService.log('libp2p: ethHash=${ethHash.length > 0 ? "да" : "нет"}');
+      if (ethHash.isEmpty) {
+        LogService.log('libp2p: ethHash пустой, откладываю запуск на 3 сек...');
+        await Future.delayed(const Duration(seconds: 3));
+        return _startLibP2P(bootstrapPeers: bootstrapPeers);
+      }
 
       final prefs = await SharedPreferences.getInstance();
-      final bootstrapPeers = prefs.getString('bootstrap_peers') ?? '';
+      final savedBootstrap = bootstrapPeers.isNotEmpty
+          ? bootstrapPeers
+          : prefs.getString('bootstrap_peers') ?? '';
+      LogService.log('libp2p: bootstrapPeers=${savedBootstrap.isNotEmpty ? savedBootstrap : "нет"}');
 
       final result = await LibP2PService.start(
         ethHash: ethHash,
-        bootstrapPeers: bootstrapPeers,
+        bootstrapPeers: savedBootstrap,
         enableMDNS: false,
       );
 
       if (result.containsKey('error')) {
         LogService.log('libp2p: ОШИБКА запуска: ${result['error']}');
         _libp2pAvailable = false;
-        notifyListeners();
+        _safeNotify();
         return;
       }
 
@@ -148,55 +157,39 @@ class ChatProvider extends ChangeNotifier {
 
       final status = await LibP2PService.getStatus();
       _libp2pPeerId = status['id'] ?? '';
-      final peerIdStr = _libp2pPeerId.isNotEmpty && _libp2pPeerId.length > 16
-          ? _libp2pPeerId.substring(0, 16)
-          : _libp2pPeerId.isEmpty ? 'не получен' : _libp2pPeerId;
-      LogService.log('libp2p: PeerID=$peerIdStr');
-      LogService.log('libp2p: пиры=${status['peers'] ?? 0}');
-      LogService.log('libp2p: память=${status['memory'] ?? 0}');
+      LogService.log('libp2p: PeerID=$_libp2pPeerId');
 
-      notifyListeners();
+      _subscribeToMessages();
+
+      _safeNotify();
     } catch (e) {
       LogService.log('libp2p: ИСКЛЮЧЕНИЕ при старте: $e');
       _libp2pAvailable = false;
+      _safeNotify();
+    }
+  }
+
+  void _safeNotify() {
+    scheduleMicrotask(() {
       notifyListeners();
-    }
+    });
   }
 
-  /// Отправляет сообщение через libp2p P2P
   Future<bool> sendViaLibP2P(String text) async {
-    if (!_libp2pStarted) {
-      LogService.log('P2P отправка: НЕТ (libp2p не запущен)');
-      return false;
-    }
-
+    if (!_libp2pStarted) return false;
     try {
-      LogService.log('P2P отправка: пробую...');
       final result = await LibP2PService.send(text: text, ttl: _currentTtl);
-      if (result.containsKey('error')) {
-        LogService.log('P2P отправка: ОШИБКА: ${result['error']}');
-        return false;
-      }
-      LogService.log('P2P отправка: ДА (id=${result['id']})');
-      return true;
-    } catch (e) {
-      LogService.log('P2P отправка: ИСКЛЮЧЕНИЕ: $e');
+      return !result.containsKey('error');
+    } catch (_) {
       return false;
     }
   }
 
-  /// Получает сообщения из libp2p
   Future<List<Message>> getMessagesViaLibP2P() async {
-    if (!_libp2pStarted) {
-      LogService.log('libp2p загрузка: НЕТ (не запущен)');
-      return [];
-    }
-
+    if (!_libp2pStarted) return [];
     try {
-      LogService.log('libp2p загрузка: пробую...');
       final data = await LibP2PService.getMessages();
-      LogService.log('libp2p загрузка: получено ${data.length} сообщений');
-      final result = data.map((json) {
+      return data.map((json) {
         final map = json as Map<String, dynamic>;
         return Message(
           id: map['id'] ?? DateTime.now().millisecondsSinceEpoch.toString(),
@@ -209,41 +202,38 @@ class ChatProvider extends ChangeNotifier {
           archived: map['archived'] ?? false,
           channel: map['channel'] ?? _activeChannel,
           ttl: map['ttl'] ?? 0,
-          expiresAt: map['expiresAt'] != null
-              ? DateTime.tryParse(map['expiresAt'])
-              : null,
+          expiresAt: null,
         );
       }).toList();
-      return result;
-    } catch (e) {
-      LogService.log('libp2p загрузка: ОШИБКА: $e');
+    } catch (_) {
       return [];
     }
   }
 
   void setCurrentNode(String nodeIp) {
     _currentNodeIp = nodeIp.split(':')[0];
-    notifyListeners();
+    _safeNotify();
   }
 
   void setTtl(int ttl) {
     _currentTtl = ttl;
-    notifyListeners();
+    _safeNotify();
+  }
+
+  void resetUnread() {
+    _unreadCount = 0;
+    _safeNotify();
   }
 
   void initWs() {
-    ws.onMessage = (msg) {
-      _addMessage(msg);
-    };
-
+    ws.onMessage = (msg) => _addMessage(msg);
     ws.onDisconnected = () {
       _wsConnected = false;
-      notifyListeners();
+      _safeNotify();
     };
-
     ws.connect();
     _wsConnected = ws.isConnected;
-    notifyListeners();
+    _safeNotify();
   }
 
   void addExternalMessage(Map<String, dynamic> data) {
@@ -258,69 +248,65 @@ class ChatProvider extends ChangeNotifier {
       archived: data['archived'] ?? false,
       channel: data['channel'] ?? _activeChannel,
       ttl: data['ttl'] ?? 0,
-      expiresAt: data['expiresAt'] != null
-          ? DateTime.tryParse(data['expiresAt'])
-          : null,
+      expiresAt: null,
     );
     _addMessage(msg);
   }
 
-  String _messageKey(Message msg) {
-    final timeKey = msg.time.length >= 16 ? msg.time.substring(0, 16) : msg.time;
-    return '${msg.sender}|$timeKey|${msg.text}';
-  }
-
   void _addMessage(Message msg) {
-    final key = _messageKey(msg);
-    if (!_messagesMap.containsKey(key)) {
-      _messagesMap[key] = msg;
-      notifyListeners();
+    if (!_messagesMap.containsKey(msg.id)) {
+      _messagesMap[msg.id] = msg;
+      _safeNotify();
     }
   }
 
   void deleteMessage(String id) {
-    _messagesMap.removeWhere((key, msg) => msg.id == id);
-    notifyListeners();
+    _messagesMap.remove(id);
+    _safeNotify();
   }
 
   void clearAllMessages() {
     _messagesMap.clear();
-    notifyListeners();
+    _safeNotify();
   }
 
   void purgeExpired() {
     final before = _messagesMap.length;
     _messagesMap.removeWhere((key, msg) => msg.isExpired);
     if (_messagesMap.length != before) {
-      notifyListeners();
+      _safeNotify();
     }
   }
 
   Future<void> loadMessages() async {
     _loading = true;
-    notifyListeners();
+    _safeNotify();
 
     try {
-      LogService.log('Загрузка сообщений...');
       if (_libp2pStarted) {
         final fromLibP2P = await getMessagesViaLibP2P();
         for (final msg in fromLibP2P) {
-          _addMessage(msg);
+          if (msg.sender != '🌐 Сеть' && msg.sender != _libp2pPeerId) {
+            if (!_messagesMap.containsKey(msg.id)) {
+              _messagesMap[msg.id] = msg;
+            }
+          }
         }
         LogService.log('Загружено из libp2p: ${fromLibP2P.length}');
+        _safeNotify();
       }
     } catch (e) {
       LogService.log('Загрузка сообщений: ОШИБКА: $e');
     }
 
     _loading = false;
-    notifyListeners();
+    _safeNotify();
   }
 
   Future<void> loadChannels() async {
     try {
       _channels = await api.getChannels();
-      notifyListeners();
+      _safeNotify();
     } catch (_) {}
   }
 
@@ -329,17 +315,13 @@ class ChatProvider extends ChangeNotifier {
 
     final ethics = EthicsService.evaluate(text);
     if (!ethics.allowed) {
-      _error = 'Сообщение заблокировано этическим фильтром (вес: ${ethics.weight.toStringAsFixed(2)})';
-      LogService.log('Этика: ЗАБЛОКИРОВАНО (вес=${ethics.weight.toStringAsFixed(2)})');
-      notifyListeners();
+      _error = 'Сообщение заблокировано этическим фильтром';
+      _safeNotify();
       return false;
     }
 
     final msgId = DateTime.now().millisecondsSinceEpoch.toString();
-    final now = DateTime.now().toIso8601String();
-    final expiresAt = _currentTtl > 0
-        ? DateTime.now().add(Duration(seconds: _currentTtl))
-        : null;
+    final now = DateTime.now().toUtc().toIso8601String();
 
     _ownMessageIds.add(msgId);
 
@@ -354,33 +336,24 @@ class ChatProvider extends ChangeNotifier {
       archived: false,
       channel: _activeChannel,
       ttl: _currentTtl,
-      expiresAt: expiresAt,
+      expiresAt: _currentTtl > 0 ? DateTime.now().add(Duration(seconds: _currentTtl)) : null,
     );
 
     _addMessage(msg);
 
     p2p?.saveOwnMessage(_currentNodeIp, msg);
 
-    // Только P2P отправка
     if (_libp2pStarted) {
-      final sent = await sendViaLibP2P(text);
-      if (sent) {
-        LogService.log('P2P отправка: ДА');
-        return true;
-      }
-      LogService.log('P2P отправка: НЕТ');
-    } else {
-      LogService.log('P2P: libp2p не запущен');
+      await sendViaLibP2P(text);
     }
 
-    LogService.log('Отправка: только локально');
     return true;
   }
 
   void switchChannel(String channel) {
     if (channel == _activeChannel) return;
     _activeChannel = channel;
-    notifyListeners();
+    _safeNotify();
   }
 
   Future<void> sendFeedback(String id, int score) async {
@@ -407,31 +380,26 @@ class ChatProvider extends ChangeNotifier {
       score: score,
       weight: newWeight,
       archived: target.archived,
-      deliveryStatus: target.deliveryStatus,
       channel: target.channel,
       ttl: target.ttl,
       expiresAt: target.expiresAt,
     );
 
-    final key = _messageKey(target);
-    _messagesMap[key] = updated;
+    _messagesMap[target.id] = updated;
 
     try {
       await api.sendFeedback(id, score);
     } catch (_) {}
 
-    notifyListeners();
+    _safeNotify();
   }
 
-  /// Останавливает libp2p при завершении
   Future<void> stopLibP2P() async {
     if (_libp2pStarted) {
-      LogService.log('libp2p: остановка...');
       await LibP2PService.stop();
       _libp2pStarted = false;
       _libp2pAvailable = false;
-      LogService.log('libp2p: остановлен');
-      notifyListeners();
+      _safeNotify();
     }
   }
 
