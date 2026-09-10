@@ -15,8 +15,8 @@ class MessageBubble extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final isOwn = message.senderType == 'own';
-    final isNetwork = message.senderType == 'network';
+    final isOwn = message.isOwn;
+    final isNetwork = !isOwn && message.sender != 'Вы';
 
     return Align(
       alignment: isOwn ? Alignment.centerRight : Alignment.centerLeft,
@@ -50,7 +50,6 @@ class MessageBubble extends StatelessWidget {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    // Имя полностью
                     Text(
                       isOwn ? 'Вы' : message.sender,
                       style: TextStyle(
@@ -60,7 +59,6 @@ class MessageBubble extends StatelessWidget {
                       ),
                     ),
                     const SizedBox(height: 2),
-                    // Вес + время
                     Row(
                       mainAxisSize: MainAxisSize.min,
                       children: [
@@ -73,7 +71,6 @@ class MessageBubble extends StatelessWidget {
                       ],
                     ),
                     const SizedBox(height: 6),
-                    // Текст
                     Text(
                       message.text,
                       style: const TextStyle(fontSize: 15),
@@ -95,7 +92,6 @@ class MessageBubble extends StatelessWidget {
                 ),
               ),
             ),
-            // Кнопки 👍/👎 под сообщением с отступом
             Padding(
               padding: const EdgeInsets.only(top: 6),
               child: Row(

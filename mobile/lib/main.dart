@@ -1,11 +1,31 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import 'providers/chat_provider.dart';
 import 'services/p2p_service.dart';
+import 'services/log_service.dart';
 import 'screens/connect_screen.dart';
 
-void main() {
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  await _initLogService();
   runApp(const IsoApp());
+}
+
+Future<void> _initLogService() async {
+  try {
+    const channel = MethodChannel('isotope/libp2p');
+    final filesDir = await channel.invokeMethod<String>('getFilesDir');
+    if (filesDir != null && filesDir.isNotEmpty) {
+      await LogService.init(filesDir);
+    } else {
+      debugPrint('main: filesDir is empty, using default');
+      await LogService.init('.');
+    }
+  } catch (e) {
+    debugPrint('main: error initializing LogService: $e');
+    await LogService.init('.');
+  }
 }
 
 class IsoApp extends StatelessWidget {

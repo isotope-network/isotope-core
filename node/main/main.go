@@ -9,10 +9,8 @@ import (
 )
 
 func main() {
-	// Загрузка этического хеша
 	ethHash := os.Getenv("ISOTOPE_ETHICS_HASH")
 	if ethHash == "" {
-		// Fallback: попробовать загрузить из файла (для локальной разработки)
 		ethData, err := os.ReadFile("genesis/ethics_hash.txt")
 		if err != nil {
 			log.Fatal("ISOTOPE_ETHICS_HASH not set and genesis/ethics_hash.txt not found. Set the environment variable or create the file.")
@@ -24,7 +22,6 @@ func main() {
 		log.Println("Ethics hash loaded from ISOTOPE_ETHICS_HASH environment variable, hash:", ethHash)
 	}
 
-	// Определяем порт из ENV
 	port := 9000
 	if portStr := os.Getenv("ISOTOPE_PORT"); portStr != "" {
 		if p, err := strconv.Atoi(portStr); err == nil {
@@ -32,7 +29,6 @@ func main() {
 		}
 	}
 
-	// HTTP-порт из ENV
 	httpPort := 8081
 	if portStr := os.Getenv("ISOTOPE_HTTP_PORT"); portStr != "" {
 		if p, err := strconv.Atoi(portStr); err == nil {
@@ -40,29 +36,30 @@ func main() {
 		}
 	}
 
-	// Создаём конфигурацию
-	cfg := core.Config{
-		EthHash:    ethHash,
-		Transports: []string{"ws", "tcp"},
-		Port:       port,
-		EnableMDNS: true,
+	enableRelayServer := false
+	if relayStr := os.Getenv("ISOTOPE_ENABLE_RELAY"); relayStr == "true" {
+		enableRelayServer = true
 	}
 
-	// Создаём узел
+	cfg := core.Config{
+		EthHash:           ethHash,
+		Transports:        []string{"ws", "tcp"},
+		Port:              port,
+		EnableMDNS:        true,
+		EnableRelayServer: enableRelayServer,
+	}
+
 	node := core.NewNode(cfg)
 
-	// Инициализируем P2P
 	if err := node.InitP2P(); err != nil {
 		log.Fatal("Failed to init P2P:", err)
 	}
 
-	// Запускаем HTTP-сервер
 	go func() {
 		if err := node.StartHTTP(httpPort); err != nil {
 			log.Fatal("HTTP server error:", err)
 		}
 	}()
 
-	// Блокируем
 	select {}
 }

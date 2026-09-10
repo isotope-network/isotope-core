@@ -69,6 +69,9 @@ class MainActivity : FlutterActivity() {
         super.configureFlutterEngine(flutterEngine)
         nsdManager = getSystemService(Context.NSD_SERVICE) as NsdManager
 
+        // ВАЖНО: Устанавливаем filesDir для gomobile ДО обработки MethodChannel
+        Mobile.setFilesDir(filesDir.absolutePath)
+
         // NSD MethodChannel
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, METHOD_CHANNEL)
             .setMethodCallHandler { call, result ->

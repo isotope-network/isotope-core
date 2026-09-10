@@ -6,6 +6,7 @@ import '../providers/chat_provider.dart';
 import '../services/api_service.dart';
 import '../services/ws_service.dart';
 import '../services/p2p_service.dart';
+import '../services/log_service.dart';
 import '../widgets/message_bubble.dart';
 import 'connect_screen.dart';
 import 'diagnostic_screen.dart';
@@ -34,7 +35,8 @@ class _ChatScreenState extends State<ChatScreen> {
   Timer? _sendDelayTimer;
   int _sendCountdown = 5;
   bool _sendDelayActive = false;
-  int _unreadCount = 0;
+  VoidCallback? _providerListener;
+  bool _isNearBottom = true;
 
   final List<Map<String, dynamic>> _ttlOptions = [
     {'label': '10 секунд', 'value': 10},
@@ -74,23 +76,36 @@ class _ChatScreenState extends State<ChatScreen> {
       nodeIp: widget.nodeAddress,
     );
     provider.setTtl(_selectedTtl);
+    provider.setChatOpen(true);
 
-    // Запоминаем количество непрочитанных
-    _unreadCount = widget.p2pService.getUnreadCount(widget.nodeAddress);
+    _scrollController.addListener(_onScroll);
+    _scrollToBottom();
+
+    _providerListener = () {
+      if (mounted) {
+        if (_isNearBottom) {
+          _scrollToBottom();
+        }
+      }
+    };
+    provider.addListener(_providerListener!);
+
+    provider.loadMessages();
 
     final history = widget.p2pService.getHistory(widget.nodeAddress);
     for (final msg in history) {
       provider.addExternalMessage(msg);
     }
 
-    // Сбрасываем счётчик
     widget.p2pService.resetUnread(widget.nodeAddress);
 
     _messageSub = widget.p2pService.onMessage.listen((data) {
       if (mounted) {
         provider.addExternalMessage(data);
         widget.p2pService.resetUnread(widget.nodeAddress);
-        _scrollToBottom();
+        if (_isNearBottom) {
+          _scrollToBottom();
+        }
       }
     });
 
@@ -113,6 +128,14 @@ class _ChatScreenState extends State<ChatScreen> {
     _scrollToBottom();
   }
 
+  void _onScroll() {
+    if (_scrollController.hasClients) {
+      final pos = _scrollController.position.pixels;
+      final max = _scrollController.position.maxScrollExtent;
+      _isNearBottom = max - pos < 50;
+    }
+  }
+
   void _openDiagnostics() {
     Navigator.push(
       context,
@@ -133,6 +156,11 @@ class _ChatScreenState extends State<ChatScreen> {
 
   @override
   void dispose() {
+    final provider = context.read<ChatProvider>();
+    if (_providerListener != null) {
+      provider.removeListener(_providerListener!);
+    }
+    _scrollController.removeListener(_onScroll);
     _controller.dispose();
     _scrollController.dispose();
     _messageSub?.cancel();
@@ -145,11 +173,7 @@ class _ChatScreenState extends State<ChatScreen> {
   void _scrollToBottom() {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (_scrollController.hasClients) {
-        _scrollController.animateTo(
-          _scrollController.position.maxScrollExtent,
-          duration: const Duration(milliseconds: 300),
-          curve: Curves.easeOut,
-        );
+        _scrollController.jumpTo(_scrollController.position.maxScrollExtent);
       }
     });
   }
@@ -159,6 +183,7 @@ class _ChatScreenState extends State<ChatScreen> {
     if (text.isEmpty) return;
 
     _controller.clear();
+    _isNearBottom = true;
     _scrollToBottom();
 
     _sendDelayActive = true;
@@ -225,6 +250,7 @@ class _ChatScreenState extends State<ChatScreen> {
         provider.setTtl(_selectedTtl);
         provider.sendMessage(text);
         snackBarController.hideCurrentSnackBar();
+        _isNearBottom = true;
         _scrollToBottom();
       }
     });
@@ -391,6 +417,7 @@ class _ChatScreenState extends State<ChatScreen> {
             child: Consumer<ChatProvider>(
               builder: (_, provider, __) {
                 final messages = provider.messages;
+                final unreadCount = provider.unreadSnapshot;
 
                 if (messages.isEmpty) {
                   return const Center(child: Text('Нет сообщений'));
@@ -401,9 +428,9 @@ class _ChatScreenState extends State<ChatScreen> {
                   itemCount: messages.length,
                   itemBuilder: (_, index) {
                     final msg = messages[index];
-                    final isOwn = msg.senderType == 'own';
-                    final unreadStart = messages.length - _unreadCount;
-                    final showDivider = !isOwn && _unreadCount > 0 && index == unreadStart;
+                    final isOwn = msg.isOwn;
+                    final unreadStart = messages.length - unreadCount;
+                    final showDivider = !isOwn && unreadCount > 0 && index == unreadStart;
 
                     return Column(
                       children: [
@@ -416,7 +443,7 @@ class _ChatScreenState extends State<ChatScreen> {
                                 Padding(
                                   padding: const EdgeInsets.symmetric(horizontal: 8),
                                   child: Text(
-                                    'Непрочитанные ($_unreadCount)',
+                                    'Непрочитанные ($unreadCount)',
                                     style: const TextStyle(color: Colors.red, fontSize: 11),
                                   ),
                                 ),

@@ -30,6 +30,8 @@ class ChatProvider extends ChangeNotifier {
   String _libp2pPeerId = '';
   StreamSubscription? _messageSub;
   int _unreadCount = 0;
+  int _unreadSnapshot = 0;
+  bool _chatOpen = false;
 
   List<Message> get allMessages {
     final list = _messagesMap.values
@@ -69,11 +71,24 @@ class ChatProvider extends ChangeNotifier {
   bool get libp2pAvailable => _libp2pAvailable;
   String get libp2pPeerId => _libp2pPeerId;
   int get unreadCount => _unreadCount;
+  int get unreadSnapshot => _unreadSnapshot;
   List<String> get logs => LogService.logs;
+
+  void setChatOpen(bool open, {bool preserveUnread = false}) {
+    if (open) {
+      _unreadSnapshot = _unreadCount;
+      _chatOpen = true;
+      _unreadCount = 0;
+    } else {
+      _chatOpen = false;
+    }
+    _safeNotify();
+  }
 
   void initialize({String bootstrapPeers = ''}) {
     LogService.log('ChatProvider: initialize() CALLED');
     try {
+      _loadOwnMessageIds();
       _startLibP2P(bootstrapPeers: bootstrapPeers);
     } catch (e) {
       LogService.log('ChatProvider: initialize() ERROR: $e');
@@ -94,6 +109,26 @@ class ChatProvider extends ChangeNotifier {
     LogService.log('ChatProvider.configure: nodeIp=$nodeIp');
   }
 
+  Future<void> _loadOwnMessageIds() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final ids = prefs.getStringList('own_message_ids') ?? [];
+      _ownMessageIds.addAll(ids);
+      LogService.log('ChatProvider: загружено своих сообщений: ${ids.length}');
+    } catch (e) {
+      LogService.log('ChatProvider: _loadOwnMessageIds ERROR: $e');
+    }
+  }
+
+  Future<void> _saveOwnMessageIds() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setStringList('own_message_ids', _ownMessageIds.toList());
+    } catch (e) {
+      LogService.log('ChatProvider: _saveOwnMessageIds ERROR: $e');
+    }
+  }
+
   void _subscribeToMessages() {
     _messageSub?.cancel();
     _messageSub = LibP2PService.getMessageStream().listen((messageJSON) {
@@ -103,12 +138,19 @@ class ChatProvider extends ChangeNotifier {
         final sender = map['sender'] ?? '';
         final replicatedFrom = map['replicatedFrom'] ?? '';
 
-        if (isOwn || sender == '🌐 Сеть' || sender == _libp2pPeerId || replicatedFrom == _libp2pPeerId) {
+        final shortSender = sender.length > 8 ? sender.substring(0, 8) : sender;
+        final shortReplicatedFrom = replicatedFrom.length > 8 ? replicatedFrom.substring(0, 8) : replicatedFrom;
+        final shortMyID = _libp2pPeerId.length > 8 ? _libp2pPeerId.substring(0, 8) : _libp2pPeerId;
+
+        if (isOwn || sender == '🌐 Сеть' || shortSender == shortMyID || shortReplicatedFrom == shortMyID) {
           return;
         }
 
         LogService.log('P2P: входящее от $sender: ${map['text']}');
-        _unreadCount++;
+        if (!_chatOpen) {
+          _unreadCount++;
+          _safeNotify();
+        }
         addExternalMessage(map);
       } catch (e) {
         LogService.log('P2P: ошибка парсинга: $e');
@@ -160,6 +202,7 @@ class ChatProvider extends ChangeNotifier {
       LogService.log('libp2p: PeerID=$_libp2pPeerId');
 
       _subscribeToMessages();
+      await loadMessages();
 
       _safeNotify();
     } catch (e) {
@@ -170,18 +213,17 @@ class ChatProvider extends ChangeNotifier {
   }
 
   void _safeNotify() {
-    scheduleMicrotask(() {
-      notifyListeners();
-    });
+    notifyListeners();
   }
 
-  Future<bool> sendViaLibP2P(String text) async {
-    if (!_libp2pStarted) return false;
+  Future<Map<String, dynamic>> sendViaLibP2P(String text) async {
+    if (!_libp2pStarted) {
+      return {'error': 'libp2p not started'};
+    }
     try {
-      final result = await LibP2PService.send(text: text, ttl: _currentTtl);
-      return !result.containsKey('error');
-    } catch (_) {
-      return false;
+      return await LibP2PService.send(text: text, ttl: _currentTtl);
+    } catch (e) {
+      return {'error': e.toString()};
     }
   }
 
@@ -189,14 +231,17 @@ class ChatProvider extends ChangeNotifier {
     if (!_libp2pStarted) return [];
     try {
       final data = await LibP2PService.getMessages();
+      final shortMyID = _libp2pPeerId.length > 8 ? _libp2pPeerId.substring(0, 8) : _libp2pPeerId;
       return data.map((json) {
         final map = json as Map<String, dynamic>;
+        final sender = map['sender'] ?? '';
+        final shortSender = sender.length > 8 ? sender.substring(0, 8) : sender;
         return Message(
-          id: map['id'] ?? DateTime.now().millisecondsSinceEpoch.toString(),
+          id: map['id'] ?? '',
           text: map['text'] ?? '',
-          sender: map['sender'] ?? 'P2P',
-          time: map['time'] ?? DateTime.now().toIso8601String(),
-          isOwn: map['isOwn'] ?? false,
+          sender: sender,
+          time: map['time'] ?? DateTime.now().toUtc().toIso8601String(),
+          isOwn: shortSender == shortMyID || map['isOwn'] == true,
           score: map['score'] ?? 0,
           weight: (map['weight'] as num?)?.toDouble() ?? 0.5,
           archived: map['archived'] ?? false,
@@ -237,11 +282,17 @@ class ChatProvider extends ChangeNotifier {
   }
 
   void addExternalMessage(Map<String, dynamic> data) {
+    final id = data['id'] ?? '';
+    if (id.isEmpty) {
+      LogService.log('addExternalMessage: пустой id, text="${data['text']}"');
+      return;
+    }
+
     final msg = Message(
-      id: data['id'] ?? DateTime.now().millisecondsSinceEpoch.toString(),
+      id: id,
       text: data['text'] ?? '',
       sender: data['sender'] ?? 'P2P',
-      time: data['time'] ?? DateTime.now().toIso8601String(),
+      time: data['time'] ?? DateTime.now().toUtc().toIso8601String(),
       isOwn: data['isOwn'] ?? false,
       score: data['score'] ?? 0,
       weight: (data['weight'] as num?)?.toDouble() ?? 0.5,
@@ -254,10 +305,17 @@ class ChatProvider extends ChangeNotifier {
   }
 
   void _addMessage(Message msg) {
-    if (!_messagesMap.containsKey(msg.id)) {
-      _messagesMap[msg.id] = msg;
-      _safeNotify();
+    if (msg.id.isEmpty) {
+      LogService.log('ADD SKIP: empty id, text="${msg.text}"');
+      return;
     }
+    if (_messagesMap.containsKey(msg.id)) {
+      LogService.log('ADD SKIP: id exists id=${msg.id} len=${msg.id.length} text="${msg.text}"');
+      return;
+    }
+    _messagesMap[msg.id] = msg;
+    LogService.log('ADD id=${msg.id} len=${msg.id.length} text="${msg.text}" sender=${msg.sender}');
+    _safeNotify();
   }
 
   void deleteMessage(String id) {
@@ -285,14 +343,15 @@ class ChatProvider extends ChangeNotifier {
     try {
       if (_libp2pStarted) {
         final fromLibP2P = await getMessagesViaLibP2P();
+        int added = 0;
         for (final msg in fromLibP2P) {
-          if (msg.sender != '🌐 Сеть' && msg.sender != _libp2pPeerId) {
-            if (!_messagesMap.containsKey(msg.id)) {
-              _messagesMap[msg.id] = msg;
-            }
+          if (msg.sender != '🌐 Сеть' && msg.id.isNotEmpty) {
+            final before = _messagesMap.length;
+            _addMessage(msg);
+            if (_messagesMap.length > before) added++;
           }
         }
-        LogService.log('Загружено из libp2p: ${fromLibP2P.length}');
+        LogService.log('Загружено из libp2p: ${fromLibP2P.length}, добавлено новых: $added');
         _safeNotify();
       }
     } catch (e) {
@@ -320,13 +379,27 @@ class ChatProvider extends ChangeNotifier {
       return false;
     }
 
-    final msgId = DateTime.now().millisecondsSinceEpoch.toString();
+    final response = await sendViaLibP2P(text);
+    if (response.containsKey('error')) {
+      _error = 'Ошибка отправки: ${response['error']}';
+      _safeNotify();
+      return false;
+    }
+
+    final msgId = response['id'];
+    if (msgId == null || msgId.toString().isEmpty) {
+      _error = 'Ошибка: Go-ядро не вернуло ID сообщения';
+      _safeNotify();
+      return false;
+    }
+
+    _ownMessageIds.add(msgId.toString());
+    await _saveOwnMessageIds();
+
     final now = DateTime.now().toUtc().toIso8601String();
 
-    _ownMessageIds.add(msgId);
-
     final msg = Message(
-      id: msgId,
+      id: msgId.toString(),
       text: text,
       sender: 'Вы',
       time: now,
@@ -342,10 +415,6 @@ class ChatProvider extends ChangeNotifier {
     _addMessage(msg);
 
     p2p?.saveOwnMessage(_currentNodeIp, msg);
-
-    if (_libp2pStarted) {
-      await sendViaLibP2P(text);
-    }
 
     return true;
   }

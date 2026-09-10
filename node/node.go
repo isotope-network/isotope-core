@@ -484,12 +484,16 @@ func (n *Node) requestRestore() {
 }
 
 func (n *Node) processMessageWithTTL(msg string, senderID string, isOwn bool, expiresAt time.Time) {
-	n.processMessageInternal(msg, senderID, isOwn, expiresAt)
+	n.processMessageInternal(msg, senderID, isOwn, expiresAt, "")
+}
+
+func (n *Node) processMessageWithID(msg string, senderID string, isOwn bool, expiresAt time.Time, id string) {
+	n.processMessageInternal(msg, senderID, isOwn, expiresAt, id)
 }
 
 func (n *Node) processMessageWithModeAndTTL(msg string, senderID string, isOwn bool, mode int, expiresAt time.Time) {
 	if mode == 0 || n.host == nil {
-		n.processMessageInternal(msg, senderID, isOwn, expiresAt)
+		n.processMessageInternal(msg, senderID, isOwn, expiresAt, "")
 		return
 	}
 	relayCount := 4
@@ -499,7 +503,7 @@ func (n *Node) processMessageWithModeAndTTL(msg string, senderID string, isOwn b
 	}
 	relays := n.selectRelays(relayCount)
 	if len(relays) < relayCount {
-		n.processMessageInternal(msg, senderID, isOwn, expiresAt)
+		n.processMessageInternal(msg, senderID, isOwn, expiresAt, "")
 		return
 	}
 	n.sendViaRelayChain(relays, msg)
@@ -564,10 +568,10 @@ func (n *Node) sendViaRelayChain(relays []string, msg string) {
 }
 
 func (n *Node) processMessage(msg string, senderID string, isOwn bool) {
-	n.processMessageInternal(msg, senderID, isOwn, time.Time{})
+	n.processMessageInternal(msg, senderID, isOwn, time.Time{}, "")
 }
 
-func (n *Node) processMessageInternal(msg string, senderID string, isOwn bool, expiresAt time.Time) {
+func (n *Node) processMessageInternal(msg string, senderID string, isOwn bool, expiresAt time.Time, providedID string) {
 	inputVector := textToVector(msg)
 	outputVector, _ := forward(inputVector, n.layers)
 	answer := vectorToText(outputVector)
@@ -640,7 +644,11 @@ func (n *Node) processMessageInternal(msg string, senderID string, isOwn bool, e
 		}
 	}
 
-	id := generateMsgID(msg)
+	id := providedID
+	if id == "" {
+		id = generateMsgID(msg)
+	}
+
 	newMsg := Message{
 		ID:        id,
 		Text:      msg,
@@ -991,7 +999,7 @@ func (n *Node) SendMessage(text string, ttl int) (string, error) {
 		expiresAt = time.Now().Add(time.Duration(ttl) * time.Second)
 	}
 	id := generateMsgID(text)
-	n.processMessageWithTTL(text, n.host.ID().String(), true, expiresAt)
+	n.processMessageWithID(text, n.host.ID().String(), true, expiresAt, id)
 
 	go func() {
 		for _, p := range n.host.Network().Peers() {
@@ -1019,7 +1027,7 @@ func (n *Node) SendToPeer(peerID string, text string, ttl int) (string, error) {
 		expiresAt = time.Now().Add(time.Duration(ttl) * time.Second)
 	}
 	id := generateMsgID(text)
-	n.processMessageWithTTL(text, n.host.ID().String(), true, expiresAt)
+	n.processMessageWithID(text, n.host.ID().String(), true, expiresAt, id)
 
 	go func() {
 		for _, p := range n.host.Network().Peers() {

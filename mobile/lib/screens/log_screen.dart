@@ -16,10 +16,12 @@ class LogScreen extends StatelessWidget {
           IconButton(
             icon: const Icon(Icons.save),
             onPressed: () async {
+              LogService.log('LogScreen: Save button pressed');
               const channel = MethodChannel('isotope/libp2p');
               final result = await channel.invokeMethod('saveLog', {
-                'text': LogService.logsText,
+                'text': logs.join('\n'),
               });
+              LogService.log('LogScreen: saveLog result=$result');
               if (context.mounted && result != null) {
                 ScaffoldMessenger.of(context).showSnackBar(
                   SnackBar(content: Text('$result')),
@@ -30,8 +32,9 @@ class LogScreen extends StatelessWidget {
           ),
           IconButton(
             icon: const Icon(Icons.delete_outline),
-            onPressed: () {
-              LogService.clear();
+            onPressed: () async {
+              LogService.log('LogScreen: Clear button pressed');
+              await LogService.clear();
               if (context.mounted) {
                 ScaffoldMessenger.of(context).showSnackBar(
                   const SnackBar(content: Text('Журнал очищен')),
@@ -39,6 +42,16 @@ class LogScreen extends StatelessWidget {
               }
             },
             tooltip: 'Очистить',
+          ),
+          IconButton(
+            icon: const Icon(Icons.refresh),
+            onPressed: () {
+              LogService.log('LogScreen: Refresh button pressed');
+              if (context.mounted) {
+                (context as Element).markNeedsBuild();
+              }
+            },
+            tooltip: 'Обновить',
           ),
         ],
       ),
