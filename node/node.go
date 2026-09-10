@@ -432,6 +432,9 @@ func (n *Node) replicateMessage(msg Message) {
 	peers := n.host.Network().Peers()
 	var alive []peer.ID
 	for _, p := range peers {
+		if p.String() == msg.Sender {
+			continue
+		}
 		if !n.isPeerDead(p.String()) {
 			alive = append(alive, p)
 		}
