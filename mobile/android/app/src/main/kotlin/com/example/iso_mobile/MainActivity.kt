@@ -142,8 +142,10 @@ class MainActivity : FlutterActivity() {
                         val ethHash = call.argument<String>("ethHash") ?: ""
                         val bootstrapPeers = call.argument<String>("bootstrapPeers") ?: ""
                         val enableMDNS = call.argument<Boolean>("enableMDNS") ?: false
-                        val response = Mobile.start(ethHash, bootstrapPeers, enableMDNS)
-                        result.success(response)
+                        Thread {
+                            val response = Mobile.start(ethHash, bootstrapPeers, enableMDNS)
+                            runOnUiThread { result.success(response) }
+                        }.start()
                     }
                     "send" -> {
                         val text = call.argument<String>("text") ?: ""
@@ -152,25 +154,41 @@ class MainActivity : FlutterActivity() {
                             is Int -> t.toLong()
                             else -> 0L
                         }
-                        val response = Mobile.sendMessage(text, ttl)
-                        result.success(response)
+                        Thread {
+                            val response = Mobile.sendMessage(text, ttl)
+                            runOnUiThread { result.success(response) }
+                        }.start()
                     }
                     "getMessages" -> {
-                        result.success(Mobile.getMessages())
+                        Thread {
+                            val response = Mobile.getMessages()
+                            runOnUiThread { result.success(response) }
+                        }.start()
                     }
                     "getPeers" -> {
-                        result.success(Mobile.getPeers())
+                        Thread {
+                            val response = Mobile.getPeers()
+                            runOnUiThread { result.success(response) }
+                        }.start()
                     }
                     "getStatus" -> {
-                        result.success(Mobile.getStatus())
+                        Thread {
+                            val response = Mobile.getStatus()
+                            runOnUiThread { result.success(response) }
+                        }.start()
                     }
                     "getMultiaddrs" -> {
-                        result.success(Mobile.getMultiaddrs())
+                        Thread {
+                            val response = Mobile.getMultiaddrs()
+                            runOnUiThread { result.success(response) }
+                        }.start()
                     }
                     "connectToPeer" -> {
                         val multiaddr = call.argument<String>("multiaddr") ?: ""
-                        val response = Mobile.connectToPeer(multiaddr)
-                        result.success(response)
+                        Thread {
+                            val response = Mobile.connectToPeer(multiaddr)
+                            runOnUiThread { result.success(response) }
+                        }.start()
                     }
                     "getFilesDir" -> {
                         result.success(filesDir.absolutePath)
@@ -194,28 +212,42 @@ class MainActivity : FlutterActivity() {
                         startActivityForResult(intent, SAVE_LOG_REQUEST_CODE)
                     }
                     "stop" -> {
-                        result.success(Mobile.stop())
+                        Thread {
+                            val response = Mobile.stop()
+                            runOnUiThread { result.success(response) }
+                        }.start()
                     }
                     "joinDHT" -> {
                         val bootstrapPeers = call.argument<String>("bootstrapPeers") ?: ""
-                        val response = Mobile.joinDHT(bootstrapPeers)
-                        result.success(response)
+                        Thread {
+                            val response = Mobile.joinDHT(bootstrapPeers)
+                            runOnUiThread { result.success(response) }
+                        }.start()
                     }
                     "findPeer" -> {
                         val peerID = call.argument<String>("peerID") ?: ""
-                        val response = Mobile.findPeer(peerID)
-                        result.success(response)
+                        Thread {
+                            val response = Mobile.findPeer(peerID)
+                            runOnUiThread { result.success(response) }
+                        }.start()
                     }
                     "findPeersViaNetwork" -> {
-                        val response = Mobile.findPeersViaNetwork()
-                        result.success(response)
+                        Thread {
+                            val response = Mobile.findPeersViaNetwork()
+                            runOnUiThread { result.success(response) }
+                        }.start()
                     }
                     "provide" -> {
-                        val response = Mobile.provide()
-                        result.success(response)
+                        Thread {
+                            val response = Mobile.provide()
+                            runOnUiThread { result.success(response) }
+                        }.start()
                     }
                     "getDHTInfo" -> {
-                        result.success(Mobile.getDHTInfo())
+                        Thread {
+                            val response = Mobile.getDHTInfo()
+                            runOnUiThread { result.success(response) }
+                        }.start()
                     }
                     else -> result.notImplemented()
                 }

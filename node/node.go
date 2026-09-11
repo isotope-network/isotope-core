@@ -322,7 +322,7 @@ func (n *Node) handlePingStream(stream network.Stream) {
 func (n *Node) pingPeers() {
 	go func() {
 		for {
-			time.Sleep(30 * time.Second)
+			time.Sleep(15 * time.Second)
 			if n.host == nil {
 				continue
 			}
@@ -347,6 +347,43 @@ func (n *Node) pingPeers() {
 					}
 					n.markPeerAlive(peerID.String())
 				}(p)
+			}
+		}
+	}()
+}
+
+// reconnectLoop — периодически проверяет соединение и переподключается к bootstrap
+func (n *Node) reconnectLoop() {
+	go func() {
+		for {
+			time.Sleep(30 * time.Second)
+			if n.host == nil {
+				continue
+			}
+			peers := n.host.Network().Peers()
+			if len(peers) > 0 {
+				continue
+			}
+			log.Println("[RECONNECT] Нет пиров, переподключаюсь к bootstrap")
+			bootstrapPeers := n.loadBootstrapPeers()
+			for _, addr := range bootstrapPeers {
+				peerInfo, err := peer.AddrInfoFromString(addr)
+				if err != nil {
+					continue
+				}
+				ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+				err = n.host.Connect(ctx, *peerInfo)
+				cancel()
+				if err != nil {
+					log.Printf("[RECONNECT] Ошибка подключения к %s: %v", addr, err)
+					continue
+				}
+				log.Printf("[RECONNECT] Подключён к bootstrap: %s", addr)
+				go func(peerID peer.ID) {
+					time.Sleep(2 * time.Second)
+					n.ExchangePeers(peerID.String())
+				}(peerInfo.ID)
+				break
 			}
 		}
 	}()
@@ -869,6 +906,7 @@ func (n *Node) InitP2P() error {
 	}
 
 	n.pingPeers()
+	n.reconnectLoop()
 	n.StartAdaptation()
 
 	go func() {
