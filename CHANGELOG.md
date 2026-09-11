@@ -1,5 +1,48 @@
 # История изменений ISOTOPE
 
+## v1.21.0 (2026-09-11)
+
+### Исправлено
+- Дубликаты сообщений (корень в Go-ядре):
+  - processMessageWithID() — принимает ID параметром, не генерирует
+  - SendMessage() передаёт свой ID в processMessageWithID()
+  - replicateMessage() исключает отправителя: if p.String() == msg.Sender { continue }
+  - Dart _addMessage() — простая проверка containsKey(msg.id)
+- Бейдж непрочитанных и линия «Непрочитанные»:
+  - _ownMessageIds сохраняется в SharedPreferences (own_message_ids)
+  - unreadSnapshot — снимок до обнуления, используется для линии
+  - setChatOpen(false) вызывается в ConnectScreen после Navigator.pop
+  - loadMessages() загружает все сообщения (свои и входящие)
+- Зависание UI на медленных телефонах (ANR):
+  - Все вызовы Mobile.* в MainActivity.kt обёрнуты в Thread { ... } + runOnUiThread
+  - Обёрнуты: start, stop, send, getMessages, getPeers, getStatus, getMultiaddrs, connectToPeer, joinDHT, findPeer, findPeersViaNetwork, provide, getDHTInfo
+
+### Добавлено
+- Reconnect loop + keepalive (node/node.go):
+  - reconnectLoop() — каждые 30 сек проверяет len(Network().Peers())
+  - Если 0 — переподключается к bootstrap + ExchangePeers
+  - pingPeers() — интервал сокращён с 30 до 15 секунд
+- Проверено: peers 2 → 0 (5 мин свёрнутыми) → 2 (30-60 сек после разворачивания)
+
+### Проверено на реальных телефонах
+- P2P-сообщения через VPS relay
+- Бейдж непрочитанных
+- Линия «Непрочитанные»
+- История (свои/входящие, загрузка после перезапуска)
+- Прокрутка истории
+- Reconnect после сворачивания
+- Отсутствие ANR на медленном телефоне
+
+### Инфраструктура
+- VPS bootstrap/relay:
+  - IP: 186.246.31.176
+  - PeerID: QmNmr3YqGD9uKpPCx7W86t7Tc3vrBJF1GbmTAzDQ25Sskx
+  - Bootstrap multiaddr: /ip4/186.246.31.176/tcp/9001/ws/p2p/QmNmr3YqGD9uKpPCx7W86t7Tc3vrBJF1GbmTAzDQ25Sskx
+  - Порты: 9000 (TCP), 9001 (WS), 8081 (HTTP API)
+- ВАЖНО: не удалять /root/isotope/state/ — PeerID изменится, телефоны потеряют связь
+
+---
+
 ## v1.19.0 (2026-09-01)
 
 ### Добавлено

@@ -165,7 +165,7 @@ Once a day — a single notification:
 
 ## Status
 
-**v1.19.0 — stable (mobile stabilization).**
+**v1.21.0 — stable (mobile stabilization).**
 
 Implemented:
 - P2P network: libp2p + mDNS + DHT + Gossip
@@ -196,23 +196,27 @@ Implemented:
 - 67 autotests
 - 5 nodes in docker-compose
 
-**Mobile (v1.19.0):**
-- HTTP communication between phones
-- libp2p P2P connection
-- NSD discovery with PeerID and multiaddr
-- Send/receive messages
-- Unread badges
-- Message history
-- Stable PeerID
-- Network change handling
+**Mobile stabilization (v1.21.0):**
+- Single message ID from Go core (duplicates fixed)
+- replicateMessage() excludes sender
+- Non-blocking Mobile calls (ANR fixed on slow devices)
+- Reconnect loop (peers check every 30 sec)
+- pingPeers() interval reduced to 15 sec
+- Unread badge and "Unread" line
+- _ownMessageIds persisted in SharedPreferences
+- Verified on real phones: reconnect after backgrounding, no ANR
 
 **Deferred:**
 - BLE — unstable, disabled
-- Samsung Android 10 — crash on startup (needs investigation)
+- Samsung Android 10 — likely fixed by non-blocking calls
 - DHT — core only, not in mobile
 - TTL circular dial — UI improvement
 
 In development:
+- Stage 2: Foreground Service (Android)
+- Stage 3: Battery Optimization Whitelist
+- Hole punching via /p2p-circuit/
+- DHT announce for mobile
 - PWA + F-Droid
 - Offline communication (Bluetooth mesh, Wi-Fi Direct)
 - Traffic morphing

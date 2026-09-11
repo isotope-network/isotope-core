@@ -2,9 +2,9 @@
 
 ## Текущий статус
 
-**Версия:** v1.19.0 (мобильная стабилизация)
+**Версия:** v1.21.0 (мобильная стабилизация)
 
-Ядро — библиотека (package core). Работает на десктопе (HTTP, libp2p, DHT) и на мобильных (libp2p FFI, NSD, HTTP).
+Ядро — библиотека (package core). Работает на десктопе (HTTP, libp2p, DHT) и на мобильных (libp2p FFI, NSD, HTTP). Reconnect loop, единый ID сообщений, non-blocking вызовы.
 
 ---
 
@@ -48,22 +48,43 @@
 - Бейджи непрочитанных
 - История сообщений
 
+### Мобильная стабилизация (v1.21.0)
+- Единый ID сообщений из Go-ядра (устранены дубликаты)
+- replicateMessage() исключает отправителя
+- Non-blocking Mobile calls (MainActivity.kt — устранён ANR)
+- Reconnect loop (каждые 30 сек проверка пиров)
+- pingPeers() — интервал сокращён до 15 сек
+- Бейдж непрочитанных + линия «Непрочитанные»
+- _ownMessageIds в SharedPreferences
+- Проверено на реальных телефонах: reconnect после сворачивания, отсутствие ANR
+
 ---
 
 ## В работе / Ближайшие задачи
 
 ### Мобильное приложение
 - ✅ Базовая версия — работает
+- ✅ Reconnect loop — работает
+- 🔜 **Этап 2: Foreground Service (Android)** — не даёт системе убивать соединения в свёрнутом приложении
+- 🔜 Этап 3: Battery Optimization Whitelist — попросить пользователя добавить ISOTOPE в исключения
+- 🔜 Отображение пиров через libp2p в ConnectScreen (сейчас только NSD)
 - 🔜 BLE — отложен, нестабилен
-- 🔜 Samsung Android 10 — краш при запуске, отдельный разбор
 - 🔜 DHT в мобильном
 - 🔜 Круговой циферблат TTL — UI-улучшение
 - 🔜 PWA + F-Droid
+
+### Архитектурное
+- 🔜 Hole punching через интернет (/p2p-circuit/) — телефон А → телефон Б через VPS
+- 🔜 DHT announce — телефоны публикуют relay-адреса, FindPeer возвращает /p2p-circuit/
 
 ### Ядро
 - 🔜 Образная стеганография
 - 🔜 Морфинг трафика
 - 🔜 Улучшение DHT (стабильность)
+
+### Гигиена
+- 🔜 Очистка старых дубликатов в state (наследие старых версий)
+- 🔜 Упрощение «Отозвать» — recall best effort, без ожидания 30 сек
 
 ---
 
@@ -72,7 +93,8 @@
 ### v2.0 — Телефон как полноценный узел
 - libp2p FFI полностью стабилен
 - BLE работает
-- Телефон = узел сети (не только клиент)
+- Foreground Service + Battery Whitelist
+- Hole punching через /p2p-circuit/
 - DHT на мобильном
 - Мультиплексирование транспортов (Wi-Fi, BLE, мобильная сеть)
 
@@ -94,14 +116,43 @@
 
 - BLE — нестабилен на текущем стеке, вернуться после v2.0
 - IPFS для сайта — заблокирован в России, не работает с Cloudflare
-- Samsung Android 10 — краш при запуске, нужен отдельный разбор
+- Samsung Android 10 — вероятно, решён non-blocking вызовами (проверить)
+
+---
+
+## Инфраструктура
+
+### VPS bootstrap/relay
+- IP: 186.246.31.176
+- PeerID: QmNmr3YqGD9uKpPCx7W86t7Tc3vrBJF1GbmTAzDQ25Sskx
+- Bootstrap multiaddr: /ip4/186.246.31.176/tcp/9001/ws/p2p/QmNmr3YqGD9uKpPCx7W86t7Tc3vrBJF1GbmTAzDQ25Sskx
+- Порты: 9000 (TCP), 9001 (WS), 8081 (HTTP API)
+
+### Обновление VPS
+cd /root/isotope-core && git pull && cd node && go build -o isotope-node ./main
+# Ctrl+C в окне VPS, затем:
+cd /root/isotope && NODE_ID=bootstrap ISOTOPE_PORT=9000 ISOTOPE_HTTP_PORT=8081 ISOTOPE_ENABLE_RELAY=true /root/isotope-core/node/isotope-node
+
+⚠️ НЕ удалять /root/isotope/state/ — PeerID изменится, телефоны потеряют связь.
+
+### Сборка .aar (только если менялся Go-код)
+cd D:\isotope\node
+del isotope.aar
+gomobile bind -target=android -androidapi 21 -ldflags "-checklinkname=0" -o isotope.aar ./mobile
+copy /y isotope.aar D:\isotope\mobile\android\app\libs\
+
+### Сборка APK
+cd D:\isotope\mobile
+flutter clean
+flutter pub get
+flutter build apk --debug
 
 ---
 
 ## Стратегия
 
-1. **Мобильная стабилизация** — сейчас (v1.19)
-2. **BLE и офлайн** — v2.0
+1. **Мобильная стабилизация** — сейчас (v1.21)
+2. **Foreground Service и офлайн** — v2.0
 3. **AI Mesh** — v3.0
 4. **Полная автономия** — v4.0
 

@@ -13,7 +13,7 @@ ISOTOPE — инфраструктура для этичного, неуязви
 
 ---
 
-## Структура ядра (v1.19.0)
+## Структура ядра (v1.21.0)
 
 Ядро ISOTOPE — **библиотека** (пакет `core`).
 
@@ -74,7 +74,7 @@ defer core.Stop(node)
 
 ## Мобильная обёртка (mobile.go)
 
-**Статус:** работает (v1.19.0)
+**Статус:** работает (v1.21.0)
 
 ### Методы (возвращают JSON-строки)
 
@@ -88,23 +88,39 @@ defer core.Stop(node)
 | GetStatus() | JSON-статус |
 | GetMultiaddrs() | Список адресов узла |
 | ConnectToPeer(addr string) | Подключение к пиру по адресу |
+| JoinDHT() | Вход в DHT |
+| FindPeer(peerID string) | Поиск пира |
+| Provide(key string) | Публикация в DHT |
 
 ### Ключевые особенности
 
 - **libp2p через FFI:** .aar (67 МБ), MethodChannel во Flutter
+- **Non-blocking вызовы:** все Mobile.* обёрнуты в Thread + runOnUiThread (MainActivity.kt) — устранён ANR
 - **Стабильный PeerID:** приватный ключ в isotope_state.json.key
 - **Смена сети:** connectivity_plus, debounce 10 сек, перезапуск узла
+- **Reconnect loop:** каждые 30 сек проверка пиров, при 0 — переподключение к bootstrap
+- **pingPeers():** интервал 15 сек
 - **NodeInfo:** PeerID, multiaddrs, lastSeen, status
 - **Heartbeat:** 3 неудачи → dead, снятие при получении сообщения
 - **Логирование:** Go → Flutter, сохранение через Android Intent
 - **Порты:** динамический поиск (8081+), передача через NSD
 - **Обнаружение:** NSD с PeerID и multiaddr
 
+### Единый ID сообщений (v1.21.0)
+
+- ID генерируется один раз в SendMessage()
+- processMessageWithID() принимает ID параметром
+- replicateMessage() исключает отправителя (if p.String() == msg.Sender)
+- Dart _addMessage() — проверка containsKey(msg.id)
+
 ### Не решено
 
 - BLE — нестабилен, отключён
-- Samsung Android 10 — краш при запуске
+- Samsung Android 10 — вероятно, решён non-blocking вызовами
 - DHT — только в ядре, не в мобильном
+- Foreground Service — Этап 2 (в работе)
+- Battery Optimization Whitelist — Этап 3 (в работе)
+- Hole punching через /p2p-circuit/
 
 ---
 
@@ -143,8 +159,9 @@ P2P, этический хеш, иммунитет, самообучение.
 - **Маскировка:** WebSocket + TLS + обфускация AES-GCM
 - **Приоритеты:** Priority Gossip — TTL зависит от веса узла
 - **Память:** ассоциативная — узлы запоминают, кто у кого что спрашивал
-- **Восстановление:** репликация на 2 случайных живых узла
+- **Восстановление:** репликация на 2 случайных живых узла (без отправителя)
 - **Адаптация:** самонастройка порогов и интервалов
+- **Reconnect:** reconnectLoop() каждые 30 сек, pingPeers() каждые 15 сек
 
 ### 2. Этический движок (нейросеть)
 
@@ -218,6 +235,39 @@ P2P, этический хеш, иммунитет, самообучение.
 
 ---
 
+## Инфраструктура
+
+### VPS bootstrap/relay
+
+- IP: 186.246.31.176
+- PeerID: QmNmr3YqGD9uKpPCx7W86t7Tc3vrBJF1GbmTAzDQ25Sskx
+- Bootstrap multiaddr: /ip4/186.246.31.176/tcp/9001/ws/p2p/QmNmr3YqGD9uKpPCx7W86t7Tc3vrBJF1GbmTAzDQ25Sskx
+- Порты: 9000 (TCP), 9001 (WS), 8081 (HTTP API)
+
+⚠️ НЕ удалять /root/isotope/state/ — PeerID изменится, телефоны потеряют связь.
+
+### Обновление VPS
+
+cd /root/isotope-core && git pull && cd node && go build -o isotope-node ./main
+# Ctrl+C в окне VPS, затем:
+cd /root/isotope && NODE_ID=bootstrap ISOTOPE_PORT=9000 ISOTOPE_HTTP_PORT=8081 ISOTOPE_ENABLE_RELAY=true /root/isotope-core/node/isotope-node
+
+### Сборка .aar (только если менялся Go-код)
+
+cd D:\isotope\node
+del isotope.aar
+gomobile bind -target=android -androidapi 21 -ldflags "-checklinkname=0" -o isotope.aar ./mobile
+copy /y isotope.aar D:\isotope\mobile\android\app\libs\
+
+### Сборка APK
+
+cd D:\isotope\mobile
+flutter clean
+flutter pub get
+flutter build apk --debug
+
+---
+
 ## Принципы
 
 1. **Децентрализация.** Нет сервера, нет единой точки отказа
@@ -226,6 +276,7 @@ P2P, этический хеш, иммунитет, самообучение.
 4. **Приватность.** Данные не покидают устройство без согласия
 5. **Неуязвимость.** Сеть нельзя заблокировать, отключить или взломать
 6. **Унификация.** Каждый механизм — кирпич для множества применений
+7. **Правка в корне.** Не костыли, а исправление причины
 
 ---
 
