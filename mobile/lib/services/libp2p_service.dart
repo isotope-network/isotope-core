@@ -212,6 +212,27 @@ class LibP2PService {
     }
   }
 
+  /// Проверяет, находится ли приложение в whitelist оптимизации батареи
+  static Future<bool> isIgnoringBatteryOptimizations() async {
+    try {
+      final response = await _channel.invokeMethod<bool>('isIgnoringBatteryOptimizations');
+      return response ?? false;
+    } on PlatformException {
+      return false;
+    }
+  }
+
+  /// Запрашивает исключение из оптимизации батареи
+  /// Возвращает: "already_ignoring" | "requested" | "not_supported"
+  static Future<String> requestIgnoreBatteryOptimizations() async {
+    try {
+      final response = await _channel.invokeMethod<String>('requestIgnoreBatteryOptimizations');
+      return response ?? 'unknown';
+    } on PlatformException catch (e) {
+      return 'error: ${e.message}';
+    }
+  }
+
   /// Проверяет, запущен ли узел
   static bool get isStarted => _started;
 

@@ -253,6 +253,35 @@ class MainActivity : FlutterActivity() {
                             runOnUiThread { result.success(response) }
                         }.start()
                     }
+                    "isIgnoringBatteryOptimizations" -> {
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                            val pm = getSystemService(Context.POWER_SERVICE) as android.os.PowerManager
+                            result.success(pm.isIgnoringBatteryOptimizations(packageName))
+                        } else {
+                            result.success(true)
+                        }
+                    }
+                    "requestIgnoreBatteryOptimizations" -> {
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                            val pm = getSystemService(Context.POWER_SERVICE) as android.os.PowerManager
+                            if (pm.isIgnoringBatteryOptimizations(packageName)) {
+                                result.success("already_ignoring")
+                            } else {
+                                try {
+                                    val intent = android.content.Intent(
+                                        android.provider.Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
+                                        android.net.Uri.parse("package:$packageName")
+                                    )
+                                    startActivity(intent)
+                                    result.success("requested")
+                                } catch (e: Exception) {
+                                    result.error("REQUEST_FAILED", e.message, null)
+                                }
+                            }
+                        } else {
+                            result.success("not_supported")
+                        }
+                    }
                     else -> result.notImplemented()
                 }
             }

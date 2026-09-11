@@ -58,6 +58,7 @@ class _ConnectScreenState extends State<ConnectScreen> {
       if (mounted) {
         final chatProvider = context.read<ChatProvider>();
         chatProvider.initialize(bootstrapPeers: _bootstrapPeers);
+        _checkBatteryOptimization();
       }
     });
 
@@ -66,6 +67,54 @@ class _ConnectScreenState extends State<ConnectScreen> {
     _listenToP2P();
     _startServer();
     _startNetworkMonitoring();
+  }
+
+  Future<void> _checkBatteryOptimization() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final alreadyAsked = prefs.getBool('battery_opt_asked') ?? false;
+      if (alreadyAsked) return;
+
+      final ignoring = await LibP2PService.isIgnoringBatteryOptimizations();
+      if (ignoring) {
+        await prefs.setBool('battery_opt_asked', true);
+        return;
+      }
+
+      if (!mounted) return;
+
+      await showDialog(
+        context: context,
+        barrierDismissible: false,
+        builder: (ctx) => AlertDialog(
+          title: const Text('Фоновая работа'),
+          content: const Text(
+            'ISOTOPE — это P2P-сеть. Чтобы принимать сообщения, когда приложение свёрнуто, '
+            'разрешите работу в фоне.\n\n'
+            'Это откроет системные настройки — выберите «Разрешить» или «Не оптимизировать».',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () async {
+                await prefs.setBool('battery_opt_asked', true);
+                if (ctx.mounted) Navigator.pop(ctx);
+              },
+              child: const Text('Позже'),
+            ),
+            TextButton(
+              onPressed: () async {
+                await prefs.setBool('battery_opt_asked', true);
+                if (ctx.mounted) Navigator.pop(ctx);
+                await LibP2PService.requestIgnoreBatteryOptimizations();
+              },
+              child: const Text('Разрешить'),
+            ),
+          ],
+        ),
+      );
+    } catch (e) {
+      LogService.log('Battery opt check: $e');
+    }
   }
 
   Future<void> _loadBootstrapPeers() async {
