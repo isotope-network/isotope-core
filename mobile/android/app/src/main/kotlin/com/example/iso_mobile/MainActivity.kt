@@ -19,6 +19,7 @@ import android.net.nsd.NsdManager
 import android.net.nsd.NsdServiceInfo
 import android.os.Build
 import android.os.ParcelUuid
+import android.util.Log
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.EventChannel
@@ -71,6 +72,9 @@ class MainActivity : FlutterActivity() {
 
         // ВАЖНО: Устанавливаем filesDir для gomobile ДО обработки MethodChannel
         Mobile.setFilesDir(filesDir.absolutePath)
+
+        // Запускаем Foreground Service — держит процесс живым в фоне
+        IsotopeService.start(this)
 
         // NSD MethodChannel
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, METHOD_CHANNEL)
@@ -277,6 +281,12 @@ class MainActivity : FlutterActivity() {
         // Инициализация Bluetooth
         val bluetoothManager = getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager
         bluetoothAdapter = bluetoothManager.adapter
+    }
+
+    override fun onDestroy() {
+        Log.d("MainActivity", "onDestroy() — останавливаем IsotopeService")
+        IsotopeService.stop(this)
+        super.onDestroy()
     }
 
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: android.content.Intent?) {
