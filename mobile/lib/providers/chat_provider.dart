@@ -33,6 +33,9 @@ class ChatProvider extends ChangeNotifier {
   int _unreadSnapshot = 0;
   bool _chatOpen = false;
 
+  // Кэш: PeerID → последнее сообщение от этого пира
+  final Map<String, Message> _lastMessageByPeer = {};
+
   List<Message> get allMessages {
     final list = _messagesMap.values
         .where((m) => m.sender != '🌐 Сеть')
@@ -73,6 +76,20 @@ class ChatProvider extends ChangeNotifier {
   int get unreadCount => _unreadCount;
   int get unreadSnapshot => _unreadSnapshot;
   List<String> get logs => LogService.logs;
+
+  /// Возвращает последнее сообщение от указанного пира (O(1))
+  Message? getLastMessageForPeer(String peerID) => _lastMessageByPeer[peerID];
+
+  /// Возвращает количество известных пиров с историей (для отладки)
+  int get knownPeersCount => _lastMessageByPeer.length;
+
+  /// Устанавливает P2PService (вызывается из ConnectScreen до входа в чат).
+  /// Нужно для добавления libp2p-пиров в список узлов, когда приходит сообщение
+  /// от нового пира (например, в LTE-сети, где NSD не работает).
+  void setP2P(P2PService p2pService) {
+    p2p = p2pService;
+    LogService.log('ChatProvider: setP2P вызван');
+  }
 
   void setChatOpen(bool open, {bool preserveUnread = false}) {
     if (open) {
@@ -144,6 +161,11 @@ class ChatProvider extends ChangeNotifier {
 
         if (isOwn || sender == '🌐 Сеть' || shortSender == shortMyID || shortReplicatedFrom == shortMyID) {
           return;
+        }
+
+        // Добавляем пира в список узлов ConnectScreen (для LTE-сетей, где NSD не работает)
+        if (sender.isNotEmpty && p2p != null) {
+          p2p!.addDiscoveredPeer(sender);
         }
 
         LogService.log('P2P: входящее от $sender: ${map['text']}');
@@ -314,6 +336,15 @@ class ChatProvider extends ChangeNotifier {
       return;
     }
     _messagesMap[msg.id] = msg;
+
+    // Обновляем кэш последнего сообщения от пира
+    if (msg.sender != 'Вы' && msg.sender != '🌐 Сеть' && msg.sender.isNotEmpty) {
+      final existing = _lastMessageByPeer[msg.sender];
+      if (existing == null || msg.time.compareTo(existing.time) > 0) {
+        _lastMessageByPeer[msg.sender] = msg;
+      }
+    }
+
     LogService.log('ADD id=${msg.id} len=${msg.id.length} text="${msg.text}" sender=${msg.sender}');
     _safeNotify();
   }
@@ -325,6 +356,7 @@ class ChatProvider extends ChangeNotifier {
 
   void clearAllMessages() {
     _messagesMap.clear();
+    _lastMessageByPeer.clear();
     _safeNotify();
   }
 

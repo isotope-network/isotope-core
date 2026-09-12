@@ -562,6 +562,27 @@ class P2PService {
     LogService.log('Список узлов очищен');
   }
 
+  /// Добавляет libp2p-пира в список узлов.
+  /// Вызывается, когда приходит сообщение от нового пира (например, в LTE-сети,
+  /// где NSD не работает). Гарантирует, что пир появится в ConnectScreen.
+  void addDiscoveredPeer(String peerID) {
+    if (peerID.isEmpty) return;
+    if (_localPeerId.isNotEmpty && peerID == _localPeerId) return;
+    if (_nodesMap.containsKey(peerID)) return;
+
+    final node = NodeInfo(
+      peerID: peerID,
+      knownMultiaddrs: ['libp2p://$peerID'],
+      lastSeen: DateTime.now(),
+      status: NodeStatus.alive,
+    );
+
+    _nodesMap[peerID] = node;
+    NodeStore.upsertNode(node);
+    _nodeController.add(node);
+    LogService.log('libp2p: добавлен узел ${peerID.length > 12 ? peerID.substring(0, 12) : peerID} в список');
+  }
+
   bool get canRestart {
     final now = DateTime.now();
     return now.difference(_lastRestart).inSeconds >= 10;

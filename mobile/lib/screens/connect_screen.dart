@@ -5,6 +5,7 @@ import 'package:provider/provider.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../models/node_info.dart';
+import '../models/message.dart';
 import '../services/mdns_service.dart';
 import '../services/p2p_service.dart';
 import '../services/libp2p_service.dart';
@@ -57,6 +58,8 @@ class _ConnectScreenState extends State<ConnectScreen> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) {
         final chatProvider = context.read<ChatProvider>();
+        final p2p = context.read<P2PService>();
+        chatProvider.setP2P(p2p);
         chatProvider.initialize(bootstrapPeers: _bootstrapPeers);
         _checkBatteryOptimization();
       }
@@ -566,6 +569,40 @@ class _ConnectScreenState extends State<ConnectScreen> {
     Navigator.push(context, MaterialPageRoute(builder: (_) => const LogScreen()));
   }
 
+  /// Отображаемое имя для узла
+  String _displayName(NodeInfo node, ChatProvider chatProvider) {
+    // Если есть PeerID — используем короткий PeerID
+    if (node.peerID.isNotEmpty) {
+      final short = node.peerID.length > 12 ? node.peerID.substring(0, 12) : node.peerID;
+      return 'Узел $short';
+    }
+    // Fallback — IP
+    return node.currentAddress;
+  }
+
+  /// Последнее сообщение от пира (из кэша ChatProvider)
+  String _lastMessagePreview(NodeInfo node, ChatProvider chatProvider) {
+    final peerID = node.peerID;
+    if (peerID.isEmpty) return 'Узел ISOTOPE';
+
+    final last = chatProvider.getLastMessageForPeer(peerID);
+    if (last == null) return 'Новый узел';
+
+    final text = last.text.length > 40 ? '${last.text.substring(0, 40)}...' : last.text;
+    return text;
+  }
+
+  /// Время последнего сообщения от пира (ЧЧ:ММ)
+  String _lastMessageTime(NodeInfo node, ChatProvider chatProvider) {
+    final peerID = node.peerID;
+    if (peerID.isEmpty) return '';
+
+    final last = chatProvider.getLastMessageForPeer(peerID);
+    if (last == null) return '';
+
+    return last.formattedTime;
+  }
+
   @override
   void dispose() {
     final chatProvider = context.read<ChatProvider>();
@@ -648,17 +685,37 @@ class _ConnectScreenState extends State<ConnectScreen> {
                       final node = _discoveredNodes[index];
                       final unread = chatProvider.unreadCount;
                       final isDead = node.status == NodeStatus.dead;
+                      final displayName = _displayName(node, chatProvider);
+                      final lastMessage = _lastMessagePreview(node, chatProvider);
+                      final lastTime = _lastMessageTime(node, chatProvider);
+
                       return ListTile(
                         leading: Icon(isDead ? Icons.wifi_off : Icons.router, color: isDead ? Colors.grey : null),
-                        title: Text(node.currentAddress, style: TextStyle(color: isDead ? Colors.grey : null)),
-                        subtitle: Text(isDead ? 'Недоступен' : 'Узел ISOTOPE'),
-                        trailing: unread > 0
-                            ? Container(
+                        title: Text(displayName, style: TextStyle(color: isDead ? Colors.grey : null)),
+                        subtitle: Text(
+                          isDead ? 'Недоступен' : lastMessage,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(fontSize: 13),
+                        ),
+                        trailing: Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          crossAxisAlignment: CrossAxisAlignment.end,
+                          children: [
+                            if (lastTime.isNotEmpty)
+                              Text(
+                                lastTime,
+                                style: const TextStyle(fontSize: 11, color: Colors.grey),
+                              ),
+                            if (unread > 0)
+                              Container(
+                                margin: const EdgeInsets.only(top: 4),
                                 padding: const EdgeInsets.all(6),
                                 decoration: BoxDecoration(color: Colors.red, borderRadius: BorderRadius.circular(12)),
                                 child: Text('$unread', style: const TextStyle(color: Colors.white, fontSize: 12)),
-                              )
-                            : null,
+                              ),
+                          ],
+                        ),
                         onTap: _connecting || isDead ? null : () => _connectToNode(node),
                       );
                     },
