@@ -931,6 +931,7 @@ func (n *Node) StartHTTP(port int) error {
 	http.HandleFunc("/send", n.handleSend)
 	http.HandleFunc("/messages", n.handleMessages)
 	http.HandleFunc("/status", n.handleStatus)
+	http.HandleFunc("/peers/full", n.handlePeersFull)
 	http.HandleFunc("/dht/find", n.handleDHTFindPeer)
 	http.HandleFunc("/dht/provide", n.handleDHTProvide)
 	http.HandleFunc("/dht/info", n.handleDHTInfo)
@@ -1002,6 +1003,43 @@ func (n *Node) GetStatus() string {
 		n.memory.Count(),
 		len(n.layers),
 	)
+}
+
+// handlePeersFull — диагностика: возвращает всех пиров из Peerstore
+// с их multiaddr и флагом подключённости.
+func (n *Node) handlePeersFull(w http.ResponseWriter, r *http.Request) {
+	if n.host == nil {
+		http.Error(w, `{"error":"host not started"}`, http.StatusServiceUnavailable)
+		return
+	}
+
+	type peerInfoJSON struct {
+		PeerID     string   `json:"peerID"`
+		Multiaddrs []string `json:"multiaddrs"`
+		Connected  bool     `json:"connected"`
+	}
+
+	connected := make(map[string]bool)
+	for _, p := range n.host.Network().Peers() {
+		connected[p.String()] = true
+	}
+
+	var result []peerInfoJSON
+	for _, p := range n.host.Peerstore().Peers() {
+		info := n.host.Peerstore().PeerInfo(p)
+		var addrs []string
+		for _, a := range info.Addrs {
+			addrs = append(addrs, a.String())
+		}
+		result = append(result, peerInfoJSON{
+			PeerID:     p.String(),
+			Multiaddrs: addrs,
+			Connected:  connected[p.String()],
+		})
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(result)
 }
 
 // GetMultiaddrs — возвращает все адреса узла.
