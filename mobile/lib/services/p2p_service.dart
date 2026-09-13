@@ -169,8 +169,14 @@ class P2PService {
     final nodes = await NodeStore.loadNodes();
     for (final node in nodes) {
       if (node.key.isNotEmpty && !_nodesMap.containsKey(node.key)) {
-        _nodesMap[node.key] = node;
-        LogService.log('Узлы загружены: ${node.currentAddress} (статус: ${node.status == NodeStatus.alive ? "alive" : "dead"})');
+        // При загрузке из истории — статус unknown (мы не знаем, жив ли узел сейчас).
+        // После первого контакта (сообщение, heartbeat) статус станет alive/dead.
+        final loaded = node.copyWith(status: NodeStatus.unknown);
+        _nodesMap[node.key] = loaded;
+        LogService.log('Узел загружен: ${loaded.currentAddress} (unknown)');
+
+        // Эмитим в _nodeController, чтобы UI (ConnectScreen) получил узел при старте
+        _nodeController.add(loaded);
       }
     }
     _logController.add('Узлы загружены: ${_nodesMap.length}');
@@ -200,6 +206,12 @@ class P2PService {
     }
 
     for (final node in _nodesMap.values.toList()) {
+      // libp2p-пиры не пингуются по HTTP — они не имеют HTTP-эндпоинта.
+      // Статус обновляется при получении сообщений через addDiscoveredPeer.
+      if (node.currentAddress.startsWith('libp2p://')) {
+        continue;
+      }
+
       var alive = false;
 
       for (final addr in node.addresses) {
@@ -212,9 +224,10 @@ class P2PService {
       if (alive) {
         _failedPings[node.key] = 0;
         await NodeStore.markAlive(node.key);
-        if (_nodesMap.containsKey(node.key) && _nodesMap[node.key]!.status == NodeStatus.dead) {
+        if (_nodesMap.containsKey(node.key) && _nodesMap[node.key]!.status != NodeStatus.alive) {
           _nodesMap[node.key] = node.copyWith(status: NodeStatus.alive, lastSeen: DateTime.now());
-          LogService.log('Heartbeat: ${node.currentAddress} — alive (восстановлен)');
+          _nodeController.add(_nodesMap[node.key]!);
+          LogService.log('Heartbeat: ${node.currentAddress} — alive');
         }
       } else {
         _failedPings[node.key] = (_failedPings[node.key] ?? 0) + 1;
@@ -223,8 +236,9 @@ class P2PService {
 
         if (failCount >= 3) {
           await NodeStore.markDead(node.key);
-          if (_nodesMap.containsKey(node.key)) {
+          if (_nodesMap.containsKey(node.key) && _nodesMap[node.key]!.status != NodeStatus.dead) {
             _nodesMap[node.key] = node.copyWith(status: NodeStatus.dead);
+            _nodeController.add(_nodesMap[node.key]!);
             LogService.log('Heartbeat: ${node.currentAddress} — DEAD (3 неудачи)');
           }
         }
@@ -499,12 +513,16 @@ class P2PService {
               peerID: peerId,
               knownMultiaddrs: [address],
               lastSeen: DateTime.now(),
-              status: NodeStatus.alive,
+              status: NodeStatus.alive,  // найден через NSD — только что видели
             );
 
             if (_nodesMap.containsKey(peerId)) {
               final existing = _nodesMap[peerId]!;
-              _nodesMap[peerId] = existing.addAddress(address);
+              _nodesMap[peerId] = existing.copyWith(
+                knownMultiaddrs: existing.addAddress(address).knownMultiaddrs,
+                status: NodeStatus.alive,
+                lastSeen: DateTime.now(),
+              );
               NodeStore.upsertNode(_nodesMap[peerId]!);
               _nodeController.add(_nodesMap[peerId]!);
               _logController.add('NSD обновлён: $address');
@@ -562,13 +580,29 @@ class P2PService {
     LogService.log('Список узлов очищен');
   }
 
-  /// Добавляет libp2p-пира в список узлов.
-  /// Вызывается, когда приходит сообщение от нового пира (например, в LTE-сети,
-  /// где NSD не работает). Гарантирует, что пир появится в ConnectScreen.
+  /// Добавляет или обновляет libp2p-пира в списке узлов.
+  ///
+  /// Вызывается, когда приходит сообщение от пира (например, в LTE-сети,
+  /// где NSD не работает). Если узел уже есть в _nodesMap (загружен из
+  /// NodeStore как unknown/dead) — обновляет статус на alive и эмитит
+  /// в _nodeController, чтобы UI получил обновление. Иначе — создаёт новый.
   void addDiscoveredPeer(String peerID) {
     if (peerID.isEmpty) return;
     if (_localPeerId.isNotEmpty && peerID == _localPeerId) return;
-    if (_nodesMap.containsKey(peerID)) return;
+
+    final existing = _nodesMap[peerID];
+    if (existing != null) {
+      // Узел уже есть (загружен как unknown/dead) — обновляем и эмитим для UI
+      final updated = existing.copyWith(
+        status: NodeStatus.alive,
+        lastSeen: DateTime.now(),
+      );
+      _nodesMap[peerID] = updated;
+      NodeStore.upsertNode(updated);
+      _nodeController.add(updated);
+      LogService.log('libp2p: обновлён узел ${peerID.length > 12 ? peerID.substring(0, 12) : peerID} (alive)');
+      return;
+    }
 
     final node = NodeInfo(
       peerID: peerID,

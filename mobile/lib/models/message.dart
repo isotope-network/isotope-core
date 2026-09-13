@@ -101,16 +101,36 @@ class Message {
     }
   }
 
-  /// Отформатированное время (ЧЧ:ММ)
+  /// Отформатированное время (ЧЧ:ММ) с конвертацией в локальный часовой пояс.
+  ///
+  /// Go-ядро отправляет время в UTC формате "2006-01-02T15:04:05" (без суффикса Z).
+  /// Эта функция парсит строку как UTC (если нет TZ-суффикса) и конвертирует
+  /// в локальное время устройства.
   String get formattedTime {
     try {
-      final match = RegExp(r'T(\d{2}:\d{2}):\d{2}').firstMatch(time);
-      if (match != null) return match.group(1)!;
-      if (RegExp(r'^\d{2}:\d{2}').hasMatch(time)) return time.substring(0, 5);
-      return time;
+      var t = time;
+      // Если нет TZ-суффикса — считаем UTC, добавляем Z
+      if (!t.endsWith('Z') && !t.contains('+') && !_hasTimezoneOffset(t)) {
+        t = '${t}Z';
+      }
+      final dt = DateTime.tryParse(t);
+      if (dt == null) return time;
+
+      final local = dt.toLocal();
+      final hh = local.hour.toString().padLeft(2, '0');
+      final mm = local.minute.toString().padLeft(2, '0');
+      return '$hh:$mm';
     } catch (_) {
       return time;
     }
+  }
+
+  /// Проверяет наличие TZ-смещения после времени (формат "+HH:MM" или "-HH:MM")
+  bool _hasTimezoneOffset(String t) {
+    final tIndex = t.indexOf('T');
+    if (tIndex < 0) return false;
+    final after = t.substring(tIndex);
+    return after.contains('+') || after.lastIndexOf('-') > 0;
   }
 
   /// Вес для бейджа

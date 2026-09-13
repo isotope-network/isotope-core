@@ -256,20 +256,6 @@ class _ChatScreenState extends State<ChatScreen> {
     });
   }
 
-  void _recallMessage(String messageId) {
-    final provider = context.read<ChatProvider>();
-
-    widget.p2pService.recallMessage(widget.nodeAddress, messageId);
-    provider.deleteMessage(messageId);
-
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        duration: Duration(seconds: 2),
-        content: Text('Сообщение отозвано'),
-      ),
-    );
-  }
-
   Future<void> _disconnect() async {
     if (mounted) {
       Navigator.pop(context);
@@ -470,8 +456,6 @@ class _ChatScreenState extends State<ChatScreen> {
                             onDislike: () => provider.sendFeedback(msg.id, -1),
                           ),
                         ),
-                        if (isOwn && !msg.isExpired)
-                          _recallButton(msg),
                       ],
                     );
                   },
@@ -520,33 +504,6 @@ class _ChatScreenState extends State<ChatScreen> {
             ),
           ),
         ],
-      ),
-    );
-  }
-
-  Widget _recallButton(Message msg) {
-    final sentTime = DateTime.tryParse(msg.time);
-    if (sentTime == null) return const SizedBox.shrink();
-
-    final elapsed = DateTime.now().difference(sentTime);
-    if (elapsed.inSeconds > 30) return const SizedBox.shrink();
-
-    return Align(
-      alignment: Alignment.centerRight,
-      child: Padding(
-        padding: const EdgeInsets.only(top: 2),
-        child: TextButton(
-          onPressed: () => _recallMessage(msg.id),
-          style: TextButton.styleFrom(
-            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-            minimumSize: Size.zero,
-            tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-          ),
-          child: const Text(
-            'Отозвать',
-            style: TextStyle(fontSize: 11, color: Colors.red),
-          ),
-        ),
       ),
     );
   }

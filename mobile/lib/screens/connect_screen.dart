@@ -19,6 +19,7 @@ import 'log_screen.dart';
 import 'qr_scan_screen.dart';
 
 const String DEFAULT_BOOTSTRAP_ADDR = '/ip4/186.246.31.176/tcp/9001/ws/p2p/QmNmr3YqGD9uKpPCx7W86t7Tc3vrBJF1GbmTAzDQ25Sskx';
+const String BOOTSTRAP_PEER_ID = 'QmNmr3YqGD9uKpPCx7W86t7Tc3vrBJF1GbmTAzDQ25Sskx';
 
 class ConnectScreen extends StatefulWidget {
   const ConnectScreen({super.key});
@@ -70,6 +71,27 @@ class _ConnectScreenState extends State<ConnectScreen> {
     _listenToP2P();
     _startServer();
     _startNetworkMonitoring();
+  }
+
+  void _syncDiscoveredNodesFromP2P() {
+    try {
+      final p2p = context.read<P2PService>();
+      int added = 0;
+      for (final node in p2p.discoveredNodes) {
+        if (node.peerID == BOOTSTRAP_PEER_ID) continue;
+        if (_discoveredNodes.any((n) => n.key == node.key)) continue;
+        _discoveredNodes.add(node);
+        added++;
+      }
+      if (added > 0 && mounted) {
+        LogService.log('ConnectScreen: синхронизировано узлов: $added');
+        setState(() {
+          _status = 'Найдено узлов: ${_discoveredNodes.length}';
+        });
+      }
+    } catch (e) {
+      LogService.log('ConnectScreen: sync error: $e');
+    }
   }
 
   Future<void> _checkBatteryOptimization() async {
@@ -142,6 +164,10 @@ class _ConnectScreenState extends State<ConnectScreen> {
     }
   }
 
+  bool _isBootstrapPeer(String addr) {
+    return addr.contains(BOOTSTRAP_PEER_ID);
+  }
+
   Future<void> _findPeersViaNetwork() async {
     setState(() {
       _findingNetwork = true;
@@ -162,6 +188,11 @@ class _ConnectScreenState extends State<ConnectScreen> {
       final addrs = response['addrs'] as List<dynamic>? ?? [];
       for (final addr in addrs) {
         final addrStr = addr.toString();
+
+        if (_isBootstrapPeer(addrStr)) {
+          continue;
+        }
+
         final parts = addrStr.split('/');
         final ipIndex = parts.indexOf('ip4');
         if (ipIndex >= 0 && ipIndex + 1 < parts.length) {
@@ -171,6 +202,7 @@ class _ConnectScreenState extends State<ConnectScreen> {
               peerID: addrStr.contains('/p2p/') ? addrStr.split('/p2p/').last : '',
               knownMultiaddrs: [addrStr],
               lastSeen: DateTime.now(),
+              status: NodeStatus.alive,
             );
             _addNode(node);
           }
@@ -249,6 +281,8 @@ class _ConnectScreenState extends State<ConnectScreen> {
     await p2p.announceNative('ISOTOPE-$shortId', _localIp ?? '');
     p2p.startNsdDiscovery();
 
+    _syncDiscoveredNodesFromP2P();
+
     Future.delayed(const Duration(seconds: 10), () {
       if (mounted) p2p.startNsdDiscovery();
     });
@@ -264,6 +298,8 @@ class _ConnectScreenState extends State<ConnectScreen> {
     chatProvider.addListener(_chatListener!);
 
     _nodeSub = p2p.onNodeFound.listen((node) {
+      if (node.peerID == BOOTSTRAP_PEER_ID) return;
+
       if (_localIp == null) {
         if (!_pendingNodes.any((n) => n.key == node.key)) {
           _pendingNodes.add(node);
@@ -286,6 +322,7 @@ class _ConnectScreenState extends State<ConnectScreen> {
 
   void _addNode(NodeInfo node) {
     if (_localIp == null) return;
+    if (node.peerID == BOOTSTRAP_PEER_ID) return;
     if (node.currentAddress.startsWith('BLE:')) return;
     if (node.currentAddress.contains(_localIp!)) return;
     if (node.currentAddress.startsWith('127.') || node.currentAddress.startsWith('localhost')) return;
@@ -324,12 +361,16 @@ class _ConnectScreenState extends State<ConnectScreen> {
       _status = 'Поиск узлов...';
     });
 
-    p2p.clearAllNodes();
+    // Только перезапуск NSD — без clearAllNodes().
+    // История узлов сохраняется, libp2p-узлы вернутся через _syncDiscoveredNodesFromP2P.
     p2p.stopNsdDiscovery();
     p2p.startNsdDiscovery();
 
     final shortId = _localIp?.replaceAll('.', '') ?? 'node';
     p2p.announceNative('ISOTOPE-$shortId', _localIp ?? '');
+
+    // Возвращаем известные узлы из P2PService (libp2p + NodeStore)
+    _syncDiscoveredNodesFromP2P();
 
     Future.delayed(const Duration(seconds: 3), () {
       if (mounted) {
@@ -571,36 +612,89 @@ class _ConnectScreenState extends State<ConnectScreen> {
 
   /// Отображаемое имя для узла
   String _displayName(NodeInfo node, ChatProvider chatProvider) {
-    // Если есть PeerID — используем короткий PeerID
-    if (node.peerID.isNotEmpty) {
-      final short = node.peerID.length > 12 ? node.peerID.substring(0, 12) : node.peerID;
-      return 'Узел $short';
+    try {
+      if (node.peerID.isNotEmpty) {
+        final short = node.peerID.length > 12 ? node.peerID.substring(0, 12) : node.peerID;
+        return 'Узел $short';
+      }
+      return node.currentAddress;
+    } catch (_) {
+      return 'Узел';
     }
-    // Fallback — IP
-    return node.currentAddress;
   }
 
   /// Последнее сообщение от пира (из кэша ChatProvider)
   String _lastMessagePreview(NodeInfo node, ChatProvider chatProvider) {
-    final peerID = node.peerID;
-    if (peerID.isEmpty) return 'Узел ISOTOPE';
-
-    final last = chatProvider.getLastMessageForPeer(peerID);
-    if (last == null) return 'Новый узел';
-
-    final text = last.text.length > 40 ? '${last.text.substring(0, 40)}...' : last.text;
-    return text;
+    try {
+      final peerID = node.peerID;
+      if (peerID.isEmpty) return 'Узел ISOTOPE';
+      final last = chatProvider.getLastMessageForPeer(peerID);
+      if (last == null) {
+        switch (node.status) {
+          case NodeStatus.unknown:
+            return 'Не проверен';
+          case NodeStatus.alive:
+            return 'Узел ISOTOPE';
+          case NodeStatus.dead:
+            return 'Недоступен';
+        }
+      }
+      final text = last.text.length > 40 ? '${last.text.substring(0, 40)}...' : last.text;
+      return text;
+    } catch (_) {
+      return 'Ошибка';
+    }
   }
 
   /// Время последнего сообщения от пира (ЧЧ:ММ)
   String _lastMessageTime(NodeInfo node, ChatProvider chatProvider) {
-    final peerID = node.peerID;
-    if (peerID.isEmpty) return '';
+    try {
+      final peerID = node.peerID;
+      if (peerID.isEmpty) return '';
 
-    final last = chatProvider.getLastMessageForPeer(peerID);
-    if (last == null) return '';
+      final last = chatProvider.getLastMessageForPeer(peerID);
+      if (last == null) return '';
 
-    return last.formattedTime;
+      return last.formattedTime;
+    } catch (_) {
+      return '';
+    }
+  }
+
+  /// Иконка для узла в зависимости от статуса
+  IconData _getNodeIcon(NodeStatus status) {
+    switch (status) {
+      case NodeStatus.unknown:
+        return Icons.help_outline;
+      case NodeStatus.alive:
+        return Icons.router;
+      case NodeStatus.dead:
+        return Icons.wifi_off;
+    }
+  }
+
+  /// Цвет иконки для узла
+  Color? _getNodeIconColor(NodeStatus status) {
+    switch (status) {
+      case NodeStatus.unknown:
+        return Colors.grey.shade500;
+      case NodeStatus.alive:
+        return null;
+      case NodeStatus.dead:
+        return Colors.grey;
+    }
+  }
+
+  /// Цвет текста имени узла
+  Color? _getNodeTextColor(NodeStatus status) {
+    switch (status) {
+      case NodeStatus.unknown:
+        return Colors.grey.shade700;
+      case NodeStatus.alive:
+        return null;
+      case NodeStatus.dead:
+        return Colors.grey;
+    }
   }
 
   @override
@@ -684,16 +778,21 @@ class _ConnectScreenState extends State<ConnectScreen> {
                     itemBuilder: (context, index) {
                       final node = _discoveredNodes[index];
                       final unread = chatProvider.unreadCount;
-                      final isDead = node.status == NodeStatus.dead;
                       final displayName = _displayName(node, chatProvider);
                       final lastMessage = _lastMessagePreview(node, chatProvider);
                       final lastTime = _lastMessageTime(node, chatProvider);
 
                       return ListTile(
-                        leading: Icon(isDead ? Icons.wifi_off : Icons.router, color: isDead ? Colors.grey : null),
-                        title: Text(displayName, style: TextStyle(color: isDead ? Colors.grey : null)),
+                        leading: Icon(
+                          _getNodeIcon(node.status),
+                          color: _getNodeIconColor(node.status),
+                        ),
+                        title: Text(
+                          displayName,
+                          style: TextStyle(color: _getNodeTextColor(node.status)),
+                        ),
                         subtitle: Text(
-                          isDead ? 'Недоступен' : lastMessage,
+                          lastMessage,
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                           style: const TextStyle(fontSize: 13),
@@ -716,7 +815,9 @@ class _ConnectScreenState extends State<ConnectScreen> {
                               ),
                           ],
                         ),
-                        onTap: _connecting || isDead ? null : () => _connectToNode(node),
+                        onTap: node.status == NodeStatus.dead || _connecting
+                            ? null
+                            : () => _connectToNode(node),
                       );
                     },
                   );

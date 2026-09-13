@@ -1,5 +1,10 @@
 /// Статус узла
+///
+/// - unknown: ещё не связывались (загружен из истории, контакта не было)
+/// - alive: контакт был, узел отвечает
+/// - dead: узел не отвечает (> N попыток)
 enum NodeStatus {
+  unknown,
   alive,
   dead,
 }
@@ -61,7 +66,7 @@ class NodeInfo {
       'peerID': peerID,
       'knownMultiaddrs': knownMultiaddrs,
       'lastSeen': lastSeen.millisecondsSinceEpoch,
-      'status': status == NodeStatus.alive ? 'alive' : 'dead',
+      'status': _statusToString(status),
     };
   }
 
@@ -72,7 +77,7 @@ class NodeInfo {
       peerID: json['peerID'] ?? '',
       knownMultiaddrs: knownList is List ? knownList.cast<String>() : null,
       lastSeen: DateTime.fromMillisecondsSinceEpoch(json['lastSeen'] ?? 0),
-      status: json['status'] == 'dead' ? NodeStatus.dead : NodeStatus.alive,
+      status: _statusFromString(json['status']),
     );
   }
 
@@ -87,4 +92,29 @@ class NodeInfo {
 
   /// Адрес для отображения — текущий
   String get displayAddress => currentAddress;
+
+  /// Строковое представление статуса (для JSON)
+  static String _statusToString(NodeStatus status) {
+    switch (status) {
+      case NodeStatus.unknown:
+        return 'unknown';
+      case NodeStatus.alive:
+        return 'alive';
+      case NodeStatus.dead:
+        return 'dead';
+    }
+  }
+
+  /// Парсит статус из строки (обратная совместимость: старое значение → alive)
+  static NodeStatus _statusFromString(dynamic value) {
+    switch (value) {
+      case 'unknown':
+        return NodeStatus.unknown;
+      case 'dead':
+        return NodeStatus.dead;
+      case 'alive':
+      default:
+        return NodeStatus.alive;
+    }
+  }
 }
