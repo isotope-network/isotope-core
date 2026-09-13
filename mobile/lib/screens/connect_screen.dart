@@ -18,8 +18,8 @@ import 'chat_screen.dart';
 import 'log_screen.dart';
 import 'qr_scan_screen.dart';
 
-const String DEFAULT_BOOTSTRAP_ADDR = '/ip4/186.246.31.176/tcp/9001/ws/p2p/QmNmr3YqGD9uKpPCx7W86t7Tc3vrBJF1GbmTAzDQ25Sskx';
-const String BOOTSTRAP_PEER_ID = 'QmNmr3YqGD9uKpPCx7W86t7Tc3vrBJF1GbmTAzDQ25Sskx';
+const String DEFAULT_BOOTSTRAP_ADDR = '/ip4/186.246.31.176/tcp/9001/ws/p2p/QmR8u5YFdcKpM2onQvk7KV5qioai87aysi9JWLdV1LX1bi';
+const String BOOTSTRAP_PEER_ID = 'QmR8u5YFdcKpM2onQvk7KV5qioai87aysi9JWLdV1LX1bi';
 
 class ConnectScreen extends StatefulWidget {
   const ConnectScreen({super.key});
@@ -57,17 +57,8 @@ class _ConnectScreenState extends State<ConnectScreen> {
     super.initState();
     LogService.log('=== ConnectScreen initState ===');
 
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) {
-        final chatProvider = context.read<ChatProvider>();
-        final p2p = context.read<P2PService>();
-        chatProvider.setP2P(p2p);
-        chatProvider.initialize(bootstrapPeers: _bootstrapPeers);
-        _checkBatteryOptimization();
-      }
-    });
+    _initAsync();
 
-    _loadBootstrapPeers();
     _checkSavedNode();
     _listenToP2P();
     _startServer();
@@ -79,6 +70,24 @@ class _ConnectScreenState extends State<ConnectScreen> {
     });
     // Первый сбор через 3 секунды (после старта ядра)
     Future.delayed(const Duration(seconds: 3), () => _pullCoreLogs());
+  }
+
+  /// Инициализация: сначала загружаем bootstrap, потом стартуем libp2p.
+  /// Это важно, чтобы `initialize(bootstrapPeers: ...)` получил актуальный адрес.
+  Future<void> _initAsync() async {
+    await _loadBootstrapPeers();
+
+    if (!mounted) return;
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) {
+        final chatProvider = context.read<ChatProvider>();
+        final p2p = context.read<P2PService>();
+        chatProvider.setP2P(p2p);
+        chatProvider.initialize(bootstrapPeers: _bootstrapPeers);
+        _checkBatteryOptimization();
+      }
+    });
   }
 
   /// Подтягивает логи Go-ядра в единый журнал LogService.

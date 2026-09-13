@@ -13,6 +13,22 @@ class LibP2PService {
   /// Глобальный флаг — запущен ли DHT
   static bool _dhtStarted = false;
 
+  /// Безопасный парсинг JSON-ответа от Go.
+  /// Защищает от FormatException, если Go вернул невалидный JSON
+  /// (например, из-за \n внутри error-строки).
+  static Map<String, dynamic> _safeDecode(String? response, {String fallback = '{"error":"empty_response"}'}) {
+    final raw = response ?? fallback;
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is Map<String, dynamic>) {
+        return decoded;
+      }
+      return {'error': 'invalid_response_type', 'raw': raw};
+    } on FormatException catch (e) {
+      return {'error': 'invalid_json: ${e.message}', 'raw': raw};
+    }
+  }
+
   /// Возвращает путь к файлу состояния (через нативный filesDir)
   static Future<String> _getStateFilePath() async {
     final filesDir = await _channel.invokeMethod<String>('getFilesDir');
@@ -51,7 +67,7 @@ class LibP2PService {
         'bootstrapPeers': bootstrapPeers,
         'enableMDNS': enableMDNS,
       });
-      final decoded = jsonDecode(response ?? '{"error":"empty_response"}');
+      final decoded = _safeDecode(response);
       if (!decoded.containsKey('error')) {
         _started = true;
       }
@@ -71,7 +87,7 @@ class LibP2PService {
         'text': text,
         'ttl': ttl,
       });
-      return jsonDecode(response ?? '{"error":"empty_response"}');
+      return _safeDecode(response);
     } on PlatformException catch (e) {
       return {'error': e.message ?? 'platform_error', 'operation': 'send'};
     }
@@ -81,8 +97,13 @@ class LibP2PService {
   static Future<List<dynamic>> getMessages() async {
     try {
       final response = await _channel.invokeMethod<String>('getMessages');
-      final decoded = jsonDecode(response ?? '[]');
-      return decoded is List ? decoded : [];
+      final raw = response ?? '[]';
+      try {
+        final decoded = jsonDecode(raw);
+        return decoded is List ? decoded : [];
+      } on FormatException {
+        return [];
+      }
     } on PlatformException {
       return [];
     }
@@ -92,8 +113,13 @@ class LibP2PService {
   static Future<List<dynamic>> getPeers() async {
     try {
       final response = await _channel.invokeMethod<String>('getPeers');
-      final decoded = jsonDecode(response ?? '[]');
-      return decoded is List ? decoded : [];
+      final raw = response ?? '[]';
+      try {
+        final decoded = jsonDecode(raw);
+        return decoded is List ? decoded : [];
+      } on FormatException {
+        return [];
+      }
     } on PlatformException {
       return [];
     }
@@ -103,7 +129,7 @@ class LibP2PService {
   static Future<Map<String, dynamic>> getStatus() async {
     try {
       final response = await _channel.invokeMethod<String>('getStatus');
-      return jsonDecode(response ?? '{"id":"","peers":0,"memory":0,"layers":0}');
+      return _safeDecode(response, fallback: '{"id":"","peers":0,"memory":0,"layers":0}');
     } on PlatformException {
       return {'id': '', 'peers': 0, 'memory': 0, 'layers': 0};
     }
@@ -113,11 +139,16 @@ class LibP2PService {
   static Future<List<String>> getMultiaddrs() async {
     try {
       final response = await _channel.invokeMethod<String>('getMultiaddrs');
-      final decoded = jsonDecode(response ?? '[]');
-      if (decoded is List) {
-        return decoded.cast<String>();
+      final raw = response ?? '[]';
+      try {
+        final decoded = jsonDecode(raw);
+        if (decoded is List) {
+          return decoded.cast<String>();
+        }
+        return [];
+      } on FormatException {
+        return [];
       }
-      return [];
     } on PlatformException {
       return [];
     }
@@ -129,7 +160,7 @@ class LibP2PService {
       final response = await _channel.invokeMethod<String>('connectToPeer', {
         'multiaddr': multiaddr,
       });
-      return jsonDecode(response ?? '{"error":"empty_response"}');
+      return _safeDecode(response);
     } on PlatformException catch (e) {
       return {'error': e.message ?? 'platform_error', 'operation': 'connect_to_peer'};
     }
@@ -141,7 +172,7 @@ class LibP2PService {
       final response = await _channel.invokeMethod<String>('joinDHT', {
         'bootstrapPeers': bootstrapPeers,
       });
-      final decoded = jsonDecode(response ?? '{"error":"empty_response"}');
+      final decoded = _safeDecode(response);
       if (decoded['status'] == 'joined') {
         _dhtStarted = true;
       }
@@ -157,7 +188,7 @@ class LibP2PService {
       final response = await _channel.invokeMethod<String>('findPeer', {
         'peerID': peerID,
       });
-      return jsonDecode(response ?? '{"error":"empty_response"}');
+      return _safeDecode(response);
     } on PlatformException catch (e) {
       return {'error': e.message ?? 'platform_error', 'operation': 'find_peer'};
     }
@@ -167,7 +198,7 @@ class LibP2PService {
   static Future<Map<String, dynamic>> findPeersViaNetwork() async {
     try {
       final response = await _channel.invokeMethod<String>('findPeersViaNetwork');
-      return jsonDecode(response ?? '{"error":"empty_response"}');
+      return _safeDecode(response);
     } on PlatformException catch (e) {
       return {'error': e.message ?? 'platform_error', 'operation': 'find_peers_network'};
     }
@@ -177,7 +208,7 @@ class LibP2PService {
   static Future<Map<String, dynamic>> provide() async {
     try {
       final response = await _channel.invokeMethod<String>('provide');
-      return jsonDecode(response ?? '{"error":"empty_response"}');
+      return _safeDecode(response);
     } on PlatformException catch (e) {
       return {'error': e.message ?? 'platform_error', 'operation': 'provide'};
     }
@@ -187,7 +218,7 @@ class LibP2PService {
   static Future<Map<String, dynamic>> getDHTInfo() async {
     try {
       final response = await _channel.invokeMethod<String>('getDHTInfo');
-      return jsonDecode(response ?? '{"started":false}');
+      return _safeDecode(response, fallback: '{"started":false}');
     } on PlatformException {
       return {'started': false};
     }
@@ -201,7 +232,7 @@ class LibP2PService {
 
     try {
       final response = await _channel.invokeMethod<String>('stop');
-      final decoded = jsonDecode(response ?? '{"error":"empty_response"}');
+      final decoded = _safeDecode(response);
       if (!decoded.containsKey('error')) {
         _started = false;
         _dhtStarted = false;

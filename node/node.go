@@ -1004,18 +1004,55 @@ func (n *Node) GetStatus() string {
 	)
 }
 
-// GetMultiaddrs — возвращает все адреса узла
+// GetMultiaddrs — возвращает все адреса узла.
+// Приоритет — InterfaceListenAddresses (реальные интерфейсы Wi-Fi/LTE),
+// fallback — host.Addrs() (может отдавать loopback на Android).
 func (n *Node) GetMultiaddrs() []string {
 	if n.host == nil {
 		return []string{}
 	}
-	var result []string
-	hostAddrs := n.host.Addrs()
-	log.Printf("[MULTIADDR] host.Addrs() = %v", hostAddrs)
-	for _, addr := range hostAddrs {
-		result = append(result, addr.String()+"/p2p/"+n.host.ID().String())
+	myID := n.host.ID().String()
+
+	// 1. Реальные адреса интерфейсов (Wi-Fi, LTE, Ethernet)
+	ifaceAddrs, err := n.host.Network().InterfaceListenAddresses()
+	if err != nil {
+		log.Printf("[MULTIADDR] InterfaceListenAddresses error: %v", err)
+		ifaceAddrs = nil
 	}
-	log.Printf("[MULTIADDR] returning %d addrs", len(result))
+	log.Printf("[MULTIADDR] InterfaceListenAddresses() = %v", ifaceAddrs)
+
+	// 2. Fallback — host.Addrs()
+	fallbackAddrs := n.host.Addrs()
+	log.Printf("[MULTIADDR] host.Addrs() = %v", fallbackAddrs)
+
+	seen := make(map[string]bool)
+	var result []string
+
+	addAddr := func(addr string) {
+		if seen[addr] {
+			return
+		}
+		seen[addr] = true
+		result = append(result, addr+"/p2p/"+myID)
+	}
+
+	for _, a := range ifaceAddrs {
+		s := a.String()
+		if strings.Contains(s, "127.0.0.1") {
+			continue
+		}
+		addAddr(s)
+	}
+
+	for _, a := range fallbackAddrs {
+		s := a.String()
+		if strings.Contains(s, "127.0.0.1") {
+			continue
+		}
+		addAddr(s)
+	}
+
+	log.Printf("[MULTIADDR] returning %d addrs: %v", len(result), result)
 	return result
 }
 

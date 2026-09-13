@@ -52,6 +52,16 @@ func addLog(format string, args ...interface{}) {
 	}
 }
 
+// errorJSON — безопасная сериализация ошибки в JSON.
+// json.Marshal экранирует \n, \", \\ и прочие управляющие символы.
+func errorJSON(msg string) string {
+	data, _ := json.Marshal(map[string]string{
+		"status": "error",
+		"error":  msg,
+	})
+	return string(data)
+}
+
 // GetLogs — возвращает последние логи
 func GetLogs() string {
 	logsMu.Lock()
@@ -118,7 +128,7 @@ func Start(ethHash string, bootstrapPeers string, enableMDNS bool) string {
 	stateFile := filesDir + "/isotope_state.json"
 	if err := n.StartMobile(stateFile); err != nil {
 		addLog("[MOBILE] Failed to start node: %v", err)
-		return fmt.Sprintf(`{"status":"error","error":"%s"}`, err.Error())
+		return errorJSON(err.Error())
 	}
 
 	node = n
@@ -139,7 +149,7 @@ func Stop() string {
 
 	if err := node.Stop(); err != nil {
 		addLog("[MOBILE] Failed to stop node: %v", err)
-		return fmt.Sprintf(`{"status":"error","error":"%s"}`, err.Error())
+		return errorJSON(err.Error())
 	}
 
 	node = nil
@@ -178,12 +188,12 @@ func SendMessage(text string, ttl int) string {
 	defer nodeMu.Unlock()
 
 	if node == nil {
-		return `{"status":"error","error":"node not started"}`
+		return errorJSON("node not started")
 	}
 
 	id, err := node.SendMessage(text, ttl)
 	if err != nil {
-		return fmt.Sprintf(`{"status":"error","error":"%s"}`, err.Error())
+		return errorJSON(err.Error())
 	}
 
 	return fmt.Sprintf(`{"status":"ok","id":"%s"}`, id)
@@ -195,12 +205,12 @@ func SendToPeer(peerID string, text string, ttl int) string {
 	defer nodeMu.Unlock()
 
 	if node == nil {
-		return `{"status":"error","error":"node not started"}`
+		return errorJSON("node not started")
 	}
 
 	id, err := node.SendToPeer(peerID, text, ttl)
 	if err != nil {
-		return fmt.Sprintf(`{"status":"error","error":"%s"}`, err.Error())
+		return errorJSON(err.Error())
 	}
 
 	return fmt.Sprintf(`{"status":"ok","id":"%s"}`, id)
@@ -241,11 +251,11 @@ func ConnectToPeer(multiaddr string) string {
 	defer nodeMu.Unlock()
 
 	if node == nil {
-		return `{"status":"error","error":"node not started"}`
+		return errorJSON("node not started")
 	}
 
 	if err := node.ConnectToPeer(multiaddr); err != nil {
-		return fmt.Sprintf(`{"status":"error","error":"%s"}`, err.Error())
+		return errorJSON(err.Error())
 	}
 
 	if dhtNode := node.GetDHT(); dhtNode != nil {
@@ -265,28 +275,28 @@ func JoinDHT(bootstrapPeers string) string {
 	defer nodeMu.Unlock()
 
 	if node == nil {
-		return `{"status":"error","error":"node not started"}`
+		return errorJSON("node not started")
 	}
 
 	peers := parseBootstrapPeers(bootstrapPeers)
 	if len(peers) == 0 {
-		return `{"status":"error","error":"no bootstrap peers"}`
+		return errorJSON("no bootstrap peers")
 	}
 
 	host := node.GetHost()
 	if host == nil {
-		return `{"status":"error","error":"host not available"}`
+		return errorJSON("host not available")
 	}
 
 	dhtNode, err := sbimain.NewDHT(host)
 	if err != nil {
 		addLog("[DHT] Failed to create DHT: %v", err)
-		return fmt.Sprintf(`{"status":"error","error":"%s"}`, err.Error())
+		return errorJSON(err.Error())
 	}
 
 	if err := dhtNode.JoinDHT(peers); err != nil {
 		addLog("[DHT] Failed to join DHT: %v", err)
-		return fmt.Sprintf(`{"status":"error","error":"%s"}`, err.Error())
+		return errorJSON(err.Error())
 	}
 
 	node.SetDHT(dhtNode)
@@ -300,7 +310,7 @@ func FindPeer(peerID string) string {
 	defer nodeMu.Unlock()
 
 	if node == nil {
-		return `{"status":"error","error":"node not started"}`
+		return errorJSON("node not started")
 	}
 
 	knownPeers := node.GetKnownPeers()
@@ -350,12 +360,12 @@ func FindPeersViaNetwork() string {
 	defer nodeMu.Unlock()
 
 	if node == nil {
-		return `{"status":"error","error":"node not started"}`
+		return errorJSON("node not started")
 	}
 
 	peers := node.GetPeers()
 	if len(peers) == 0 {
-		return `{"status":"error","error":"no connected peers"}`
+		return errorJSON("no connected peers")
 	}
 
 	addLog("[PEERS] Обмениваюсь списками с %d пирами...", len(peers))
@@ -392,17 +402,17 @@ func Provide() string {
 	defer nodeMu.Unlock()
 
 	if node == nil {
-		return `{"status":"error","error":"node not started"}`
+		return errorJSON("node not started")
 	}
 
 	dhtNode := node.GetDHT()
 	if dhtNode == nil {
-		return `{"status":"error","error":"DHT not initialized"}`
+		return errorJSON("DHT not initialized")
 	}
 
 	if err := dhtNode.Provide(); err != nil {
 		addLog("[DHT] Provide failed: %v", err)
-		return fmt.Sprintf(`{"status":"error","error":"%s"}`, err.Error())
+		return errorJSON(err.Error())
 	}
 
 	return `{"status":"provided"}`
