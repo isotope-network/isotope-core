@@ -1,6 +1,8 @@
 package main
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"log"
 	"os"
 	"strconv"
@@ -11,14 +13,14 @@ import (
 func main() {
 	ethHash := os.Getenv("ISOTOPE_ETHICS_HASH")
 	if ethHash == "" {
-		ethData, err := os.ReadFile("genesis/ethics_hash.txt")
+		ethData, err := os.ReadFile("commandments.txt")
 		if err != nil {
-			log.Fatal("ISOTOPE_ETHICS_HASH not set and genesis/ethics_hash.txt not found. Set the environment variable or create the file.")
+			log.Fatal("ISOTOPE_ETHICS_HASH not set and commandments.txt not found. Set the environment variable or create the file.")
 		}
-		ethHash = core.HashText(string(ethData))
-		log.Println("Ethics hash loaded from genesis/ethics_hash.txt, hash:", ethHash)
+		sum := sha256.Sum256(ethData)
+		ethHash = hex.EncodeToString(sum[:])
+		log.Println("Ethics hash loaded from commandments.txt, hash:", ethHash)
 	} else {
-		ethHash = core.HashText(ethHash)
 		log.Println("Ethics hash loaded from ISOTOPE_ETHICS_HASH environment variable, hash:", ethHash)
 	}
 

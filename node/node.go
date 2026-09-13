@@ -856,6 +856,12 @@ func (n *Node) InitP2P() error {
 		return err
 	}
 	n.host = host
+
+	// ДИАГНОСТИКА: какие адреса слушает host сразу после создания
+	log.Printf("[DIAG] Listen addrs immediately: %v", host.Addrs())
+	log.Printf("[DIAG] PeerID: %s", host.ID().String())
+	log.Printf("[DIAG] Network addrs: %v", host.Network().ListenAddresses())
+
 	n.host.SetStreamHandler(protocolID, n.handleStream)
 	n.host.SetStreamHandler(syncProtocolID, n.handleSyncStream)
 	n.host.SetStreamHandler(pingProtocolID, n.handlePingStream)
@@ -1004,9 +1010,12 @@ func (n *Node) GetMultiaddrs() []string {
 		return []string{}
 	}
 	var result []string
-	for _, addr := range n.host.Addrs() {
+	hostAddrs := n.host.Addrs()
+	log.Printf("[MULTIADDR] host.Addrs() = %v", hostAddrs)
+	for _, addr := range hostAddrs {
 		result = append(result, addr.String()+"/p2p/"+n.host.ID().String())
 	}
+	log.Printf("[MULTIADDR] returning %d addrs", len(result))
 	return result
 }
 
@@ -1041,20 +1050,6 @@ func (n *Node) SendMessage(text string, ttl int) (string, error) {
 	}
 	id := generateMsgID(text)
 	n.processMessageWithID(text, n.host.ID().String(), true, expiresAt, id)
-
-	go func() {
-		for _, p := range n.host.Network().Peers() {
-			randomDelay(5, 25)
-			obfuscated := n.obfuscate(text)
-			ctx := context.Background()
-			s, err := n.host.NewStream(ctx, p, protocolID)
-			if err != nil {
-				continue
-			}
-			fmt.Fprintf(s, "%s\n", obfuscated)
-			s.Close()
-		}
-	}()
 	return id, nil
 }
 
@@ -1063,26 +1058,13 @@ func (n *Node) SendToPeer(peerID string, text string, ttl int) (string, error) {
 	if n.host == nil {
 		return "", fmt.Errorf("node not started")
 	}
+	_ = peerID
 	var expiresAt time.Time
 	if ttl > 0 {
 		expiresAt = time.Now().Add(time.Duration(ttl) * time.Second)
 	}
 	id := generateMsgID(text)
 	n.processMessageWithID(text, n.host.ID().String(), true, expiresAt, id)
-
-	go func() {
-		for _, p := range n.host.Network().Peers() {
-			randomDelay(5, 25)
-			obfuscated := n.obfuscate(text)
-			ctx := context.Background()
-			s, err := n.host.NewStream(ctx, p, protocolID)
-			if err != nil {
-				continue
-			}
-			fmt.Fprintf(s, "RELAY:%s:%s\n", peerID, obfuscated)
-			s.Close()
-		}
-	}()
 	return id, nil
 }
 
