@@ -58,3 +58,6 @@ coverage/
 *.json.tmp
 n2.json
 node2_messages.json
+
+# Внутренние документы (не для публикации)
+HANDOFF*.md
