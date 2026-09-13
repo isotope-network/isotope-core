@@ -194,6 +194,20 @@ class MainActivity : FlutterActivity() {
                             runOnUiThread { result.success(response) }
                         }.start()
                     }
+                    "announce" -> {
+                        val multiaddr = call.argument<String>("multiaddr") ?: ""
+                        Thread {
+                            val response = Mobile.announce(multiaddr)
+                            runOnUiThread { result.success(response) }
+                        }.start()
+                    }
+                    "findPeerByID" -> {
+                        val peerID = call.argument<String>("peerID") ?: ""
+                        Thread {
+                            val response = Mobile.findPeerByID(peerID)
+                            runOnUiThread { result.success(response) }
+                        }.start()
+                    }
                     "getFilesDir" -> {
                         result.success(filesDir.absolutePath)
                     }

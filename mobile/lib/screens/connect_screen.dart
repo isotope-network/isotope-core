@@ -21,6 +21,9 @@ import 'qr_scan_screen.dart';
 const String DEFAULT_BOOTSTRAP_ADDR = '/ip4/186.246.31.176/tcp/9001/ws/p2p/QmR8u5YFdcKpM2onQvk7KV5qioai87aysi9JWLdV1LX1bi';
 const String BOOTSTRAP_PEER_ID = 'QmR8u5YFdcKpM2onQvk7KV5qioai87aysi9JWLdV1LX1bi';
 
+/// Префикс для QR-кодов ISOTOPE — чтобы отличать от чужих QR.
+const String ISOTOPE_QR_PREFIX = 'isotope:';
+
 class ConnectScreen extends StatefulWidget {
   const ConnectScreen({super.key});
 
@@ -52,6 +55,12 @@ class _ConnectScreenState extends State<ConnectScreen> {
   Timer? _coreLogsTimer;
   final Set<String> _coreLogsSeen = {};
 
+  // Кэш PeerID после старта libp2p
+  String _myPeerId = '';
+
+  // Флаг: ANNOUNCE уже отправлен (чтобы не спамить)
+  bool _announced = false;
+
   @override
   void initState() {
     super.initState();
@@ -73,7 +82,6 @@ class _ConnectScreenState extends State<ConnectScreen> {
   }
 
   /// Инициализация: сначала загружаем bootstrap, потом стартуем libp2p.
-  /// Это важно, чтобы `initialize(bootstrapPeers: ...)` получил актуальный адрес.
   Future<void> _initAsync() async {
     await _loadBootstrapPeers();
 
@@ -86,12 +94,64 @@ class _ConnectScreenState extends State<ConnectScreen> {
         chatProvider.setP2P(p2p);
         chatProvider.initialize(bootstrapPeers: _bootstrapPeers);
         _checkBatteryOptimization();
+
+        // После старта libp2p — отправить ANNOUNCE (с небольшой задержкой)
+        _scheduleAnnounce();
       }
     });
   }
 
+  /// Ждём старта libp2p и _localIp, потом ANNOUNCE.
+  void _scheduleAnnounce() {
+    // Пытаемся несколько раз, пока не получим _localIp и PeerID
+    Future.delayed(const Duration(seconds: 5), () async {
+      if (!mounted) return;
+
+      // Ждём до 30 секунд
+      for (int i = 0; i < 6; i++) {
+        if (_localIp != null && _localIp!.isNotEmpty && _myPeerId.isNotEmpty) {
+          break;
+        }
+        // Обновляем PeerID
+        if (_myPeerId.isEmpty) {
+          try {
+            final status = await LibP2PService.getStatus();
+            _myPeerId = status['id'] as String? ?? '';
+          } catch (_) {}
+        }
+        await Future.delayed(const Duration(seconds: 5));
+      }
+
+      if (_localIp != null && _localIp!.isNotEmpty && _myPeerId.isNotEmpty) {
+        _sendAnnounce();
+      } else {
+        LogService.log('ANNOUNCE: не дождались _localIp или PeerID (ip=$_localIp, peer=$_myPeerId)');
+      }
+    });
+  }
+
+  /// Отправить ANNOUNCE на bootstrap.
+  Future<void> _sendAnnounce() async {
+    if (_announced) return;
+    if (_localIp == null || _localIp!.isEmpty) return;
+    if (_myPeerId.isEmpty) return;
+
+    final multiaddr = '/ip4/$_localIp/tcp/9001/ws/p2p/$_myPeerId';
+
+    try {
+      final result = await LibP2PService.announce(multiaddr);
+      if (result.containsKey('error')) {
+        LogService.log('ANNOUNCE: ошибка: ${result['error']}');
+        return;
+      }
+      _announced = true;
+      LogService.log('ANNOUNCE: отправлен $multiaddr');
+    } catch (e) {
+      LogService.log('ANNOUNCE: исключение: $e');
+    }
+  }
+
   /// Подтягивает логи Go-ядра в единый журнал LogService.
-  /// Дедуплицирует по строке, чтобы не засорять.
   Future<void> _pullCoreLogs() async {
     try {
       final coreLogs = await LibP2PService.getCoreLogs();
@@ -281,6 +341,10 @@ class _ConnectScreenState extends State<ConnectScreen> {
     final shortId = newIp.replaceAll('.', '');
     await p2p.announceNative('ISOTOPE-$shortId', newIp);
     p2p.startNsdDiscovery();
+
+    // При смене сети — обновить ANNOUNCE (multiaddr изменился)
+    _announced = false;
+    _sendAnnounce();
 
     setState(() {
       _status = 'Телефон-узел: $newIp:8081';
@@ -526,56 +590,70 @@ class _ConnectScreenState extends State<ConnectScreen> {
     );
   }
 
+  /// Показать мой QR — только PeerID с префиксом isotope:
   Future<void> _showMyQR() async {
     try {
-      final addrs = await LibP2PService.getMultiaddrs();
-      if (addrs.isEmpty) {
+      // Обновляем PeerID
+      if (_myPeerId.isEmpty) {
+        final status = await LibP2PService.getStatus();
+        _myPeerId = status['id'] as String? ?? '';
+      }
+
+      if (_myPeerId.isEmpty) {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Адрес ещё не готов, подождите')),
+            const SnackBar(content: Text('PeerID ещё не готов, подождите')),
           );
         }
         return;
       }
 
-      final multiaddr = addrs.firstWhere(
-        (a) => !a.contains('127.0.0.1'),
-        orElse: () => addrs.first,
-      );
+      final qrData = '$ISOTOPE_QR_PREFIX$_myPeerId';
 
       if (!mounted) return;
       showDialog(
         context: context,
         builder: (ctx) {
           return AlertDialog(
-            title: const Text('Мой адрес (QR)'),
+            title: const Text('Мой QR (контакт)'),
             content: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
                 Container(
-                  width: 200,
-                  height: 200,
+                  width: 220,
+                  height: 220,
                   color: Colors.white,
                   padding: const EdgeInsets.all(8),
                   child: CustomPaint(
                     painter: QrPainter(
-                      data: multiaddr,
+                      data: qrData,
                       version: QrVersions.auto,
-                      errorCorrectionLevel: QrErrorCorrectLevel.L,
+                      errorCorrectionLevel: QrErrorCorrectLevel.M,
                       emptyColor: Colors.white,
                     ),
                   ),
                 ),
                 const SizedBox(height: 12),
-                Text(multiaddr, style: const TextStyle(fontSize: 10), textAlign: TextAlign.center),
+                const Text(
+                  'Покажите этот QR другу',
+                  style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold),
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  _myPeerId,
+                  style: const TextStyle(fontSize: 10, fontFamily: 'monospace'),
+                  textAlign: TextAlign.center,
+                ),
               ],
             ),
             actions: [
               TextButton(
                 onPressed: () {
-                  Clipboard.setData(ClipboardData(text: multiaddr));
+                  Clipboard.setData(ClipboardData(text: qrData));
                   Navigator.pop(ctx);
-                  ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Multiaddr скопирован')));
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text('Код скопирован')),
+                  );
                 },
                 child: const Text('Копировать'),
               ),
@@ -594,19 +672,109 @@ class _ConnectScreenState extends State<ConnectScreen> {
     }
   }
 
+  /// Сканировать QR и подключиться по PeerID.
   Future<void> _scanQR() async {
     try {
       final result = await Navigator.push(
         context,
         MaterialPageRoute(builder: (_) => const QRScanScreen()),
       );
-      if (result != null && result is String && result.isNotEmpty) {
-        final clean = result.trim();
-        _multiaddrController.text = clean;
-        await _connectViaMultiaddr(clean);
+      if (result == null || result is! String || result.isEmpty) return;
+
+      var code = result.trim();
+
+      // Отрезаем префикс, если есть
+      if (code.startsWith(ISOTOPE_QR_PREFIX)) {
+        code = code.substring(ISOTOPE_QR_PREFIX.length);
       }
+
+      // Если в QR был multiaddr (старый формат) — извлекаем PeerID
+      if (code.contains('/p2p/')) {
+        code = code.split('/p2p/').last;
+      }
+
+      // Убираем возможные хвосты
+      code = code.trim();
+      // PeerID — строка без пробелов и слэшей
+      final peerIdMatch = RegExp(r'[A-Za-z0-9]+').firstMatch(code);
+      if (peerIdMatch == null) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Не удалось распознать PeerID')),
+          );
+        }
+        return;
+      }
+      final peerId = peerIdMatch.group(0)!;
+
+      if (peerId == _myPeerId) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Это ваш собственный код')),
+          );
+        }
+        return;
+      }
+
+      setState(() {
+        _connecting = true;
+        _status = 'Поиск контакта...';
+        _error = null;
+      });
+
+      // Ищем multiaddr через bootstrap-справочник
+      final findResult = await LibP2PService.findPeerByID(peerId);
+      if (findResult.containsKey('error')) {
+        setState(() {
+          _error = 'Не удалось найти: ${findResult['error']}';
+          _status = null;
+          _connecting = false;
+        });
+        return;
+      }
+
+      final multiaddr = findResult['multiaddr'] as String? ?? '';
+      if (multiaddr.isEmpty) {
+        setState(() {
+          _error = 'Адрес не найден';
+          _status = null;
+          _connecting = false;
+        });
+        return;
+      }
+
+      // Подключаемся
+      final connectResult = await LibP2PService.connectToPeer(multiaddr);
+      if (connectResult.containsKey('error')) {
+        setState(() {
+          _error = 'Ошибка подключения: ${connectResult['error']}';
+          _status = null;
+          _connecting = false;
+        });
+        return;
+      }
+
+      // Успех — добавим контакт в список
+      final shortId = peerId.length > 12 ? peerId.substring(0, 12) : peerId;
+      final node = NodeInfo(
+        peerID: peerId,
+        knownMultiaddrs: [multiaddr],
+        lastSeen: DateTime.now(),
+        status: NodeStatus.alive,
+      );
+      _addNode(node);
+
+      setState(() {
+        _status = 'Подключено к контакту $shortId';
+        _error = null;
+        _connecting = false;
+      });
     } catch (e) {
       LogService.log('QRScan: ERROR: $e');
+      setState(() {
+        _error = 'Ошибка: $e';
+        _connecting = false;
+      });
     }
   }
 
@@ -632,12 +800,12 @@ class _ConnectScreenState extends State<ConnectScreen> {
       context: context,
       builder: (ctx) {
         return AlertDialog(
-          title: const Text('Ввести multiaddr'),
+          title: const Text('Ввести PeerID или multiaddr'),
           content: TextField(
             controller: _multiaddrController,
             decoration: const InputDecoration(
-              hintText: '/ip4/.../tcp/9001/ws/p2p/Qm...',
-              labelText: 'Multiaddr контакта',
+              hintText: 'Qm... или /ip4/.../p2p/Qm...',
+              labelText: 'PeerID или multiaddr контакта',
             ),
             maxLines: 3,
             minLines: 1,
@@ -648,7 +816,13 @@ class _ConnectScreenState extends State<ConnectScreen> {
               onPressed: () {
                 final addr = _multiaddrController.text.trim();
                 Navigator.pop(ctx);
-                if (addr.isNotEmpty) _connectViaMultiaddr(addr);
+                if (addr.isNotEmpty) {
+                  if (addr.startsWith('/')) {
+                    _connectViaMultiaddr(addr);
+                  } else {
+                    _findAndConnectByPeerId(addr);
+                  }
+                }
               },
               child: const Text('Подключиться'),
             ),
@@ -656,6 +830,42 @@ class _ConnectScreenState extends State<ConnectScreen> {
         );
       },
     );
+  }
+
+  /// Универсальный поиск по PeerID (для ручного ввода).
+  Future<void> _findAndConnectByPeerId(String peerId) async {
+    setState(() {
+      _connecting = true;
+      _status = 'Поиск контакта...';
+      _error = null;
+    });
+    try {
+      final findResult = await LibP2PService.findPeerByID(peerId);
+      if (findResult.containsKey('error')) {
+        setState(() {
+          _error = 'Не удалось найти: ${findResult['error']}';
+          _status = null;
+          _connecting = false;
+        });
+        return;
+      }
+      final multiaddr = findResult['multiaddr'] as String? ?? '';
+      if (multiaddr.isEmpty) {
+        setState(() {
+          _error = 'Адрес не найден';
+          _status = null;
+          _connecting = false;
+        });
+        return;
+      }
+      await _connectViaMultiaddr(multiaddr);
+      setState(() => _connecting = false);
+    } catch (e) {
+      setState(() {
+        _error = 'Ошибка: $e';
+        _connecting = false;
+      });
+    }
   }
 
   void _showAddContactDialog() {
@@ -694,7 +904,7 @@ class _ConnectScreenState extends State<ConnectScreen> {
               ListTile(
                 leading: const Icon(Icons.input),
                 title: const Text('Ввести вручную'),
-                subtitle: const Text('Multiaddr контакта'),
+                subtitle: const Text('PeerID или multiaddr контакта'),
                 onTap: () {
                   Navigator.pop(ctx);
                   _showManualMultiaddrDialog();

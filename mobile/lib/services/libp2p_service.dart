@@ -14,8 +14,6 @@ class LibP2PService {
   static bool _dhtStarted = false;
 
   /// Безопасный парсинг JSON-ответа от Go.
-  /// Защищает от FormatException, если Go вернул невалидный JSON
-  /// (например, из-за \n внутри error-строки).
   static Map<String, dynamic> _safeDecode(String? response, {String fallback = '{"error":"empty_response"}'}) {
     final raw = response ?? fallback;
     try {
@@ -166,6 +164,30 @@ class LibP2PService {
     }
   }
 
+  /// Отправляет свой multiaddr на bootstrap (ANNOUNCE).
+  static Future<Map<String, dynamic>> announce(String multiaddr) async {
+    try {
+      final response = await _channel.invokeMethod<String>('announce', {
+        'multiaddr': multiaddr,
+      });
+      return _safeDecode(response);
+    } on PlatformException catch (e) {
+      return {'error': e.message ?? 'platform_error', 'operation': 'announce'};
+    }
+  }
+
+  /// Ищет multiaddr по PeerID через bootstrap-справочник.
+  static Future<Map<String, dynamic>> findPeerByID(String peerID) async {
+    try {
+      final response = await _channel.invokeMethod<String>('findPeerByID', {
+        'peerID': peerID,
+      });
+      return _safeDecode(response);
+    } on PlatformException catch (e) {
+      return {'error': e.message ?? 'platform_error', 'operation': 'find_peer_by_id'};
+    }
+  }
+
   /// Входит в DHT сеть
   static Future<Map<String, dynamic>> joinDHT(String bootstrapPeers) async {
     try {
@@ -182,7 +204,7 @@ class LibP2PService {
     }
   }
 
-  /// Ищет пира по PeerID через DHT
+  /// Ищет пира по PeerID через DHT (старый метод).
   static Future<Map<String, dynamic>> findPeer(String peerID) async {
     try {
       final response = await _channel.invokeMethod<String>('findPeer', {
@@ -254,7 +276,6 @@ class LibP2PService {
   }
 
   /// Запрашивает исключение из оптимизации батареи
-  /// Возвращает: "already_ignoring" | "requested" | "not_supported"
   static Future<String> requestIgnoreBatteryOptimizations() async {
     try {
       final response = await _channel.invokeMethod<String>('requestIgnoreBatteryOptimizations');

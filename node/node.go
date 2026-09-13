@@ -41,6 +41,19 @@ const STEGO_PREFIX = "[STEGO]"
 const REPLICA_PREFIX = "[REPLICA]"
 const RESTORE_PREFIX = "[RESTORE]"
 
+const ANNOUNCE_PREFIX = "[ANNOUNCE]"
+const FIND_PREFIX = "[FIND]"
+const FOUND_PREFIX = "[FOUND]"
+const NOT_FOUND_PREFIX = "[NOT_FOUND]"
+
+const ANNOUNCE_TTL = 5 * time.Minute
+
+// announcedPeer — запись о пире, который сам о себе рассказал.
+type announcedPeer struct {
+	Multiaddr string    `json:"multiaddr"`
+	LastSeen  time.Time `json:"lastSeen"`
+}
+
 // Config — конфигурация узла
 type Config struct {
 	EthHash           string
@@ -80,6 +93,11 @@ type Node struct {
 	deadPeers              map[string]bool
 	adaptive               *AdaptiveParams
 	channels               *ChannelStore
+
+	// ANNOUNCE — справочник (используется на VPS)
+	announcedPeers    map[string]announcedPeer
+	announcedMu       sync.Mutex
+	announceMultiaddr string // наш собственный multiaddr для периодического ANNOUNCE
 }
 
 // NewNode — создаёт новый узел
@@ -100,7 +118,8 @@ func NewNode(cfg Config) *Node {
 		configEnableMDNS:       cfg.EnableMDNS,
 		configListenIP:         listenIP,
 		configEnableRelayServer: cfg.EnableRelayServer,
-		memory: Memory{seen: make(map[string]bool)},
+		memory:                 Memory{seen: make(map[string]bool)},
+		announcedPeers:         make(map[string]announcedPeer),
 	}
 }
 
@@ -167,6 +186,163 @@ func (n *Node) HandlePeerFound(peerInfo peer.AddrInfo) {
 	}()
 }
 
+// ============================================================
+// ANNOUNCE — справочник пиров (VPS)
+// ============================================================
+
+// announcePeer — сохраняет multiaddr, который пир сам о себе сообщил.
+func (n *Node) announcePeer(peerID, multiaddr string) {
+	n.announcedMu.Lock()
+	defer n.announcedMu.Unlock()
+	if n.announcedPeers == nil {
+		n.announcedPeers = make(map[string]announcedPeer)
+	}
+	n.announcedPeers[peerID] = announcedPeer{
+		Multiaddr: multiaddr,
+		LastSeen:  time.Now(),
+	}
+	log.Printf("[ANNOUNCE] %s → %s", peerID, multiaddr)
+}
+
+// lookupPeer — ищет multiaddr по PeerID. Удаляет устаревшие (>TTL).
+func (n *Node) lookupPeer(peerID string) (string, bool) {
+	n.announcedMu.Lock()
+	defer n.announcedMu.Unlock()
+	p, ok := n.announcedPeers[peerID]
+	if !ok {
+		return "", false
+	}
+	if time.Since(p.LastSeen) > ANNOUNCE_TTL {
+		delete(n.announcedPeers, peerID)
+		return "", false
+	}
+	return p.Multiaddr, true
+}
+
+// cleanupAnnounced — удаляет записи старше TTL.
+func (n *Node) cleanupAnnounced() {
+	n.announcedMu.Lock()
+	defer n.announcedMu.Unlock()
+	now := time.Now()
+	for id, p := range n.announcedPeers {
+		if now.Sub(p.LastSeen) > ANNOUNCE_TTL {
+			delete(n.announcedPeers, id)
+			log.Printf("[ANNOUNCE] TTL expired: %s", id)
+		}
+	}
+}
+
+// SendAnnounce — отправляет наш multiaddr на bootstrap (и всем известным пирам).
+func (n *Node) SendAnnounce(multiaddr string) {
+	if n.host == nil || multiaddr == "" {
+		return
+	}
+
+	n.announceMultiaddr = multiaddr
+
+	// Отправляем на bootstrap-пиры
+	bootstrapPeers := n.loadBootstrapPeers()
+	sent := 0
+	for _, addr := range bootstrapPeers {
+		pi, err := peer.AddrInfoFromString(addr)
+		if err != nil {
+			continue
+		}
+		go func(pid peer.ID) {
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			s, err := n.host.NewStream(ctx, pid, protocolID)
+			if err != nil {
+				log.Printf("[ANNOUNCE] send failed to %s: %v", pid, err)
+				return
+			}
+			defer s.Close()
+			fmt.Fprintf(s, "%s%s\n", ANNOUNCE_PREFIX, multiaddr)
+			log.Printf("[ANNOUNCE] sent to %s: %s", pid, multiaddr)
+		}(pi.ID)
+		sent++
+	}
+
+	// Отправляем всем текущим пирам (чтобы они тоже знали)
+	for _, p := range n.host.Network().Peers() {
+		// проверяем, не bootstrap ли (уже отправили)
+		isBootstrap := false
+		for _, addr := range bootstrapPeers {
+			if pi, err := peer.AddrInfoFromString(addr); err == nil && pi.ID == p {
+				isBootstrap = true
+				break
+			}
+		}
+		if isBootstrap {
+			continue
+		}
+		go func(pid peer.ID) {
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			s, err := n.host.NewStream(ctx, pid, protocolID)
+			if err != nil {
+				return
+			}
+			defer s.Close()
+			fmt.Fprintf(s, "%s%s\n", ANNOUNCE_PREFIX, multiaddr)
+		}(p)
+		sent++
+	}
+	if sent == 0 {
+		log.Printf("[ANNOUNCE] no peers to send to (multiaddr=%s)", multiaddr)
+	}
+}
+
+// FindPeerByID — ищет multiaddr по PeerID через bootstrap-справочник.
+// Возвращает multiaddr или пустую строку, если не найден.
+func (n *Node) FindPeerByID(targetID string) (string, error) {
+	if n.host == nil {
+		return "", fmt.Errorf("node not started")
+	}
+
+	// 1. Локальный справочник (если мы — VPS)
+	if addr, ok := n.lookupPeer(targetID); ok {
+		log.Printf("[FIND] local hit: %s → %s", targetID, addr)
+		return addr, nil
+	}
+
+	// 2. Запрос к bootstrap
+	bootstrapPeers := n.loadBootstrapPeers()
+	for _, addr := range bootstrapPeers {
+		pi, err := peer.AddrInfoFromString(addr)
+		if err != nil {
+			continue
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 7*time.Second)
+		s, err := n.host.NewStream(ctx, pi.ID, protocolID)
+		if err != nil {
+			cancel()
+			log.Printf("[FIND] cannot open stream to %s: %v", pi.ID, err)
+			continue
+		}
+		fmt.Fprintf(s, "%s%s\n", FIND_PREFIX, targetID)
+		buf := make([]byte, 4096)
+		s.SetReadDeadline(time.Now().Add(5 * time.Second))
+		nr, _ := s.Read(buf)
+		s.Close()
+		cancel()
+
+		response := strings.TrimSpace(string(buf[:nr]))
+		if strings.HasPrefix(response, FOUND_PREFIX) {
+			result := strings.TrimPrefix(response, FOUND_PREFIX)
+			log.Printf("[FIND] %s → %s (via %s)", targetID, result, pi.ID)
+			return result, nil
+		}
+		if strings.HasPrefix(response, NOT_FOUND_PREFIX) {
+			log.Printf("[FIND] %s not found on %s", targetID, pi.ID)
+		}
+	}
+
+	return "", fmt.Errorf("not found")
+}
+
+// ============================================================
+
 func (n *Node) handleStream(stream network.Stream) {
 	defer stream.Close()
 	buf := make([]byte, 2*1024*1024)
@@ -175,6 +351,27 @@ func (n *Node) handleStream(stream network.Stream) {
 		return
 	}
 	msg := strings.TrimSpace(string(buf[:nr]))
+
+	// ANNOUNCE — пир рассказывает о себе
+	if strings.HasPrefix(msg, ANNOUNCE_PREFIX) {
+		multiaddr := strings.TrimPrefix(msg, ANNOUNCE_PREFIX)
+		remoteID := stream.Conn().RemotePeer().String()
+		// Доверяем PeerID из соединения, а не из multiaddr (защита от подмены)
+		n.announcePeer(remoteID, multiaddr)
+		return
+	}
+
+	// FIND — пир спрашивает multiaddr другого
+	if strings.HasPrefix(msg, FIND_PREFIX) {
+		targetID := strings.TrimPrefix(msg, FIND_PREFIX)
+		targetID = strings.TrimSpace(targetID)
+		if addr, ok := n.lookupPeer(targetID); ok {
+			stream.Write([]byte(FOUND_PREFIX + addr + "\n"))
+		} else {
+			stream.Write([]byte(NOT_FOUND_PREFIX + "\n"))
+		}
+		return
+	}
 
 	if strings.HasPrefix(msg, REPLICA_PREFIX) {
 		payload := strings.TrimPrefix(msg, REPLICA_PREFIX)
@@ -385,6 +582,28 @@ func (n *Node) reconnectLoop() {
 				}(peerInfo.ID)
 				break
 			}
+		}
+	}()
+}
+
+// announceLoop — периодически отправляет ANNOUNCE, если у нас есть multiaddr.
+func (n *Node) announceLoop() {
+	go func() {
+		for {
+			time.Sleep(4 * time.Minute)
+			if n.announceMultiaddr != "" {
+				n.SendAnnounce(n.announceMultiaddr)
+			}
+		}
+	}()
+}
+
+// cleanupLoop — периодически чистит просроченные ANNOUNCE.
+func (n *Node) cleanupLoop() {
+	go func() {
+		for {
+			time.Sleep(1 * time.Minute)
+			n.cleanupAnnounced()
 		}
 	}()
 }
@@ -913,6 +1132,8 @@ func (n *Node) InitP2P() error {
 
 	n.pingPeers()
 	n.reconnectLoop()
+	n.announceLoop()
+	n.cleanupLoop()
 	n.StartAdaptation()
 
 	go func() {
@@ -1005,8 +1226,7 @@ func (n *Node) GetStatus() string {
 	)
 }
 
-// handlePeersFull — диагностика: возвращает всех пиров из Peerstore
-// с их multiaddr и флагом подключённости.
+// handlePeersFull — диагностика: пиры из Peerstore + announced + connected.
 func (n *Node) handlePeersFull(w http.ResponseWriter, r *http.Request) {
 	if n.host == nil {
 		http.Error(w, `{"error":"host not started"}`, http.StatusServiceUnavailable)
@@ -1014,9 +1234,11 @@ func (n *Node) handlePeersFull(w http.ResponseWriter, r *http.Request) {
 	}
 
 	type peerInfoJSON struct {
-		PeerID     string   `json:"peerID"`
-		Multiaddrs []string `json:"multiaddrs"`
-		Connected  bool     `json:"connected"`
+		PeerID      string   `json:"peerID"`
+		Multiaddrs  []string `json:"multiaddrs"`
+		Connected   bool     `json:"connected"`
+		Announced   string   `json:"announced,omitempty"`
+		AnnouncedAt string   `json:"announcedAt,omitempty"`
 	}
 
 	connected := make(map[string]bool)
@@ -1024,17 +1246,48 @@ func (n *Node) handlePeersFull(w http.ResponseWriter, r *http.Request) {
 		connected[p.String()] = true
 	}
 
+	// Собираем announced в отдельный map
+	announced := make(map[string]announcedPeer)
+	n.announcedMu.Lock()
+	for k, v := range n.announcedPeers {
+		announced[k] = v
+	}
+	n.announcedMu.Unlock()
+
+	seen := make(map[string]bool)
 	var result []peerInfoJSON
+
+	// 1. Все из Peerstore
 	for _, p := range n.host.Peerstore().Peers() {
+		pid := p.String()
+		seen[pid] = true
 		info := n.host.Peerstore().PeerInfo(p)
 		var addrs []string
 		for _, a := range info.Addrs {
 			addrs = append(addrs, a.String())
 		}
-		result = append(result, peerInfoJSON{
-			PeerID:     p.String(),
+		entry := peerInfoJSON{
+			PeerID:     pid,
 			Multiaddrs: addrs,
-			Connected:  connected[p.String()],
+			Connected:  connected[pid],
+		}
+		if ap, ok := announced[pid]; ok {
+			entry.Announced = ap.Multiaddr
+			entry.AnnouncedAt = ap.LastSeen.Format(time.RFC3339)
+		}
+		result = append(result, entry)
+	}
+
+	// 2. Все announced, которых нет в Peerstore
+	for pid, ap := range announced {
+		if seen[pid] {
+			continue
+		}
+		result = append(result, peerInfoJSON{
+			PeerID:      pid,
+			Connected:   connected[pid],
+			Announced:   ap.Multiaddr,
+			AnnouncedAt: ap.LastSeen.Format(time.RFC3339),
 		})
 	}
 

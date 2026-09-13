@@ -53,7 +53,6 @@ func addLog(format string, args ...interface{}) {
 }
 
 // errorJSON — безопасная сериализация ошибки в JSON.
-// json.Marshal экранирует \n, \", \\ и прочие управляющие символы.
 func errorJSON(msg string) string {
 	data, _ := json.Marshal(map[string]string{
 		"status": "error",
@@ -265,6 +264,44 @@ func ConnectToPeer(multiaddr string) string {
 	return `{"status":"connected"}`
 }
 
+// Announce — отправляет наш multiaddr на bootstrap (справочник).
+// Вызывается из Dart, когда Dart знает свой реальный IP.
+func Announce(multiaddr string) string {
+	nodeMu.Lock()
+	defer nodeMu.Unlock()
+
+	if node == nil {
+		return errorJSON("node not started")
+	}
+
+	node.SendAnnounce(multiaddr)
+	addLog("[ANNOUNCE] sent: %s", multiaddr)
+
+	return `{"status":"announced"}`
+}
+
+// FindPeerByID — ищет multiaddr по PeerID через bootstrap-справочник.
+func FindPeerByID(peerID string) string {
+	nodeMu.Lock()
+	defer nodeMu.Unlock()
+
+	if node == nil {
+		return errorJSON("node not started")
+	}
+
+	addr, err := node.FindPeerByID(peerID)
+	if err != nil {
+		return errorJSON(err.Error())
+	}
+
+	result := map[string]string{
+		"status":    "found",
+		"multiaddr": addr,
+	}
+	data, _ := json.Marshal(result)
+	return string(data)
+}
+
 // ============================================================
 // DHT ОБЁРТКИ
 // ============================================================
@@ -304,7 +341,7 @@ func JoinDHT(bootstrapPeers string) string {
 	return `{"status":"joined"}`
 }
 
-// FindPeer — поиск пира по PeerID (сначала локально, потом DHT)
+// FindPeer — поиск пира по PeerID через DHT (старый метод).
 func FindPeer(peerID string) string {
 	nodeMu.Lock()
 	defer nodeMu.Unlock()
