@@ -44,12 +44,13 @@ class _ConnectScreenState extends State<ConnectScreen> {
   String? _status;
   String? _localIp;
   bool _serverStarted = false;
-  String _localPeerId = '';
   String _localMultiaddr = '';
   String _bootstrapPeers = DEFAULT_BOOTSTRAP_ADDR;
   StreamSubscription? _nodeSub;
   StreamSubscription? _ipSub;
   VoidCallback? _chatListener;
+  Timer? _coreLogsTimer;
+  final Set<String> _coreLogsSeen = {};
 
   @override
   void initState() {
@@ -71,6 +72,27 @@ class _ConnectScreenState extends State<ConnectScreen> {
     _listenToP2P();
     _startServer();
     _startNetworkMonitoring();
+
+    // Периодически подтягиваем Go-логи в единый журнал
+    _coreLogsTimer = Timer.periodic(const Duration(seconds: 5), (_) {
+      _pullCoreLogs();
+    });
+    // Первый сбор через 3 секунды (после старта ядра)
+    Future.delayed(const Duration(seconds: 3), () => _pullCoreLogs());
+  }
+
+  /// Подтягивает логи Go-ядра в единый журнал LogService.
+  /// Дедуплицирует по строке, чтобы не засорять.
+  Future<void> _pullCoreLogs() async {
+    try {
+      final coreLogs = await LibP2PService.getCoreLogs();
+      for (final line in coreLogs) {
+        if (line.isEmpty) continue;
+        if (_coreLogsSeen.contains(line)) continue;
+        _coreLogsSeen.add(line);
+        LogService.log('CORE: $line');
+      }
+    } catch (_) {}
   }
 
   void _syncDiscoveredNodesFromP2P() {
@@ -84,9 +106,9 @@ class _ConnectScreenState extends State<ConnectScreen> {
         added++;
       }
       if (added > 0 && mounted) {
-        LogService.log('ConnectScreen: синхронизировано узлов: $added');
+        LogService.log('ConnectScreen: синхронизировано контактов: $added');
         setState(() {
-          _status = 'Найдено узлов: ${_discoveredNodes.length}';
+          _status = 'Контактов: ${_discoveredNodes.length}';
         });
       }
     } catch (e) {
@@ -171,7 +193,7 @@ class _ConnectScreenState extends State<ConnectScreen> {
   Future<void> _findPeersViaNetwork() async {
     setState(() {
       _findingNetwork = true;
-      _status = 'Поиск узлов через сеть...';
+      _status = 'Поиск контактов через сеть...';
       _error = null;
     });
 
@@ -210,7 +232,7 @@ class _ConnectScreenState extends State<ConnectScreen> {
       }
 
       setState(() {
-        _status = 'Найдено узлов: ${_discoveredNodes.length}';
+        _status = 'Контактов: ${_discoveredNodes.length}';
         _error = null;
       });
     } catch (e) {
@@ -338,7 +360,7 @@ class _ConnectScreenState extends State<ConnectScreen> {
         _connecting = false;
         _scanning = false;
         _error = null;
-        _status = 'Найдено узлов: ${_discoveredNodes.length}';
+        _status = 'Контактов: ${_discoveredNodes.length}';
       });
     }
   }
@@ -353,30 +375,27 @@ class _ConnectScreenState extends State<ConnectScreen> {
     }
   }
 
-  void _scanNetwork() {
+  void _scanNearby() {
     final p2p = context.read<P2PService>();
     setState(() {
       _scanning = true;
       _discoveredNodes.clear();
-      _status = 'Поиск узлов...';
+      _status = 'Поиск контактов рядом...';
     });
 
-    // Только перезапуск NSD — без clearAllNodes().
-    // История узлов сохраняется, libp2p-узлы вернутся через _syncDiscoveredNodesFromP2P.
     p2p.stopNsdDiscovery();
     p2p.startNsdDiscovery();
 
     final shortId = _localIp?.replaceAll('.', '') ?? 'node';
     p2p.announceNative('ISOTOPE-$shortId', _localIp ?? '');
 
-    // Возвращаем известные узлы из P2PService (libp2p + NodeStore)
     _syncDiscoveredNodesFromP2P();
 
     Future.delayed(const Duration(seconds: 3), () {
       if (mounted) {
         setState(() {
           _scanning = false;
-          _status = _discoveredNodes.isEmpty ? 'Узлы не найдены' : 'Найдено: ${_discoveredNodes.length}';
+          _status = _discoveredNodes.isEmpty ? 'Нет контактов' : 'Контактов: ${_discoveredNodes.length}';
         });
       }
     });
@@ -440,7 +459,7 @@ class _ConnectScreenState extends State<ConnectScreen> {
           children: [
             Padding(
               padding: const EdgeInsets.all(16),
-              child: Text('Адреса узла', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
+              child: Text('Адреса контакта', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
             ),
             ...node.addresses.map((addr) {
               final isCurrent = addr == node.currentAddress;
@@ -498,48 +517,72 @@ class _ConnectScreenState extends State<ConnectScreen> {
     );
   }
 
-  void _showMyQR() {
-    final multiaddr = '/ip4/${_localIp ?? '0.0.0.0'}/tcp/9001/ws/p2p/$_localPeerId';
-    showDialog(
-      context: context,
-      builder: (ctx) {
-        return AlertDialog(
-          title: const Text('Мой адрес (QR)'),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Container(
-                width: 200,
-                height: 200,
-                color: Colors.white,
-                padding: const EdgeInsets.all(8),
-                child: CustomPaint(
-                  painter: QrPainter(
-                    data: multiaddr,
-                    version: QrVersions.auto,
-                    errorCorrectionLevel: QrErrorCorrectLevel.L,
-                    emptyColor: Colors.white,
+  Future<void> _showMyQR() async {
+    try {
+      final addrs = await LibP2PService.getMultiaddrs();
+      if (addrs.isEmpty) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Адрес ещё не готов, подождите')),
+          );
+        }
+        return;
+      }
+
+      final multiaddr = addrs.firstWhere(
+        (a) => !a.contains('127.0.0.1'),
+        orElse: () => addrs.first,
+      );
+
+      if (!mounted) return;
+      showDialog(
+        context: context,
+        builder: (ctx) {
+          return AlertDialog(
+            title: const Text('Мой адрес (QR)'),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Container(
+                  width: 200,
+                  height: 200,
+                  color: Colors.white,
+                  padding: const EdgeInsets.all(8),
+                  child: CustomPaint(
+                    painter: QrPainter(
+                      data: multiaddr,
+                      version: QrVersions.auto,
+                      errorCorrectionLevel: QrErrorCorrectLevel.L,
+                      emptyColor: Colors.white,
+                    ),
                   ),
                 ),
-              ),
-              const SizedBox(height: 12),
-              Text(multiaddr, style: const TextStyle(fontSize: 10), textAlign: TextAlign.center),
-            ],
-          ),
-          actions: [
-            TextButton(
-              onPressed: () {
-                Clipboard.setData(ClipboardData(text: multiaddr));
-                Navigator.pop(ctx);
-                ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Multiaddr скопирован')));
-              },
-              child: const Text('Копировать'),
+                const SizedBox(height: 12),
+                Text(multiaddr, style: const TextStyle(fontSize: 10), textAlign: TextAlign.center),
+              ],
             ),
-            TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Закрыть')),
-          ],
+            actions: [
+              TextButton(
+                onPressed: () {
+                  Clipboard.setData(ClipboardData(text: multiaddr));
+                  Navigator.pop(ctx);
+                  ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Multiaddr скопирован')));
+                },
+                child: const Text('Копировать'),
+              ),
+              TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Закрыть')),
+            ],
+          );
+        },
+      );
+    } catch (e) {
+      LogService.log('QR show error: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Ошибка: $e')),
         );
-      },
-    );
+      }
+    }
   }
 
   Future<void> _scanQR() async {
@@ -567,7 +610,7 @@ class _ConnectScreenState extends State<ConnectScreen> {
         return;
       }
       setState(() {
-        _status = 'Подключено к узлу';
+        _status = 'Подключено к контакту';
         _error = null;
       });
     } catch (e) {
@@ -585,7 +628,7 @@ class _ConnectScreenState extends State<ConnectScreen> {
             controller: _multiaddrController,
             decoration: const InputDecoration(
               hintText: '/ip4/.../tcp/9001/ws/p2p/Qm...',
-              labelText: 'Multiaddr узла',
+              labelText: 'Multiaddr контакта',
             ),
             maxLines: 3,
             minLines: 1,
@@ -606,35 +649,83 @@ class _ConnectScreenState extends State<ConnectScreen> {
     );
   }
 
+  void _showAddContactDialog() {
+    showModalBottomSheet(
+      context: context,
+      builder: (ctx) {
+        return SafeArea(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Padding(
+                padding: EdgeInsets.all(16),
+                child: Text(
+                  'Добавить контакт',
+                  style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18),
+                ),
+              ),
+              ListTile(
+                leading: const Icon(Icons.qr_code_scanner),
+                title: const Text('Сканировать QR'),
+                subtitle: const Text('Наведите камеру или выберите изображение из файла'),
+                onTap: () {
+                  Navigator.pop(ctx);
+                  _scanQR();
+                },
+              ),
+              ListTile(
+                leading: const Icon(Icons.wifi_find),
+                title: const Text('Найти рядом'),
+                subtitle: const Text('Поиск контактов в той же сети (NSD)'),
+                onTap: () {
+                  Navigator.pop(ctx);
+                  _scanNearby();
+                },
+              ),
+              ListTile(
+                leading: const Icon(Icons.input),
+                title: const Text('Ввести вручную'),
+                subtitle: const Text('Multiaddr контакта'),
+                onTap: () {
+                  Navigator.pop(ctx);
+                  _showManualMultiaddrDialog();
+                },
+              ),
+              const SizedBox(height: 8),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
   void _openLogs() {
     Navigator.push(context, MaterialPageRoute(builder: (_) => const LogScreen()));
   }
 
-  /// Отображаемое имя для узла
   String _displayName(NodeInfo node, ChatProvider chatProvider) {
     try {
       if (node.peerID.isNotEmpty) {
         final short = node.peerID.length > 12 ? node.peerID.substring(0, 12) : node.peerID;
-        return 'Узел $short';
+        return 'Контакт $short';
       }
       return node.currentAddress;
     } catch (_) {
-      return 'Узел';
+      return 'Контакт';
     }
   }
 
-  /// Последнее сообщение от пира (из кэша ChatProvider)
   String _lastMessagePreview(NodeInfo node, ChatProvider chatProvider) {
     try {
       final peerID = node.peerID;
-      if (peerID.isEmpty) return 'Узел ISOTOPE';
+      if (peerID.isEmpty) return 'Контакт ISOTOPE';
       final last = chatProvider.getLastMessageForPeer(peerID);
       if (last == null) {
         switch (node.status) {
           case NodeStatus.unknown:
             return 'Не проверен';
           case NodeStatus.alive:
-            return 'Узел ISOTOPE';
+            return 'Контакт ISOTOPE';
           case NodeStatus.dead:
             return 'Недоступен';
         }
@@ -646,7 +737,6 @@ class _ConnectScreenState extends State<ConnectScreen> {
     }
   }
 
-  /// Время последнего сообщения от пира (ЧЧ:ММ)
   String _lastMessageTime(NodeInfo node, ChatProvider chatProvider) {
     try {
       final peerID = node.peerID;
@@ -661,7 +751,6 @@ class _ConnectScreenState extends State<ConnectScreen> {
     }
   }
 
-  /// Иконка для узла в зависимости от статуса
   IconData _getNodeIcon(NodeStatus status) {
     switch (status) {
       case NodeStatus.unknown:
@@ -673,7 +762,6 @@ class _ConnectScreenState extends State<ConnectScreen> {
     }
   }
 
-  /// Цвет иконки для узла
   Color? _getNodeIconColor(NodeStatus status) {
     switch (status) {
       case NodeStatus.unknown:
@@ -685,7 +773,6 @@ class _ConnectScreenState extends State<ConnectScreen> {
     }
   }
 
-  /// Цвет текста имени узла
   Color? _getNodeTextColor(NodeStatus status) {
     switch (status) {
       case NodeStatus.unknown:
@@ -705,6 +792,7 @@ class _ConnectScreenState extends State<ConnectScreen> {
     }
     _nodeSub?.cancel();
     _ipSub?.cancel();
+    _coreLogsTimer?.cancel();
     _networkService.dispose();
     super.dispose();
   }
@@ -713,21 +801,27 @@ class _ConnectScreenState extends State<ConnectScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('ISOTOPE — Подключение'),
+        title: const Text('ISOTOPE'),
         actions: [
-          IconButton(icon: const Icon(Icons.qr_code), onPressed: _showMyQR, tooltip: 'Показать мой QR'),
-          IconButton(icon: const Icon(Icons.qr_code_scanner), onPressed: _scanQR, tooltip: 'Сканировать QR'),
-          IconButton(icon: const Icon(Icons.input), onPressed: _showManualMultiaddrDialog, tooltip: 'Ввести multiaddr'),
-          IconButton(icon: const Icon(Icons.settings), onPressed: _showBootstrapDialog, tooltip: 'Bootstrap-адрес'),
-          IconButton(icon: const Icon(Icons.article_outlined), onPressed: _openLogs, tooltip: 'Журнал'),
           IconButton(
-            icon: _findingNetwork ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2)) : const Icon(Icons.public),
-            onPressed: (_findingNetwork || _connecting) ? null : _findPeersViaNetwork,
-            tooltip: 'Найти через сеть',
+            icon: const Icon(Icons.qr_code),
+            onPressed: _showMyQR,
+            tooltip: 'Показать мой QR',
           ),
           IconButton(
-            icon: _scanning ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2)) : const Icon(Icons.refresh),
-            onPressed: (_scanning || _connecting) ? null : _scanNetwork,
+            icon: const Icon(Icons.person_add),
+            onPressed: _showAddContactDialog,
+            tooltip: 'Добавить контакт',
+          ),
+          IconButton(
+            icon: const Icon(Icons.settings),
+            onPressed: _showBootstrapDialog,
+            tooltip: 'Bootstrap-адрес',
+          ),
+          IconButton(
+            icon: const Icon(Icons.article_outlined),
+            onPressed: _openLogs,
+            tooltip: 'Журнал',
           ),
         ],
       ),
@@ -767,12 +861,38 @@ class _ConnectScreenState extends State<ConnectScreen> {
                 child: Text(_error!, style: const TextStyle(color: Colors.orange)),
               ),
             const SizedBox(height: 16),
-            const Text('Найденные узлы:', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+            const Text('Контакты:', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
             const SizedBox(height: 8),
             Expanded(
               flex: 2,
               child: Consumer<ChatProvider>(
                 builder: (_, chatProvider, __) {
+                  if (_discoveredNodes.isEmpty) {
+                    return Center(
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 24),
+                        child: Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Icon(Icons.people_outline, size: 64, color: Colors.grey.shade400),
+                            const SizedBox(height: 16),
+                            const Text(
+                              'Нет контактов',
+                              style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                            ),
+                            const SizedBox(height: 8),
+                            Text(
+                              'Нажмите «Добавить контакт» и покажите QR-код, '
+                              'отправьте ссылку или найдите рядом.',
+                              style: TextStyle(fontSize: 13, color: Colors.grey.shade700),
+                              textAlign: TextAlign.center,
+                            ),
+                          ],
+                        ),
+                      ),
+                    );
+                  }
+
                   return ListView.builder(
                     itemCount: _discoveredNodes.length,
                     itemBuilder: (context, index) {
