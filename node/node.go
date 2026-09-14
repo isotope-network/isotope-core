@@ -382,6 +382,7 @@ func (n *Node) handleStream(stream network.Stream) {
 			}
 			replicaMsg.ExpiresAt = time.Time{}
 			replicaMsg.ReplicatedAt = time.Now()
+			replicaMsg.IsOwn = false
 			if n.memory.Add(replicaMsg) {
 				if n.messageHook != nil {
 					data, _ := json.Marshal(replicaMsg)
@@ -495,6 +496,7 @@ func (n *Node) handleReplicaData(data string) {
 				}
 				replicaMsg.ExpiresAt = time.Time{}
 				replicaMsg.ReplicatedAt = time.Now()
+				replicaMsg.IsOwn = false
 				if n.memory.Add(replicaMsg) {
 					if n.messageHook != nil {
 						data, _ := json.Marshal(replicaMsg)
@@ -681,6 +683,7 @@ func (n *Node) replicateMessage(msg Message) {
 	}
 	msg.ReplicatedFrom = msg.Sender
 	msg.ExpiresAt = time.Time{}
+        msg.IsOwn = false
 	data, err := json.Marshal(msg)
 	if err != nil {
 		return
