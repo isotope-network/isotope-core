@@ -873,16 +873,25 @@ func (n *Node) replicateMessage(msg Message) {
 		return
 	}
 	peers := n.host.Network().Peers()
+	log.Printf("[REPLICA] msg id=%s sender=%s: %d peers in Network().Peers()",
+		msg.ID, msg.Sender, len(peers))
+
 	var alive []peer.ID
 	for _, p := range peers {
-		if p.String() == msg.Sender {
+		dead := n.isPeerDead(p.String())
+		isSender := p.String() == msg.Sender
+		log.Printf("[REPLICA]   peer=%s dead=%v isSender=%v", p.String(), dead, isSender)
+		if isSender {
 			continue
 		}
-		if !n.isPeerDead(p.String()) {
+		if !dead {
 			alive = append(alive, p)
 		}
 	}
+	log.Printf("[REPLICA] alive=%d", len(alive))
+
 	if len(alive) == 0 {
+		log.Printf("[REPLICA] SKIP: no alive peers")
 		return
 	}
 	replicaCount := 2
@@ -895,10 +904,12 @@ func (n *Node) replicateMessage(msg Message) {
 			ctx := context.Background()
 			s, err := n.host.NewStream(ctx, peerID, protocolID)
 			if err != nil {
+				log.Printf("[REPLICA] NewStream to %s failed: %v", peerID, err)
 				return
 			}
 			defer s.Close()
 			fmt.Fprintf(s, "%s%s\n", REPLICA_PREFIX, string(data))
+			log.Printf("[REPLICA] sent to %s", peerID)
 		}(alive[i])
 	}
 }
