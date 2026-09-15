@@ -199,6 +199,8 @@ func (n *Node) HandlePeerFound(peerInfo peer.AddrInfo) {
 
 // ReserveRelaySlot — резервирует слот на relay-сервере.
 // Возвращает ошибку, если не удалось.
+// ReserveRelaySlot — резервирует слот на relay-сервере.
+// Возвращает ошибку, если не удалось.
 func (n *Node) ReserveRelaySlot(ctx context.Context, relayAddrInfo peer.AddrInfo) error {
 	if n.host == nil {
 		return fmt.Errorf("node not started")
@@ -214,22 +216,9 @@ func (n *Node) ReserveRelaySlot(ctx context.Context, relayAddrInfo peer.AddrInfo
 	n.relayPeerInfo = relayAddrInfo
 	n.relayMu.Unlock()
 
-	myID := n.host.ID().String()
-	var addrs []string
-	for _, ma := range resv.Addrs {
-		// Addrs обычно вида /ip4/<relay>/tcp/<port>/ws/p2p/<relayID>/p2p-circuit
-		// Нам нужен полный адрес с нашим peer ID в конце.
-		s := ma.String()
-		if !strings.Contains(s, "/p2p-circuit") {
-			continue
-		}
-		// Добавляем /p2p/<myID> в конец
-		addrs = append(addrs, s+"/p2p/"+myID)
-	}
-	log.Printf("[RELAY] reserved slot, expires=%s, addrs=%v", resv.Expiration, addrs)
+	log.Printf("[RELAY] reserved slot, expires=%s", resv.Expiration)
 	return nil
 }
-
 // relayLoop — периодически обновляет резервацию (libp2p сам обновляет, но на всякий случай).
 func (n *Node) relayLoop() {
 	go func() {
@@ -258,28 +247,38 @@ func (n *Node) relayLoop() {
 }
 
 // GetRelayAddrs — возвращает список relay-адресов для анонса (с нашим peer ID в конце).
+// GetRelayAddrs — возвращает список relay-адресов для анонса.
+// Формат: <bootstrap-addr>/p2p-circuit/p2p/<myID>
+// Например: /ip4/186.246.31.176/tcp/9001/ws/p2p/QmR8u5YF.../p2p-circuit/p2p/QmX6wR86...
 func (n *Node) GetRelayAddrs() []string {
 	n.relayMu.Lock()
 	defer n.relayMu.Unlock()
 	if n.relayReservation == nil {
 		return nil
 	}
+	if n.relayPeerInfo.ID == "" {
+		return nil
+	}
 	myID := n.host.ID().String()
+
 	var result []string
-	for _, ma := range n.relayReservation.Addrs {
-		s := ma.String()
-		if !strings.Contains(s, "/p2p-circuit") {
+	// Используем адрес relay-сервера из bootstrap как основу.
+	// Формат bootstrap: /ip4/186.246.31.176/tcp/9001/ws/p2p/QmR8u5YF...
+	// Нам нужно: тот же + /p2p-circuit/p2p/<myID>
+	for _, addr := range n.loadBootstrapPeers() {
+		pi, err := peer.AddrInfoFromString(addr)
+		if err != nil {
 			continue
 		}
-		if strings.HasSuffix(s, "/p2p/"+myID) {
-			result = append(result, s)
-		} else {
-			result = append(result, s+"/p2p/"+myID)
+		if pi.ID != n.relayPeerInfo.ID {
+			continue
 		}
+		full := addr + "/p2p-circuit/p2p/" + myID
+		result = append(result, full)
+		log.Printf("[RELAY] built relay addr: %s", full)
 	}
 	return result
 }
-
 // ============================================================
 // ANNOUNCE — справочник пиров (VPS)
 // ============================================================
