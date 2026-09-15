@@ -7,10 +7,7 @@ class LibP2PService {
   static const MethodChannel _channel = MethodChannel('isotope/libp2p');
   static const EventChannel _messageChannel = EventChannel('isotope/messages');
 
-  /// Глобальный флаг — запущен ли узел
   static bool _started = false;
-
-  /// Глобальный флаг — запущен ли DHT
   static bool _dhtStarted = false;
 
   /// Безопасный парсинг JSON-ответа от Go.
@@ -27,13 +24,11 @@ class LibP2PService {
     }
   }
 
-  /// Возвращает путь к файлу состояния (через нативный filesDir)
   static Future<String> _getStateFilePath() async {
     final filesDir = await _channel.invokeMethod<String>('getFilesDir');
     return '$filesDir/isotope_state.json';
   }
 
-  /// Получает логи из ядра
   static Future<List<String>> getCoreLogs() async {
     try {
       final response = await _channel.invokeMethod<String>('getLogs');
@@ -44,12 +39,10 @@ class LibP2PService {
     }
   }
 
-  /// Поток новых сообщений из ядра
   static Stream<String> getMessageStream() {
     return _messageChannel.receiveBroadcastStream().map((event) => event as String);
   }
 
-  /// Запускает узел
   static Future<Map<String, dynamic>> start({
     required String ethHash,
     String bootstrapPeers = '',
@@ -75,7 +68,6 @@ class LibP2PService {
     }
   }
 
-  /// Отправляет сообщение
   static Future<Map<String, dynamic>> send({
     required String text,
     int ttl = 0,
@@ -91,7 +83,6 @@ class LibP2PService {
     }
   }
 
-  /// Получает все сообщения
   static Future<List<dynamic>> getMessages() async {
     try {
       final response = await _channel.invokeMethod<String>('getMessages');
@@ -107,7 +98,6 @@ class LibP2PService {
     }
   }
 
-  /// Получает список пиров
   static Future<List<dynamic>> getPeers() async {
     try {
       final response = await _channel.invokeMethod<String>('getPeers');
@@ -123,7 +113,6 @@ class LibP2PService {
     }
   }
 
-  /// Получает статус узла
   static Future<Map<String, dynamic>> getStatus() async {
     try {
       final response = await _channel.invokeMethod<String>('getStatus');
@@ -133,7 +122,6 @@ class LibP2PService {
     }
   }
 
-  /// Получает свои multiaddr
   static Future<List<String>> getMultiaddrs() async {
     try {
       final response = await _channel.invokeMethod<String>('getMultiaddrs');
@@ -152,7 +140,6 @@ class LibP2PService {
     }
   }
 
-  /// Подключается к пиру
   static Future<Map<String, dynamic>> connectToPeer(String multiaddr) async {
     try {
       final response = await _channel.invokeMethod<String>('connectToPeer', {
@@ -164,11 +151,32 @@ class LibP2PService {
     }
   }
 
-  /// Отправляет свой multiaddr на bootstrap (ANNOUNCE).
-  static Future<Map<String, dynamic>> announce(String multiaddr) async {
+  /// Подключается к пиру, пробуя по очереди все multiaddr.
+  /// Логика попыток — на стороне Go (быстрее, без перехода через Dart).
+  static Future<Map<String, dynamic>> connectToPeerWithFallback(List<String> multiaddrs) async {
+    if (multiaddrs.isEmpty) {
+      return {'error': 'empty multiaddrs'};
+    }
     try {
+      final jsonStr = jsonEncode(multiaddrs);
+      final response = await _channel.invokeMethod<String>('connectToPeerWithFallback', {
+        'multiaddrsJSON': jsonStr,
+      });
+      return _safeDecode(response);
+    } on PlatformException catch (e) {
+      return {'error': e.message ?? 'platform_error', 'operation': 'connect_to_peer_fallback'};
+    }
+  }
+
+  /// Отправляет список своих multiaddr на bootstrap (ANNOUNCE).
+  static Future<Map<String, dynamic>> announce(List<String> multiaddrs) async {
+    if (multiaddrs.isEmpty) {
+      return {'error': 'empty multiaddrs'};
+    }
+    try {
+      final jsonStr = jsonEncode(multiaddrs);
       final response = await _channel.invokeMethod<String>('announce', {
-        'multiaddr': multiaddr,
+        'multiaddrsJSON': jsonStr,
       });
       return _safeDecode(response);
     } on PlatformException catch (e) {
@@ -177,6 +185,7 @@ class LibP2PService {
   }
 
   /// Ищет multiaddr по PeerID через bootstrap-справочник.
+  /// Возвращает {"status":"found","multiaddrs":[...]} или {"error":"..."}.
   static Future<Map<String, dynamic>> findPeerByID(String peerID) async {
     try {
       final response = await _channel.invokeMethod<String>('findPeerByID', {
@@ -188,7 +197,6 @@ class LibP2PService {
     }
   }
 
-  /// Входит в DHT сеть
   static Future<Map<String, dynamic>> joinDHT(String bootstrapPeers) async {
     try {
       final response = await _channel.invokeMethod<String>('joinDHT', {
@@ -204,7 +212,6 @@ class LibP2PService {
     }
   }
 
-  /// Ищет пира по PeerID через DHT (старый метод).
   static Future<Map<String, dynamic>> findPeer(String peerID) async {
     try {
       final response = await _channel.invokeMethod<String>('findPeer', {
@@ -216,7 +223,6 @@ class LibP2PService {
     }
   }
 
-  /// Запрашивает список известных узлов у подключённых пиров
   static Future<Map<String, dynamic>> findPeersViaNetwork() async {
     try {
       final response = await _channel.invokeMethod<String>('findPeersViaNetwork');
@@ -226,7 +232,6 @@ class LibP2PService {
     }
   }
 
-  /// Анонсирует себя в DHT
   static Future<Map<String, dynamic>> provide() async {
     try {
       final response = await _channel.invokeMethod<String>('provide');
@@ -236,7 +241,6 @@ class LibP2PService {
     }
   }
 
-  /// Получает информацию о DHT
   static Future<Map<String, dynamic>> getDHTInfo() async {
     try {
       final response = await _channel.invokeMethod<String>('getDHTInfo');
@@ -246,7 +250,6 @@ class LibP2PService {
     }
   }
 
-  /// Останавливает узел
   static Future<Map<String, dynamic>> stop() async {
     if (!_started) {
       return {'status': 'not_started'};
@@ -265,7 +268,6 @@ class LibP2PService {
     }
   }
 
-  /// Проверяет, находится ли приложение в whitelist оптимизации батареи
   static Future<bool> isIgnoringBatteryOptimizations() async {
     try {
       final response = await _channel.invokeMethod<bool>('isIgnoringBatteryOptimizations');
@@ -275,7 +277,6 @@ class LibP2PService {
     }
   }
 
-  /// Запрашивает исключение из оптимизации батареи
   static Future<String> requestIgnoreBatteryOptimizations() async {
     try {
       final response = await _channel.invokeMethod<String>('requestIgnoreBatteryOptimizations');
@@ -285,9 +286,6 @@ class LibP2PService {
     }
   }
 
-  /// Проверяет, запущен ли узел
   static bool get isStarted => _started;
-
-  /// Проверяет, запущен ли DHT
   static bool get isDHTStarted => _dhtStarted;
 }

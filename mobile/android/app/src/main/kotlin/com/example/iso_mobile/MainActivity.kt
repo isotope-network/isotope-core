@@ -70,10 +70,7 @@ class MainActivity : FlutterActivity() {
         super.configureFlutterEngine(flutterEngine)
         nsdManager = getSystemService(Context.NSD_SERVICE) as NsdManager
 
-        // ВАЖНО: Устанавливаем filesDir для gomobile ДО обработки MethodChannel
         Mobile.setFilesDir(filesDir.absolutePath)
-
-        // Запускаем Foreground Service — держит процесс живым в фоне
         IsotopeService.start(this)
 
         // NSD MethodChannel
@@ -194,10 +191,17 @@ class MainActivity : FlutterActivity() {
                             runOnUiThread { result.success(response) }
                         }.start()
                     }
-                    "announce" -> {
-                        val multiaddr = call.argument<String>("multiaddr") ?: ""
+                    "connectToPeerWithFallback" -> {
+                        val multiaddrsJSON = call.argument<String>("multiaddrsJSON") ?: ""
                         Thread {
-                            val response = Mobile.announce(multiaddr)
+                            val response = Mobile.connectToPeerWithFallback(multiaddrsJSON)
+                            runOnUiThread { result.success(response) }
+                        }.start()
+                    }
+                    "announce" -> {
+                        val multiaddrsJSON = call.argument<String>("multiaddrsJSON") ?: ""
+                        Thread {
+                            val response = Mobile.announce(multiaddrsJSON)
                             runOnUiThread { result.success(response) }
                         }.start()
                     }
@@ -305,7 +309,6 @@ class MainActivity : FlutterActivity() {
             .setStreamHandler(object : EventChannel.StreamHandler {
                 override fun onListen(arguments: Any?, events: EventChannel.EventSink?) {
                     messageEventSink = events
-                    // Устанавливаем колбэк для сообщений
                     Mobile.setMessageCallback(object : mobile.MessageCallback {
                         override fun onMessage(message: String) {
                             runOnUiThread {
@@ -321,7 +324,6 @@ class MainActivity : FlutterActivity() {
                 }
             })
 
-        // Инициализация Bluetooth
         val bluetoothManager = getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager
         bluetoothAdapter = bluetoothManager.adapter
     }

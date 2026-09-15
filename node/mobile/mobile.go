@@ -117,7 +117,6 @@ func Start(ethHash string, bootstrapPeers string, enableMDNS bool) string {
 
 	n := sbimain.NewNode(cfg)
 
-	// Устанавливаем hook для сообщений
 	n.SetMessageHook(func(msg string) {
 		if messageCallback != nil {
 			messageCallback.OnMessage(msg)
@@ -264,9 +263,9 @@ func ConnectToPeer(multiaddr string) string {
 	return `{"status":"connected"}`
 }
 
-// Announce — отправляет наш multiaddr на bootstrap (справочник).
-// Вызывается из Dart, когда Dart знает свой реальный IP.
-func Announce(multiaddr string) string {
+// Announce — отправляет список наших multiaddr на bootstrap (справочник).
+// Принимает JSON-массив строк из Dart.
+func Announce(multiaddrsJSON string) string {
 	nodeMu.Lock()
 	defer nodeMu.Unlock()
 
@@ -274,13 +273,22 @@ func Announce(multiaddr string) string {
 		return errorJSON("node not started")
 	}
 
-	node.SendAnnounce(multiaddr)
-	addLog("[ANNOUNCE] sent: %s", multiaddr)
+	var multiaddrs []string
+	if err := json.Unmarshal([]byte(multiaddrsJSON), &multiaddrs); err != nil {
+		return errorJSON("invalid JSON: " + err.Error())
+	}
+
+	if len(multiaddrs) == 0 {
+		return errorJSON("empty multiaddrs")
+	}
+
+	node.SendAnnounce(multiaddrs)
+	addLog("[ANNOUNCE] sent: %d addrs", len(multiaddrs))
 
 	return `{"status":"announced"}`
 }
 
-// FindPeerByID — ищет multiaddr по PeerID через bootstrap-справочник.
+// FindPeerByID — ищет список multiaddr по PeerID через bootstrap-справочник.
 func FindPeerByID(peerID string) string {
 	nodeMu.Lock()
 	defer nodeMu.Unlock()
@@ -289,14 +297,50 @@ func FindPeerByID(peerID string) string {
 		return errorJSON("node not started")
 	}
 
-	addr, err := node.FindPeerByID(peerID)
+	addrs, err := node.FindPeerByID(peerID)
 	if err != nil {
 		return errorJSON(err.Error())
 	}
 
+	result := map[string]interface{}{
+		"status":     "found",
+		"multiaddrs": addrs,
+	}
+	data, _ := json.Marshal(result)
+	return string(data)
+}
+
+// ConnectToPeerWithFallback — подключается к пиру, пробуя по очереди все multiaddr.
+// Принимает JSON-массив строк.
+func ConnectToPeerWithFallback(multiaddrsJSON string) string {
+	nodeMu.Lock()
+	defer nodeMu.Unlock()
+
+	if node == nil {
+		return errorJSON("node not started")
+	}
+
+	var multiaddrs []string
+	if err := json.Unmarshal([]byte(multiaddrsJSON), &multiaddrs); err != nil {
+		return errorJSON("invalid JSON: " + err.Error())
+	}
+
+	if len(multiaddrs) == 0 {
+		return errorJSON("empty multiaddrs")
+	}
+
+	usedAddr, err := node.ConnectToPeerWithFallback(multiaddrs)
+	if err != nil {
+		return errorJSON(err.Error())
+	}
+
+	if dhtNode := node.GetDHT(); dhtNode != nil {
+		dhtNode.RefreshOnDemand()
+	}
+
 	result := map[string]string{
-		"status":    "found",
-		"multiaddr": addr,
+		"status": "connected",
+		"used":   usedAddr,
 	}
 	data, _ := json.Marshal(result)
 	return string(data)
@@ -365,7 +409,7 @@ func FindPeer(peerID string) string {
 
 	dhtNode := node.GetDHT()
 	if dhtNode != nil && dhtNode.IsDHTActive() {
-		addLog("[DHT] DHT активен, ищу %s...", peerID[:16])
+		addLog("[DHT] DHT активен, ищу %s...", peerID)
 		dhtNode.RefreshOnDemand()
 
 		addrInfos, err := dhtNode.FindPeer(peerID)
@@ -409,7 +453,7 @@ func FindPeersViaNetwork() string {
 
 	for _, peerID := range peers {
 		if err := node.ExchangePeers(peerID); err != nil {
-			addLog("[PEERS] Exchange with %s failed: %v", peerID[:16], err)
+			addLog("[PEERS] Exchange with %s failed: %v", peerID, err)
 			continue
 		}
 	}
