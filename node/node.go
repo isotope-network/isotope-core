@@ -26,6 +26,7 @@ import (
 	"github.com/libp2p/go-libp2p/core/network"
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/libp2p/go-libp2p/p2p/discovery/mdns"
+	client "github.com/libp2p/go-libp2p/p2p/protocol/circuitv2/client"
 	"github.com/libp2p/go-libp2p/p2p/protocol/circuitv2/relay"
 	libp2ptls "github.com/libp2p/go-libp2p/p2p/security/tls"
 	"github.com/libp2p/go-libp2p/p2p/transport/tcp"
@@ -99,6 +100,11 @@ type Node struct {
 	announcedPeers    map[string]announcedPeer
 	announcedMu       sync.Mutex
 	announceMultiaddrs []string // наши собственные multiaddr для периодического ANNOUNCE
+
+	// RELAY — резервация слота на relay-сервере (VPS)
+	relayReservation *client.Reservation
+	relayMu          sync.Mutex
+	relayPeerInfo    peer.AddrInfo // адрес relay-сервера для перезапуска резервации
 }
 
 // NewNode — создаёт новый узел
@@ -188,6 +194,93 @@ func (n *Node) HandlePeerFound(peerInfo peer.AddrInfo) {
 }
 
 // ============================================================
+// RELAY-RESERVATION (клиент)
+// ============================================================
+
+// ReserveRelaySlot — резервирует слот на relay-сервере.
+// Возвращает ошибку, если не удалось.
+func (n *Node) ReserveRelaySlot(ctx context.Context, relayAddrInfo peer.AddrInfo) error {
+	if n.host == nil {
+		return fmt.Errorf("node not started")
+	}
+
+	resv, err := client.Reserve(ctx, n.host, relayAddrInfo)
+	if err != nil {
+		return fmt.Errorf("relay reserve failed: %w", err)
+	}
+
+	n.relayMu.Lock()
+	n.relayReservation = resv
+	n.relayPeerInfo = relayAddrInfo
+	n.relayMu.Unlock()
+
+	myID := n.host.ID().String()
+	var addrs []string
+	for _, ma := range resv.Addrs {
+		// Addrs обычно вида /ip4/<relay>/tcp/<port>/ws/p2p/<relayID>/p2p-circuit
+		// Нам нужен полный адрес с нашим peer ID в конце.
+		s := ma.String()
+		if !strings.Contains(s, "/p2p-circuit") {
+			continue
+		}
+		// Добавляем /p2p/<myID> в конец
+		addrs = append(addrs, s+"/p2p/"+myID)
+	}
+	log.Printf("[RELAY] reserved slot, expires=%s, addrs=%v", resv.Expiration, addrs)
+	return nil
+}
+
+// relayLoop — периодически обновляет резервацию (libp2p сам обновляет, но на всякий случай).
+func (n *Node) relayLoop() {
+	go func() {
+		for {
+			time.Sleep(2 * time.Minute)
+			n.relayMu.Lock()
+			resv := n.relayReservation
+			relayInfo := n.relayPeerInfo
+			n.relayMu.Unlock()
+
+			if resv == nil || relayInfo.ID == "" {
+				continue
+			}
+			if time.Until(resv.Expiration) > 30*time.Second {
+				continue
+			}
+			// Пробуем обновить
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			err := n.ReserveRelaySlot(ctx, relayInfo)
+			cancel()
+			if err != nil {
+				log.Printf("[RELAY] refresh failed: %v", err)
+			}
+		}
+	}()
+}
+
+// GetRelayAddrs — возвращает список relay-адресов для анонса (с нашим peer ID в конце).
+func (n *Node) GetRelayAddrs() []string {
+	n.relayMu.Lock()
+	defer n.relayMu.Unlock()
+	if n.relayReservation == nil {
+		return nil
+	}
+	myID := n.host.ID().String()
+	var result []string
+	for _, ma := range n.relayReservation.Addrs {
+		s := ma.String()
+		if !strings.Contains(s, "/p2p-circuit") {
+			continue
+		}
+		if strings.HasSuffix(s, "/p2p/"+myID) {
+			result = append(result, s)
+		} else {
+			result = append(result, s+"/p2p/"+myID)
+		}
+	}
+	return result
+}
+
+// ============================================================
 // ANNOUNCE — справочник пиров (VPS)
 // ============================================================
 
@@ -237,18 +330,25 @@ func (n *Node) cleanupAnnounced() {
 }
 
 // SendAnnounce — отправляет наш список multiaddr на bootstrap (и всем известным пирам).
+// Автоматически добавляет relay-адреса из резервации.
 func (n *Node) SendAnnounce(multiaddrs []string) {
 	if n.host == nil || len(multiaddrs) == 0 {
 		return
 	}
 
-	n.announceMultiaddrs = multiaddrs
+	// Добавляем relay-адреса
+	relayAddrs := n.GetRelayAddrs()
+	allAddrs := make([]string, 0, len(multiaddrs)+len(relayAddrs))
+	allAddrs = append(allAddrs, multiaddrs...)
+	allAddrs = append(allAddrs, relayAddrs...)
+
+	n.announceMultiaddrs = allAddrs
 
 	// Формируем тело ANNOUNCE: [ANNOUNCE]\n<addr1>\n<addr2>\n[END]\n
 	var sb strings.Builder
 	sb.WriteString(ANNOUNCE_PREFIX)
 	sb.WriteString("\n")
-	for _, a := range multiaddrs {
+	for _, a := range allAddrs {
 		sb.WriteString(a)
 		sb.WriteString("\n")
 	}
@@ -273,7 +373,7 @@ func (n *Node) SendAnnounce(multiaddrs []string) {
 			}
 			defer s.Close()
 			fmt.Fprintf(s, "%s", payload)
-			log.Printf("[ANNOUNCE] sent to %s: %d addrs", pid, len(multiaddrs))
+			log.Printf("[ANNOUNCE] sent to %s: %d addrs", pid, len(allAddrs))
 		}(pi.ID)
 	}
 
@@ -308,13 +408,11 @@ func (n *Node) FindPeerByID(targetID string) ([]string, error) {
 		return nil, fmt.Errorf("node not started")
 	}
 
-	// 1. Локальный справочник (если мы — VPS)
 	if addrs, ok := n.lookupPeer(targetID); ok {
 		log.Printf("[FIND] local hit: %s → %d addrs", targetID, len(addrs))
 		return addrs, nil
 	}
 
-	// 2. Запрос к bootstrap
 	bootstrapPeers := n.loadBootstrapPeers()
 	for _, addr := range bootstrapPeers {
 		pi, err := peer.AddrInfoFromString(addr)
@@ -381,7 +479,6 @@ func (n *Node) handleStream(stream network.Stream) {
 	}
 	msg := strings.TrimSpace(string(buf[:nr]))
 
-	// ANNOUNCE — пир рассказывает о себе (список multiaddr)
 	if strings.HasPrefix(msg, ANNOUNCE_PREFIX) {
 		remoteID := stream.Conn().RemotePeer().String()
 		addrs := parseMultiaddrsResponse(msg, ANNOUNCE_PREFIX)
@@ -391,11 +488,35 @@ func (n *Node) handleStream(stream network.Stream) {
 		return
 	}
 
-	// FIND — пир спрашивает multiaddr другого
 	if strings.HasPrefix(msg, FIND_PREFIX) {
 		targetID := strings.TrimPrefix(msg, FIND_PREFIX)
 		targetID = strings.TrimSpace(targetID)
-		if addrs, ok := n.lookupPeer(targetID); ok {
+
+		addrs, ok := n.lookupPeer(targetID)
+
+		// Если announced пуст, но пир connected — отдаём relay-адрес
+		if !ok && n.host != nil {
+			targetPID, err := peer.Decode(targetID)
+			if err == nil {
+				connected := false
+				for _, p := range n.host.Network().Peers() {
+					if p == targetPID {
+						connected = true
+						break
+					}
+				}
+				if connected {
+					relayAddr := n.buildRelayAddrFor(targetID)
+					if relayAddr != "" {
+						addrs = []string{relayAddr}
+						ok = true
+						log.Printf("[FIND] fallback to relay for connected peer %s", targetID)
+					}
+				}
+			}
+		}
+
+		if ok && len(addrs) > 0 {
 			var sb strings.Builder
 			sb.WriteString(FOUND_PREFIX)
 			sb.WriteString("\n")
@@ -524,6 +645,34 @@ func (n *Node) handleStream(stream network.Stream) {
 	n.processMessage(msg, remoteID, false)
 }
 
+// buildRelayAddrFor — строит relay-адрес для пира, подключённого к нам (VPS).
+// Формат: /ip4/<наш-адрес>/tcp/<порт>/ws/p2p/<наш-peerid>/p2p-circuit/p2p/<target>
+func (n *Node) buildRelayAddrFor(targetID string) string {
+	if n.host == nil {
+		return ""
+	}
+	myID := n.host.ID().String()
+	// Ищем наш публичный адрес (WS)
+	for _, a := range n.host.Addrs() {
+		s := a.String()
+		if strings.Contains(s, "127.0.0.1") {
+			continue
+		}
+		if strings.Contains(s, "/ws") {
+			return s + "/p2p/" + myID + "/p2p-circuit/p2p/" + targetID
+		}
+	}
+	// fallback — первый не-loopback
+	for _, a := range n.host.Addrs() {
+		s := a.String()
+		if strings.Contains(s, "127.0.0.1") {
+			continue
+		}
+		return s + "/p2p/" + myID + "/p2p-circuit/p2p/" + targetID
+	}
+	return ""
+}
+
 func (n *Node) handleReplicaData(data string) {
 	for _, line := range strings.Split(data, "\n") {
 		if strings.HasPrefix(line, REPLICA_PREFIX) {
@@ -626,7 +775,6 @@ func (n *Node) reconnectLoop() {
 	}()
 }
 
-// announceLoop — периодически отправляет ANNOUNCE, если у нас есть multiaddr.
 func (n *Node) announceLoop() {
 	go func() {
 		for {
@@ -638,7 +786,6 @@ func (n *Node) announceLoop() {
 	}()
 }
 
-// cleanupLoop — периодически чистит просроченные ANNOUNCE.
 func (n *Node) cleanupLoop() {
 	go func() {
 		for {
@@ -1139,19 +1286,50 @@ func (n *Node) InitP2P() error {
 	log.Println("[INIT] Node started with ID:", host.ID())
 
 	bootstrapPeers := n.loadBootstrapPeers()
-	for _, addr := range bootstrapPeers {
-		go func(addr string) {
-			peerInfo, err := peer.AddrInfoFromString(addr)
-			if err != nil {
-				return
-			}
-			ctx := context.Background()
-			n.host.Connect(ctx, *peerInfo)
-			go func(peerID peer.ID) {
-				time.Sleep(2 * time.Second)
-				n.ExchangePeers(peerID.String())
-			}(peerInfo.ID)
-		}(addr)
+
+	// Подключаемся к bootstrap и сразу пытаемся зарезервировать relay-слот.
+	// На VPS relay-сервер уже запущен (EnableRelayServer=true).
+	// На клиентах резервация создаёт relay-адрес для анонса.
+	if !n.configEnableRelayServer {
+		// Это клиент — пробуем резервацию
+		for _, addr := range bootstrapPeers {
+			go func(addr string) {
+				peerInfo, err := peer.AddrInfoFromString(addr)
+				if err != nil {
+					return
+				}
+				ctx := context.Background()
+				_ = n.host.Connect(ctx, *peerInfo)
+				go func(peerID peer.ID) {
+					time.Sleep(2 * time.Second)
+					n.ExchangePeers(peerID.String())
+				}(peerInfo.ID)
+
+				// Резервация relay-слота
+				rctx, rcancel := context.WithTimeout(context.Background(), 30*time.Second)
+				err = n.ReserveRelaySlot(rctx, *peerInfo)
+				rcancel()
+				if err != nil {
+					log.Printf("[RELAY] reserve failed on %s: %v", peerInfo.ID, err)
+				}
+			}(addr)
+		}
+	} else {
+		// Это relay-сервер — просто подключаемся
+		for _, addr := range bootstrapPeers {
+			go func(addr string) {
+				peerInfo, err := peer.AddrInfoFromString(addr)
+				if err != nil {
+					return
+				}
+				ctx := context.Background()
+				n.host.Connect(ctx, *peerInfo)
+				go func(peerID peer.ID) {
+					time.Sleep(2 * time.Second)
+					n.ExchangePeers(peerID.String())
+				}(peerInfo.ID)
+			}(addr)
+		}
 	}
 
 	dhtNode, err := NewDHT(host)
@@ -1174,6 +1352,7 @@ func (n *Node) InitP2P() error {
 	n.reconnectLoop()
 	n.announceLoop()
 	n.cleanupLoop()
+	n.relayLoop()
 	n.StartAdaptation()
 
 	go func() {
