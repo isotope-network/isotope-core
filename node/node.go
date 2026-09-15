@@ -543,6 +543,8 @@ func (n *Node) handleStream(stream network.Stream) {
 			replicaMsg.ReplicatedAt = time.Now()
 			replicaMsg.IsOwn = false
 			if n.memory.Add(replicaMsg) {
+				// Пересылаем дальше — на VPS это маршрутизация к другим пирам
+				go n.replicateMessage(replicaMsg)
 				if n.messageHook != nil {
 					data, _ := json.Marshal(replicaMsg)
 					n.messageHook(string(data))
@@ -685,6 +687,7 @@ func (n *Node) handleReplicaData(data string) {
 				replicaMsg.ReplicatedAt = time.Now()
 				replicaMsg.IsOwn = false
 				if n.memory.Add(replicaMsg) {
+					go n.replicateMessage(replicaMsg)
 					if n.messageHook != nil {
 						data, _ := json.Marshal(replicaMsg)
 						n.messageHook(string(data))
