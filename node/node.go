@@ -890,6 +890,7 @@ func (n *Node) reconnectLoop() {
 				go func(peerID peer.ID) {
 					time.Sleep(2 * time.Second)
 					n.ExchangePeers(peerID.String())
+					n.flushPending()
 				}(peerInfo.ID)
 				break
 			}
