@@ -341,7 +341,7 @@ func (n *Node) SendAnnounce(multiaddrs []string) {
 	allAddrs = append(allAddrs, multiaddrs...)
 	allAddrs = append(allAddrs, relayAddrs...)
 
-	n.announceMultiaddrs = allAddrs
+	n.announceMultiaddrs = multiaddrs
 
 	// Формируем тело ANNOUNCE: [ANNOUNCE]\n<addr1>\n<addr2>\n[END]\n
 	var sb strings.Builder
