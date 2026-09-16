@@ -105,6 +105,11 @@ type Node struct {
 	relayReservation *client.Reservation
 	relayMu          sync.Mutex
 	relayPeerInfo    peer.AddrInfo // адрес relay-сервера для перезапуска резервации
+
+	// OFFLINE QUEUE — сообщения, ожидающие отправки при восстановлении связи
+	pendingMessages []Message
+	pendingMu       sync.Mutex
+	pendingFile     string // путь к файлу очереди
 }
 
 // NewNode — создаёт новый узел
@@ -198,9 +203,6 @@ func (n *Node) HandlePeerFound(peerInfo peer.AddrInfo) {
 // ============================================================
 
 // ReserveRelaySlot — резервирует слот на relay-сервере.
-// Возвращает ошибку, если не удалось.
-// ReserveRelaySlot — резервирует слот на relay-сервере.
-// Возвращает ошибку, если не удалось.
 func (n *Node) ReserveRelaySlot(ctx context.Context, relayAddrInfo peer.AddrInfo) error {
 	if n.host == nil {
 		return fmt.Errorf("node not started")
@@ -219,7 +221,8 @@ func (n *Node) ReserveRelaySlot(ctx context.Context, relayAddrInfo peer.AddrInfo
 	log.Printf("[RELAY] reserved slot, expires=%s", resv.Expiration)
 	return nil
 }
-// relayLoop — периодически обновляет резервацию (libp2p сам обновляет, но на всякий случай).
+
+// relayLoop — периодически обновляет резервацию.
 func (n *Node) relayLoop() {
 	go func() {
 		for {
@@ -235,7 +238,6 @@ func (n *Node) relayLoop() {
 			if time.Until(resv.Expiration) > 30*time.Second {
 				continue
 			}
-			// Пробуем обновить
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			err := n.ReserveRelaySlot(ctx, relayInfo)
 			cancel()
@@ -246,10 +248,7 @@ func (n *Node) relayLoop() {
 	}()
 }
 
-// GetRelayAddrs — возвращает список relay-адресов для анонса (с нашим peer ID в конце).
 // GetRelayAddrs — возвращает список relay-адресов для анонса.
-// Формат: <bootstrap-addr>/p2p-circuit/p2p/<myID>
-// Например: /ip4/186.246.31.176/tcp/9001/ws/p2p/QmR8u5YF.../p2p-circuit/p2p/QmX6wR86...
 func (n *Node) GetRelayAddrs() []string {
 	n.relayMu.Lock()
 	defer n.relayMu.Unlock()
@@ -262,9 +261,6 @@ func (n *Node) GetRelayAddrs() []string {
 	myID := n.host.ID().String()
 
 	var result []string
-	// Используем адрес relay-сервера из bootstrap как основу.
-	// Формат bootstrap: /ip4/186.246.31.176/tcp/9001/ws/p2p/QmR8u5YF...
-	// Нам нужно: тот же + /p2p-circuit/p2p/<myID>
 	for _, addr := range n.loadBootstrapPeers() {
 		pi, err := peer.AddrInfoFromString(addr)
 		if err != nil {
@@ -279,6 +275,133 @@ func (n *Node) GetRelayAddrs() []string {
 	}
 	return result
 }
+
+// ============================================================
+// OFFLINE QUEUE — очередь сообщений при потере связи
+// ============================================================
+
+// loadPendingQueue — загружает очередь из файла.
+func (n *Node) loadPendingQueue() {
+	if n.pendingFile == "" {
+		return
+	}
+	data, err := os.ReadFile(n.pendingFile)
+	if err != nil {
+		return
+	}
+	var queue []Message
+	if err := json.Unmarshal(data, &queue); err != nil {
+		log.Printf("[QUEUE] load failed: %v", err)
+		return
+	}
+	n.pendingMu.Lock()
+	n.pendingMessages = queue
+	n.pendingMu.Unlock()
+	log.Printf("[QUEUE] loaded %d pending messages", len(queue))
+}
+
+// savePendingQueue — сохраняет очередь в файл.
+func (n *Node) savePendingQueue() {
+	if n.pendingFile == "" {
+		return
+	}
+	n.pendingMu.Lock()
+	queue := make([]Message, len(n.pendingMessages))
+	copy(queue, n.pendingMessages)
+	n.pendingMu.Unlock()
+
+	data, err := json.Marshal(queue)
+	if err != nil {
+		log.Printf("[QUEUE] marshal failed: %v", err)
+		return
+	}
+	if err := os.WriteFile(n.pendingFile, data, 0600); err != nil {
+		log.Printf("[QUEUE] save failed: %v", err)
+	}
+}
+
+// enqueuePending — добавляет сообщение в очередь.
+func (n *Node) enqueuePending(msg Message) {
+	n.pendingMu.Lock()
+	n.pendingMessages = append(n.pendingMessages, msg)
+	count := len(n.pendingMessages)
+	n.pendingMu.Unlock()
+	log.Printf("[QUEUE] enqueued %s (total: %d)", msg.ID, count)
+	n.savePendingQueue()
+}
+
+// flushPending — отправляет все накопленные сообщения.
+func (n *Node) flushPending() {
+	n.pendingMu.Lock()
+	queue := make([]Message, len(n.pendingMessages))
+	copy(queue, n.pendingMessages)
+	n.pendingMessages = nil
+	n.pendingMu.Unlock()
+
+	if len(queue) == 0 {
+		return
+	}
+
+	log.Printf("[QUEUE] flushing %d pending messages", len(queue))
+	var remaining []Message
+	for _, msg := range queue {
+		if n.tryReplicate(msg) {
+			continue
+		}
+		remaining = append(remaining, msg)
+	}
+	n.pendingMu.Lock()
+	n.pendingMessages = remaining
+	n.pendingMu.Unlock()
+	n.savePendingQueue()
+	log.Printf("[QUEUE] flushed, remaining: %d", len(remaining))
+}
+
+// tryReplicate — пытается отправить сообщение пирам. true — если отправил хотя бы одному.
+func (n *Node) tryReplicate(msg Message) bool {
+	if n.host == nil {
+		return false
+	}
+	msg.ReplicatedFrom = msg.Sender
+	msg.ExpiresAt = time.Time{}
+	msg.IsOwn = false
+	data, err := json.Marshal(msg)
+	if err != nil {
+		return false
+	}
+	peers := n.host.Network().Peers()
+	var alive []peer.ID
+	for _, p := range peers {
+		if p.String() == msg.Sender {
+			continue
+		}
+		if !n.isPeerDead(p.String()) {
+			alive = append(alive, p)
+		}
+	}
+	if len(alive) == 0 {
+		return false
+	}
+	replicaCount := 2
+	if len(alive) < replicaCount {
+		replicaCount = len(alive)
+	}
+	sent := false
+	for i := 0; i < replicaCount; i++ {
+		peerID := alive[i]
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		s, err := n.host.NewStream(ctx, peerID, protocolID)
+		cancel()
+		if err != nil {
+			continue
+		}
+		fmt.Fprintf(s, "%s%s\n", REPLICA_PREFIX, string(data))
+		s.Close()
+		sent = true
+	}
+	return sent
+}
+
 // ============================================================
 // ANNOUNCE — справочник пиров (VPS)
 // ============================================================
@@ -328,22 +451,22 @@ func (n *Node) cleanupAnnounced() {
 	}
 }
 
-// SendAnnounce — отправляет наш список multiaddr на bootstrap (и всем известным пирам).
-// Автоматически добавляет relay-адреса из резервации.
+// SendAnnounce — отправляет наш список multiaddr на bootstrap.
 func (n *Node) SendAnnounce(multiaddrs []string) {
 	if n.host == nil || len(multiaddrs) == 0 {
 		return
 	}
 
-	// Добавляем relay-адреса
+	// Сохраняем ТОЛЬКО прямые адреса — relay добавляется при отправке
+	n.announceMultiaddrs = multiaddrs
+
+	// Для отправки — добавляем relay
 	relayAddrs := n.GetRelayAddrs()
 	allAddrs := make([]string, 0, len(multiaddrs)+len(relayAddrs))
 	allAddrs = append(allAddrs, multiaddrs...)
 	allAddrs = append(allAddrs, relayAddrs...)
 
-	n.announceMultiaddrs = multiaddrs
-
-	// Формируем тело ANNOUNCE: [ANNOUNCE]\n<addr1>\n<addr2>\n[END]\n
+	// Формируем тело ANNOUNCE
 	var sb strings.Builder
 	sb.WriteString(ANNOUNCE_PREFIX)
 	sb.WriteString("\n")
@@ -376,7 +499,7 @@ func (n *Node) SendAnnounce(multiaddrs []string) {
 		}(pi.ID)
 	}
 
-	// Отправляем всем текущим пирам (чтобы они тоже знали)
+	// Отправляем всем текущим пирам
 	for _, p := range n.host.Network().Peers() {
 		isBootstrap := false
 		for _, addr := range bootstrapPeers {
@@ -647,13 +770,11 @@ func (n *Node) handleStream(stream network.Stream) {
 }
 
 // buildRelayAddrFor — строит relay-адрес для пира, подключённого к нам (VPS).
-// Формат: /ip4/<наш-адрес>/tcp/<порт>/ws/p2p/<наш-peerid>/p2p-circuit/p2p/<target>
 func (n *Node) buildRelayAddrFor(targetID string) string {
 	if n.host == nil {
 		return ""
 	}
 	myID := n.host.ID().String()
-	// Ищем наш публичный адрес (WS)
 	for _, a := range n.host.Addrs() {
 		s := a.String()
 		if strings.Contains(s, "127.0.0.1") {
@@ -663,7 +784,6 @@ func (n *Node) buildRelayAddrFor(targetID string) string {
 			return s + "/p2p/" + myID + "/p2p-circuit/p2p/" + targetID
 		}
 	}
-	// fallback — первый не-loopback
 	for _, a := range n.host.Addrs() {
 		s := a.String()
 		if strings.Contains(s, "127.0.0.1") {
@@ -784,6 +904,7 @@ func (n *Node) announceLoop() {
 			if len(n.announceMultiaddrs) > 0 {
 				n.SendAnnounce(n.announceMultiaddrs)
 			}
+			n.flushPending()
 		}
 	}()
 }
@@ -894,7 +1015,8 @@ func (n *Node) replicateMessage(msg Message) {
 	log.Printf("[REPLICA] alive=%d", len(alive))
 
 	if len(alive) == 0 {
-		log.Printf("[REPLICA] SKIP: no alive peers")
+		log.Printf("[REPLICA] SKIP: no alive peers — enqueue")
+		n.enqueuePending(msg)
 		return
 	}
 	replicaCount := 2
@@ -1237,6 +1359,14 @@ func (n *Node) InitP2P() error {
 		log.Println("[INIT] Состояние не найдено, начинаем с нуля")
 	}
 
+	// Инициализация очереди offline
+	if n.pendingFile == "" {
+		if n.stateFile != "" {
+			n.pendingFile = n.stateFile + ".queue"
+		}
+	}
+	n.loadPendingQueue()
+
 	var priv crypto.PrivKey
 	keyBytes, err := n.loadPrivateKey()
 	if err != nil {
@@ -1300,11 +1430,8 @@ func (n *Node) InitP2P() error {
 
 	bootstrapPeers := n.loadBootstrapPeers()
 
-	// Подключаемся к bootstrap и сразу пытаемся зарезервировать relay-слот.
-	// На VPS relay-сервер уже запущен (EnableRelayServer=true).
-	// На клиентах резервация создаёт relay-адрес для анонса.
 	if !n.configEnableRelayServer {
-		// Это клиент — пробуем резервацию
+		// Это клиент — пробуем резервацию relay-слота
 		for _, addr := range bootstrapPeers {
 			go func(addr string) {
 				peerInfo, err := peer.AddrInfoFromString(addr)
@@ -1318,7 +1445,6 @@ func (n *Node) InitP2P() error {
 					n.ExchangePeers(peerID.String())
 				}(peerInfo.ID)
 
-				// Резервация relay-слота
 				rctx, rcancel := context.WithTimeout(context.Background(), 30*time.Second)
 				err = n.ReserveRelaySlot(rctx, *peerInfo)
 				rcancel()
@@ -1408,6 +1534,7 @@ func (n *Node) Stop() error {
 		n.dhtNode.Close()
 	}
 	n.saveState()
+	n.savePendingQueue()
 	if n.host != nil {
 		return n.host.Close()
 	}
