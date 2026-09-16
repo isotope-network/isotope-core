@@ -1,5 +1,51 @@
 # История изменений ISOTOPE
 
+## v1.23.0 (2026-09-17)
+
+### Добавлено
+- Multi-address ANNOUNCE (Слой A):
+  - announcedPeer — теперь список []string
+  - Формат ANNOUNCE многострочный: [ANNOUNCE]\n<addr1>\n<addr2>\n[END]
+  - FIND отдаёт массив адресов
+  - ConnectToPeerWithFallback — пробует адреса по очереди
+- Relay-circuit (Слой B):
+  - Резервация relay-слота через client.Reserve
+  - GetRelayAddrs — строит relay-адрес из bootstrap
+  - ANNOUNCE автоматически добавляет relay-адрес
+  - FIND fallback — relay-адрес, если announced пуст
+  - VPS handleStream форвардит реплики дальше
+- Flush on reconnect (три уровня):
+  - Notifiee ConnectedF — основной триггер (реакция на факт соединения)
+  - markPeerAlive → dead → alive — страховка
+  - reconnectLoop — третий рубеж
+  - Результат: flush за 1 сек вместо 3-4 минут
+
+### Изменено
+- VPS PeerID: QmNmr3Yq... → QmR8u5YF...
+- Relay-circuit: VPS работает как relay для мобильных узлов в Doze
+- Условие отключения VPS: когда DHT покроет 15+ узлов и hole punching заработает для большинства NAT
+
+### Коммиты
+- 9b5c6c2 — multi-address ANNOUNCE + relay-circuit
+- 6b223c0 — flush on libp2p ConnectedF + markPeerAlive alive-transition
+
+### Проверено на реальных телефонах
+- Связь между телефонами в разных сетях (Wi-Fi ↔ LTE)
+- Через NAT оператора (CGNAT) — через relay на VPS
+- QR = PeerID — контакт устанавливается
+- FIND через VPS — поиск multiaddr по PeerID
+- Сообщения доходят через relay
+- Бейдж, входящие, разделитель — работают
+- Flush offline queue за 1 сек после восстановления связи
+
+### Следующий шаг
+- Backoff reconnect
+- Параллельный dial (убрать задержку QR)
+- E2E шифрование поверх обфускации
+- Контакт-протокол (терминология → QR → ссылка → NSD → запрос → seed-фраза → DHT 15+ → локальный вес)
+
+---
+
 ## v1.22.0 (2026-09-13)
 
 ### Добавлено
