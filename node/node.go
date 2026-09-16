@@ -1,3 +1,4 @@
+// node/node.go
 package core
 
 import (
@@ -19,6 +20,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	ma "github.com/multiformats/go-multiaddr"
 
 	"github.com/libp2p/go-libp2p"
 	"github.com/libp2p/go-libp2p/core/crypto"
@@ -330,6 +333,13 @@ func (n *Node) enqueuePending(msg Message) {
 	n.savePendingQueue()
 }
 
+// hasPending — true, если очередь непуста. Используется триггерами flush.
+func (n *Node) hasPending() bool {
+	n.pendingMu.Lock()
+	defer n.pendingMu.Unlock()
+	return len(n.pendingMessages) > 0
+}
+
 // flushPending — отправляет все накопленные сообщения.
 func (n *Node) flushPending() {
 	n.pendingMu.Lock()
@@ -401,6 +411,39 @@ func (n *Node) tryReplicate(msg Message) bool {
 	}
 	return sent
 }
+
+// ============================================================
+// NOTIFIEE — реакция на события libp2p (ConnectedF)
+// ============================================================
+
+// nodeNotifiee — слушает события libp2p Network.
+// Основной триггер flush on reconnect: когда libp2p сам восстанавливает
+// соединение (например, через relay), ConnectedF срабатывает, и мы сразу
+// отправляем накопленную очередь, не дожидаясь тика announceLoop.
+type nodeNotifiee struct {
+	node *Node
+}
+
+func (nn *nodeNotifiee) Connected(net network.Network, conn network.Conn) {
+	remote := conn.RemotePeer().String()
+	log.Printf("[NOTIFY] connected to %s", remote)
+	go func() {
+		// Небольшая задержка — дать libp2p завершить handshake
+		// и ExchangePeers инициализироваться.
+		time.Sleep(1 * time.Second)
+		if nn.node.hasPending() {
+			log.Printf("[NOTIFY] flushing pending after connect to %s", remote)
+			nn.node.flushPending()
+		}
+	}()
+}
+
+func (nn *nodeNotifiee) Disconnected(net network.Network, conn network.Conn) {
+	log.Printf("[NOTIFY] disconnected from %s", conn.RemotePeer())
+}
+
+func (nn *nodeNotifiee) Listen(net network.Network, addr ma.Multiaddr)      {}
+func (nn *nodeNotifiee) ListenClose(net network.Network, addr ma.Multiaddr) {}
 
 // ============================================================
 // ANNOUNCE — справочник пиров (VPS)
@@ -854,7 +897,16 @@ func (n *Node) pingPeers() {
 						n.markPeerDead(peerID.String())
 						return
 					}
-					n.markPeerAlive(peerID.String())
+					// Если пир был dead и ожил — flush как страховка
+					// (основной триггер — Notifiee.ConnectedF).
+					if n.markPeerAlive(peerID.String()) {
+						go func() {
+							if n.hasPending() {
+								log.Printf("[PING] peer %s alive again, flushing pending", peerID)
+								n.flushPending()
+							}
+						}()
+					}
 				}(p)
 			}
 		}
@@ -919,7 +971,10 @@ func (n *Node) cleanupLoop() {
 	}()
 }
 
-func (n *Node) markPeerAlive(peerID string) {
+// markPeerAlive — помечает пир живым.
+// Возвращает true, если пир перешёл из состояния dead в alive.
+// Это событие восстановления — триггер для flush (страховка к Notifiee).
+func (n *Node) markPeerAlive(peerID string) bool {
 	n.mu.Lock()
 	defer n.mu.Unlock()
 	if n.lastPing == nil {
@@ -928,10 +983,12 @@ func (n *Node) markPeerAlive(peerID string) {
 	if n.deadPeers == nil {
 		n.deadPeers = make(map[string]bool)
 	}
+	wasDead := n.deadPeers[peerID]
 	n.lastPing[peerID] = time.Now()
-	if n.deadPeers[peerID] {
+	if wasDead {
 		delete(n.deadPeers, peerID)
 	}
+	return wasDead
 }
 
 func (n *Node) markPeerDead(peerID string) {
@@ -1407,6 +1464,12 @@ func (n *Node) InitP2P() error {
 		return err
 	}
 	n.host = host
+
+	// Notifiee — основной триггер flush on reconnect.
+	// libp2p эмитит Connected при любом новом соединении, включая
+	// восстановление через relay. Это архитектурно правильная точка
+	// реакции на "связь восстановилась".
+	n.host.Network().Notify(&nodeNotifiee{node: n})
 
 	log.Printf("[DIAG] Listen addrs immediately: %v", host.Addrs())
 	log.Printf("[DIAG] PeerID: %s", host.ID().String())
