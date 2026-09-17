@@ -51,7 +51,7 @@ const FOUND_PREFIX = "[FOUND]"
 const NOT_FOUND_PREFIX = "[NOT_FOUND]"
 const END_PREFIX = "[END]"
 
-const ANNOUNCE_TTL = 5 * time.Minute
+const ANNOUNCE_TTL = 8 * time.Minute
 
 // announcedPeer — запись о пире: список его multiaddr + когда последний раз видели.
 type announcedPeer struct {
@@ -481,12 +481,28 @@ func (n *Node) lookupPeer(peerID string) ([]string, bool) {
 	return p.Multiaddrs, true
 }
 
-// cleanupAnnounced — удаляет записи старше TTL.
+// cleanupAnnounced — удаляет записи старше TTL и записи отключённых пиров.
 func (n *Node) cleanupAnnounced() {
+	// Собираем список подключённых пиров БЕЗ лока announcedMu —
+	// чтобы не смешивать локи libp2p и наш.
+	connected := make(map[string]bool)
+	if n.host != nil {
+		for _, p := range n.host.Network().Peers() {
+			connected[p.String()] = true
+		}
+	}
+
 	n.announcedMu.Lock()
 	defer n.announcedMu.Unlock()
 	now := time.Now()
 	for id, p := range n.announcedPeers {
+		// Пир не подключён — удаляем сразу, не ждём TTL.
+		if !connected[id] {
+			delete(n.announcedPeers, id)
+			log.Printf("[ANNOUNCE] peer %s not connected — removed", id)
+			continue
+		}
+		// Иначе — по TTL.
 		if now.Sub(p.LastSeen) > ANNOUNCE_TTL {
 			delete(n.announcedPeers, id)
 			log.Printf("[ANNOUNCE] TTL expired: %s", id)
