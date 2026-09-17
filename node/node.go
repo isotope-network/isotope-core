@@ -913,19 +913,29 @@ func (n *Node) pingPeers() {
 	}()
 }
 
+
 func (n *Node) reconnectLoop() {
 	go func() {
+		backoff := time.Second
+		const maxBackoff = 30 * time.Second
+
 		for {
-			time.Sleep(30 * time.Second)
+			time.Sleep(backoff)
 			if n.host == nil {
 				continue
 			}
 			peers := n.host.Network().Peers()
 			if len(peers) > 0 {
+				// Есть пиры — сбрасываем backoff.
+				if backoff != time.Second {
+					backoff = time.Second
+				}
 				continue
 			}
-			log.Println("[RECONNECT] Нет пиров, переподключаюсь к bootstrap")
+			log.Printf("[RECONNECT] Нет пиров, переподключаюсь к bootstrap (backoff=%s)", backoff)
+
 			bootstrapPeers := n.loadBootstrapPeers()
+			connected := false
 			for _, addr := range bootstrapPeers {
 				peerInfo, err := peer.AddrInfoFromString(addr)
 				if err != nil {
@@ -944,7 +954,19 @@ func (n *Node) reconnectLoop() {
 					n.ExchangePeers(peerID.String())
 					n.flushPending()
 				}(peerInfo.ID)
+				connected = true
 				break
+			}
+
+			if connected {
+				// Успех — сбрасываем backoff.
+				backoff = time.Second
+			} else {
+				// Неудача — удваиваем, но не выше потолка.
+				backoff *= 2
+				if backoff > maxBackoff {
+					backoff = maxBackoff
+				}
 			}
 		}
 	}()
