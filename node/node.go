@@ -1805,21 +1805,67 @@ func (n *Node) ConnectToPeer(multiaddr string) error {
 	return nil
 }
 
-// ConnectToPeerWithFallback — пробует все multiaddr по очереди, первый успех — возвращает.
+// ConnectToPeerWithFallback — пробует все multiaddr параллельно.
+// Первый успешный dial — победа, остальные отменяются.
+// Если все fail — возвращает ошибку.
 func (n *Node) ConnectToPeerWithFallback(multiaddrs []string) (string, error) {
 	if len(multiaddrs) == 0 {
 		return "", fmt.Errorf("empty multiaddrs list")
 	}
-	var lastErr error
-	for _, ma := range multiaddrs {
-		if err := n.ConnectToPeer(ma); err != nil {
-			lastErr = err
-			log.Printf("[CONNECT] failed %s: %v", ma, err)
-			continue
-		}
-		log.Printf("[CONNECT] success %s", ma)
-		return ma, nil
+	if n.host == nil {
+		return "", fmt.Errorf("node not started")
 	}
+
+	type result struct {
+		addr string
+		err  error
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	results := make(chan result, len(multiaddrs))
+
+	for _, ma := range multiaddrs {
+		go func(addr string) {
+			peerInfo, err := peer.AddrInfoFromString(addr)
+			if err != nil {
+				results <- result{addr: addr, err: err}
+				return
+			}
+
+			dialCtx, dialCancel := context.WithTimeout(ctx, 10*time.Second)
+			defer dialCancel()
+
+			if err := n.host.Connect(dialCtx, *peerInfo); err != nil {
+				results <- result{addr: addr, err: err}
+				return
+			}
+			results <- result{addr: addr, err: nil}
+		}(ma)
+	}
+
+	var lastErr error
+	for i := 0; i < len(multiaddrs); i++ {
+		r := <-results
+		if r.err == nil {
+			// Первый успех — победа. Отменяем остальные.
+			cancel()
+			log.Printf("[CONNECT] success %s", r.addr)
+			go func() {
+				// ExchangePeers после успешного dial
+				time.Sleep(2 * time.Second)
+				peerInfo, err := peer.AddrInfoFromString(r.addr)
+				if err == nil {
+					n.ExchangePeers(peerInfo.ID.String())
+				}
+			}()
+			return r.addr, nil
+		}
+		lastErr = r.err
+		log.Printf("[CONNECT] failed %s: %v", r.addr, r.err)
+	}
+
 	return "", fmt.Errorf("all dials failed: %v", lastErr)
 }
 
