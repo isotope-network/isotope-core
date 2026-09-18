@@ -1,3 +1,4 @@
+// node/mobile/mobile.go
 package mobile
 
 import (
@@ -310,7 +311,31 @@ func FindPeerByID(peerID string) string {
 	return string(data)
 }
 
-// ConnectToPeerWithFallback — подключается к пиру, пробуя по очереди все multiaddr.
+// GetE2EPublicKey — возвращает E2E-публичный ключ (base64).
+// Используется для отображения/диагностики. Для QR — GetMyQRData.
+func GetE2EPublicKey() string {
+	nodeMu.Lock()
+	defer nodeMu.Unlock()
+
+	if node == nil {
+		return ""
+	}
+	return node.GetE2EPublicKey()
+}
+
+// GetMyQRData — возвращает JSON для QR-кода версии 1.
+// Формат: {"v":1,"peerID":"Qm...","e2e_pub":"base64..."}
+func GetMyQRData() string {
+	nodeMu.Lock()
+	defer nodeMu.Unlock()
+
+	if node == nil {
+		return errorJSON("node not started")
+	}
+	return node.GetMyQRData()
+}
+
+// ConnectToPeerWithFallback — подключается к пиру, пробуя параллельно все multiaddr.
 // Принимает JSON-массив строк.
 func ConnectToPeerWithFallback(multiaddrsJSON string) string {
 	nodeMu.Lock()

@@ -212,6 +212,18 @@ class MainActivity : FlutterActivity() {
                             runOnUiThread { result.success(response) }
                         }.start()
                     }
+                    "getMyQRData" -> {
+                        Thread {
+                            val response = Mobile.getMyQRData()
+                            runOnUiThread { result.success(response) }
+                        }.start()
+                    }
+                    "getE2EPublicKey" -> {
+                        Thread {
+                            val response = Mobile.getE2EPublicKey()
+                            runOnUiThread { result.success(response) }
+                        }.start()
+                    }
                     "getFilesDir" -> {
                         result.success(filesDir.absolutePath)
                     }

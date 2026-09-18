@@ -53,10 +53,21 @@ const END_PREFIX = "[END]"
 
 const ANNOUNCE_TTL = 8 * time.Minute
 
+// E2E_VERSION — версия формата QR-обмена E2E-ключом.
+// 0 — старый формат (только PeerID). 1 — JSON с e2e_pub.
+const E2E_VERSION = 1
+
 // announcedPeer — запись о пире: список его multiaddr + когда последний раз видели.
 type announcedPeer struct {
 	Multiaddrs []string  `json:"multiaddrs"`
 	LastSeen   time.Time `json:"lastSeen"`
+}
+
+// qrDataV1 — формат QR-кода версии 1. Содержит PeerID и E2E-публичный ключ.
+type qrDataV1 struct {
+	V      int    `json:"v"`
+	PeerID string `json:"peerID"`
+	E2EPub string `json:"e2e_pub"`
 }
 
 // Config — конфигурация узла
@@ -113,6 +124,13 @@ type Node struct {
 	pendingMessages []Message
 	pendingMu       sync.Mutex
 	pendingFile     string // путь к файлу очереди
+
+	// E2E — ключ шифрования поверх транспорта (приложение↔приложение).
+	// Отдельный от PeerID. Разные ключи — разные файлы.
+	e2eKeyFile string
+	e2ePubFile string
+	e2ePrivKey crypto.PrivKey
+	e2ePubKey  string // base64 публичного ключа
 }
 
 // NewNode — создаёт новый узел
@@ -199,6 +217,89 @@ func (n *Node) HandlePeerFound(peerInfo peer.AddrInfo) {
 		time.Sleep(3 * time.Second)
 		n.broadcastLayers()
 	}()
+}
+
+// ============================================================
+// E2E — отдельный ключ шифрования (этап 4.1)
+// ============================================================
+
+// loadOrGenerateE2EKey — загружает E2E-ключ из файлов или генерирует новый.
+// Использует Ed25519 (быстро, компактно, современно).
+// Приватный ключ — в e2eKeyFile, публичный — в e2ePubFile (base64).
+func (n *Node) loadOrGenerateE2EKey() error {
+	if n.e2eKeyFile == "" {
+		return fmt.Errorf("e2e key file path not set")
+	}
+
+	// Попытка загрузить существующий ключ.
+	if data, err := os.ReadFile(n.e2eKeyFile); err == nil {
+		priv, err := crypto.UnmarshalPrivateKey(data)
+		if err != nil {
+			log.Printf("[E2E] failed to unmarshal existing key: %v", err)
+			// Файл есть, но ключ не читается — генерируем новый.
+		} else {
+			n.e2ePrivKey = priv
+			pubBytes, _ := priv.GetPublic().Raw()
+			n.e2ePubKey = base64.StdEncoding.EncodeToString(pubBytes)
+			log.Printf("[E2E] loaded existing E2E key (pub=%s...)", truncate(n.e2ePubKey, 16))
+			return nil
+		}
+	}
+
+	// Генерация нового Ed25519 ключа.
+	priv, _, err := crypto.GenerateKeyPair(crypto.Ed25519, -1)
+	if err != nil {
+		return fmt.Errorf("e2e keygen failed: %w", err)
+	}
+	n.e2ePrivKey = priv
+
+	privBytes, err := crypto.MarshalPrivateKey(priv)
+	if err != nil {
+		return fmt.Errorf("e2e marshal failed: %w", err)
+	}
+	if err := os.WriteFile(n.e2eKeyFile, privBytes, 0600); err != nil {
+		return fmt.Errorf("e2e save priv failed: %w", err)
+	}
+
+	pubBytes, _ := priv.GetPublic().Raw()
+	n.e2ePubKey = base64.StdEncoding.EncodeToString(pubBytes)
+	if err := os.WriteFile(n.e2ePubFile, []byte(n.e2ePubKey), 0644); err != nil {
+		return fmt.Errorf("e2e save pub failed: %w", err)
+	}
+
+	log.Printf("[E2E] generated new E2E key (pub=%s...)", truncate(n.e2ePubKey, 16))
+	return nil
+}
+
+// GetE2EPublicKey — возвращает E2E-публичный ключ в base64.
+func (n *Node) GetE2EPublicKey() string {
+	return n.e2ePubKey
+}
+
+// GetMyQRData — возвращает JSON для QR-кода версии 1.
+// Формат: {"v": 1, "peerID": "Qm...", "e2e_pub": "base64..."}
+func (n *Node) GetMyQRData() string {
+	if n.host == nil {
+		return ""
+	}
+	data, err := json.Marshal(qrDataV1{
+		V:      E2E_VERSION,
+		PeerID: n.host.ID().String(),
+		E2EPub: n.e2ePubKey,
+	})
+	if err != nil {
+		log.Printf("[E2E] QR marshal failed: %v", err)
+		return ""
+	}
+	return string(data)
+}
+
+// truncate — обрезает строку для лога.
+func truncate(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return s[:n]
 }
 
 // ============================================================
@@ -1462,6 +1563,17 @@ func (n *Node) InitP2P() error {
 		}
 	}
 	n.loadPendingQueue()
+
+	// Инициализация путей E2E-ключей (разные ключи — разные файлы).
+	if n.e2eKeyFile == "" && n.stateFile != "" {
+		n.e2eKeyFile = n.stateFile + ".e2e.key"
+		n.e2ePubFile = n.stateFile + ".e2e.pub"
+	}
+	// Загрузка или генерация E2E-ключа. Ошибку логируем, но не падаем —
+	// узел может работать без E2E (старый режим).
+	if err := n.loadOrGenerateE2EKey(); err != nil {
+		log.Printf("[E2E] init failed: %v", err)
+	}
 
 	var priv crypto.PrivKey
 	keyBytes, err := n.loadPrivateKey()

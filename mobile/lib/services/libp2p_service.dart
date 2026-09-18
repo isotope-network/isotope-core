@@ -1,3 +1,4 @@
+// mobile/lib/services/libp2p_service.dart
 import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/services.dart';
@@ -151,7 +152,7 @@ class LibP2PService {
     }
   }
 
-  /// Подключается к пиру, пробуя по очереди все multiaddr.
+  /// Подключается к пиру, пробуя параллельно все multiaddr.
   /// Логика попыток — на стороне Go (быстрее, без перехода через Dart).
   static Future<Map<String, dynamic>> connectToPeerWithFallback(List<String> multiaddrs) async {
     if (multiaddrs.isEmpty) {
@@ -194,6 +195,29 @@ class LibP2PService {
       return _safeDecode(response);
     } on PlatformException catch (e) {
       return {'error': e.message ?? 'platform_error', 'operation': 'find_peer_by_id'};
+    }
+  }
+
+  /// Возвращает JSON для QR-кода версии 1:
+  /// {"v":1,"peerID":"Qm...","e2e_pub":"base64..."}
+  /// Пустая строка — если узел не запущен.
+  static Future<String> getMyQRData() async {
+    try {
+      final response = await _channel.invokeMethod<String>('getMyQRData');
+      return response ?? '';
+    } on PlatformException {
+      return '';
+    }
+  }
+
+  /// Возвращает E2E-публичный ключ (base64).
+  /// Пустая строка — если узел не запущен.
+  static Future<String> getE2EPublicKey() async {
+    try {
+      final response = await _channel.invokeMethod<String>('getE2EPublicKey');
+      return response ?? '';
+    } on PlatformException {
+      return '';
     }
   }
 

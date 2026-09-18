@@ -1,4 +1,6 @@
+// mobile/lib/screens/connect_screen.dart
 import 'dart:async';
+import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
@@ -567,21 +569,31 @@ class _ConnectScreenState extends State<ConnectScreen> {
 
   Future<void> _showMyQR() async {
     try {
-      if (_myPeerId.isEmpty) {
-        final status = await LibP2PService.getStatus();
-        _myPeerId = status['id'] as String? ?? '';
-      }
+      // Этап 4.1: пробуем получить новый формат QR (JSON с E2E-ключом).
+      // Fallback на старый формат — если что-то не так.
+      String qrData = '';
 
-      if (_myPeerId.isEmpty) {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('PeerID ещё не готов, подождите')),
-          );
+      final jsonData = await LibP2PService.getMyQRData();
+      if (jsonData.isNotEmpty && !jsonData.contains('"error"') && jsonData.startsWith('{')) {
+        qrData = '$ISOTOPE_QR_PREFIX$jsonData';
+        LogService.log('QR: используется формат v:1 (JSON с E2E)');
+      } else {
+        // Fallback: старый формат — только PeerID.
+        if (_myPeerId.isEmpty) {
+          final status = await LibP2PService.getStatus();
+          _myPeerId = status['id'] as String? ?? '';
         }
-        return;
+        if (_myPeerId.isEmpty) {
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(content: Text('PeerID ещё не готов, подождите')),
+            );
+          }
+          return;
+        }
+        qrData = '$ISOTOPE_QR_PREFIX$_myPeerId';
+        LogService.log('QR: используется старый формат v:0 (только PeerID)');
       }
-
-      final qrData = '$ISOTOPE_QR_PREFIX$_myPeerId';
 
       if (!mounted) return;
       showDialog(
@@ -659,13 +671,39 @@ class _ConnectScreenState extends State<ConnectScreen> {
         code = code.substring(ISOTOPE_QR_PREFIX.length);
       }
 
-      if (code.contains('/p2p/')) {
-        code = code.split('/p2p/').last;
+      String peerId = '';
+      String e2ePub = '';
+
+      // Этап 4.1: новый формат — JSON с версией.
+      if (code.startsWith('{')) {
+        try {
+          final json = jsonDecode(code) as Map<String, dynamic>;
+          final v = json['v'] as int? ?? 0;
+          if (v >= 1) {
+            peerId = (json['peerID'] as String?) ?? '';
+            e2ePub = (json['e2e_pub'] as String?) ?? '';
+            LogService.log('QR: распознан формат v:$v, peerID=$peerId, e2e_pub=${e2ePub.isNotEmpty ? "есть" : "нет"}');
+            // TODO 4.3: сохранить e2ePub для будущего E2E-шифрования.
+          }
+        } catch (e) {
+          LogService.log('QR: ошибка парсинга JSON: $e');
+        }
       }
 
-      code = code.trim();
-      final peerIdMatch = RegExp(r'[A-Za-z0-9]+').firstMatch(code);
-      if (peerIdMatch == null) {
+      // Обратная совместимость: старый формат — только PeerID.
+      if (peerId.isEmpty) {
+        if (code.contains('/p2p/')) {
+          code = code.split('/p2p/').last;
+        }
+        code = code.trim();
+        final peerIdMatch = RegExp(r'[A-Za-z0-9]+').firstMatch(code);
+        if (peerIdMatch != null) {
+          peerId = peerIdMatch.group(0)!;
+          LogService.log('QR: распознан старый формат, peerID=$peerId');
+        }
+      }
+
+      if (peerId.isEmpty) {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(content: Text('Не удалось распознать PeerID')),
@@ -673,7 +711,6 @@ class _ConnectScreenState extends State<ConnectScreen> {
         }
         return;
       }
-      final peerId = peerIdMatch.group(0)!;
 
       if (peerId == _myPeerId) {
         if (mounted) {
