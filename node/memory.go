@@ -1,3 +1,4 @@
+// node/memory.go
 package core
 
 import (
@@ -26,6 +27,7 @@ type Message struct {
 	ExpiresAt       time.Time `json:"expiresAt,omitempty"`
 	ReplicatedFrom  string    `json:"replicatedFrom"` // от какого узла реплика
 	ReplicatedAt    time.Time `json:"replicatedAt"`   // когда реплицировано
+	Recipient       string    `json:"recipient,omitempty"` // адресат: PeerID (v1), позже — хеш E2E-ключа
 }
 
 // Memory — потокобезопасное хранилище сообщений (без лимита)
@@ -254,6 +256,19 @@ func (m *Memory) GetReplicasFor(nodeID string) []Message {
 	var result []Message
 	for _, msg := range m.messages {
 		if msg.ReplicatedFrom == nodeID {
+			result = append(result, msg)
+		}
+	}
+	return result
+}
+
+// GetMessagesForRecipient — возвращает сообщения, адресованные получателю
+func (m *Memory) GetMessagesForRecipient(recipientID string) []Message {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var result []Message
+	for _, msg := range m.messages {
+		if msg.Recipient == recipientID {
 			result = append(result, msg)
 		}
 	}

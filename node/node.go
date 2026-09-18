@@ -469,6 +469,8 @@ func (n *Node) flushPending() {
 }
 
 // tryReplicate — пытается отправить сообщение пирам. true — если отправил хотя бы одному.
+// Для адресных сообщений (Recipient != "") — шлёт конкретному адресату
+// (напрямую или через bootstrap).
 func (n *Node) tryReplicate(msg Message) bool {
 	if n.host == nil {
 		return false
@@ -480,6 +482,13 @@ func (n *Node) tryReplicate(msg Message) bool {
 	if err != nil {
 		return false
 	}
+
+	// Адресная маршрутизация.
+	if msg.Recipient != "" {
+		return n.sendToRecipient(msg, data)
+	}
+
+	// Веер (broadcast) — старое поведение.
 	peers := n.host.Network().Peers()
 	var alive []peer.ID
 	for _, p := range peers {
@@ -514,6 +523,66 @@ func (n *Node) tryReplicate(msg Message) bool {
 }
 
 // ============================================================
+// АДРЕСНАЯ МАРШРУТИЗАЦИЯ (этап 4.2)
+// ============================================================
+
+// sendToRecipient — отправляет сообщение конкретному адресату по PeerID.
+// Если адресат подключён напрямую — шлём ему.
+// Если нет — шлём bootstrap-пиру (VPS), который маршрутизирует по Recipient.
+// Возвращает true, если удалось отправить хотя бы куда-то.
+func (n *Node) sendToRecipient(msg Message, data []byte) bool {
+	targetID, err := peer.Decode(msg.Recipient)
+	if err != nil {
+		log.Printf("[REPLICA] invalid Recipient %q: %v", msg.Recipient, err)
+		return false
+	}
+
+	// Проверяем прямое подключение к адресату.
+	for _, p := range n.host.Network().Peers() {
+		if p == targetID && !n.isPeerDead(p.String()) {
+			go n.sendReplicaToPeer(targetID, data)
+			log.Printf("[REPLICA] direct send to recipient %s", msg.Recipient)
+			return true
+		}
+	}
+
+	// Не подключён напрямую. Шлём bootstrap-пиру (VPS маршрутизирует).
+	bootstrapPeers := n.loadBootstrapPeers()
+	for _, addr := range bootstrapPeers {
+		pi, err := peer.AddrInfoFromString(addr)
+		if err != nil {
+			continue
+		}
+		// Не шлём самому себе (VPS — это мы).
+		if n.host.ID() == pi.ID {
+			continue
+		}
+		go n.sendReplicaToPeer(pi.ID, data)
+		log.Printf("[REPLICA] send via bootstrap %s for recipient %s", pi.ID, msg.Recipient)
+		return true
+	}
+
+	log.Printf("[REPLICA] no route to recipient %s", msg.Recipient)
+	return false
+}
+
+// sendReplicaToPeer — низкоуровневая отправка REPLICA-сообщения пиру.
+// Используется sendToRecipient и replicateMessage.
+func (n *Node) sendReplicaToPeer(targetID peer.ID, data []byte) {
+	randomDelay(10, 30)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	s, err := n.host.NewStream(ctx, targetID, protocolID)
+	if err != nil {
+		log.Printf("[REPLICA] NewStream to %s failed: %v", targetID, err)
+		return
+	}
+	defer s.Close()
+	fmt.Fprintf(s, "%s%s\n", REPLICA_PREFIX, string(data))
+	log.Printf("[REPLICA] sent to %s", targetID)
+}
+
+// ============================================================
 // NOTIFIEE — реакция на события libp2p (ConnectedF)
 // ============================================================
 
@@ -529,8 +598,6 @@ func (nn *nodeNotifiee) Connected(net network.Network, conn network.Conn) {
 	remote := conn.RemotePeer().String()
 	log.Printf("[NOTIFY] connected to %s", remote)
 	go func() {
-		// Небольшая задержка — дать libp2p завершить handshake
-		// и ExchangePeers инициализироваться.
 		time.Sleep(1 * time.Second)
 		if nn.node.hasPending() {
 			log.Printf("[NOTIFY] flushing pending after connect to %s", remote)
@@ -584,8 +651,6 @@ func (n *Node) lookupPeer(peerID string) ([]string, bool) {
 
 // cleanupAnnounced — удаляет записи старше TTL и записи отключённых пиров.
 func (n *Node) cleanupAnnounced() {
-	// Собираем список подключённых пиров БЕЗ лока announcedMu —
-	// чтобы не смешивать локи libp2p и наш.
 	connected := make(map[string]bool)
 	if n.host != nil {
 		for _, p := range n.host.Network().Peers() {
@@ -597,13 +662,11 @@ func (n *Node) cleanupAnnounced() {
 	defer n.announcedMu.Unlock()
 	now := time.Now()
 	for id, p := range n.announcedPeers {
-		// Пир не подключён — удаляем сразу, не ждём TTL.
 		if !connected[id] {
 			delete(n.announcedPeers, id)
 			log.Printf("[ANNOUNCE] peer %s not connected — removed", id)
 			continue
 		}
-		// Иначе — по TTL.
 		if now.Sub(p.LastSeen) > ANNOUNCE_TTL {
 			delete(n.announcedPeers, id)
 			log.Printf("[ANNOUNCE] TTL expired: %s", id)
@@ -617,16 +680,13 @@ func (n *Node) SendAnnounce(multiaddrs []string) {
 		return
 	}
 
-	// Сохраняем ТОЛЬКО прямые адреса — relay добавляется при отправке
 	n.announceMultiaddrs = multiaddrs
 
-	// Для отправки — добавляем relay
 	relayAddrs := n.GetRelayAddrs()
 	allAddrs := make([]string, 0, len(multiaddrs)+len(relayAddrs))
 	allAddrs = append(allAddrs, multiaddrs...)
 	allAddrs = append(allAddrs, relayAddrs...)
 
-	// Формируем тело ANNOUNCE
 	var sb strings.Builder
 	sb.WriteString(ANNOUNCE_PREFIX)
 	sb.WriteString("\n")
@@ -638,7 +698,6 @@ func (n *Node) SendAnnounce(multiaddrs []string) {
 	sb.WriteString("\n")
 	payload := sb.String()
 
-	// Отправляем на bootstrap-пиры
 	bootstrapPeers := n.loadBootstrapPeers()
 	for _, addr := range bootstrapPeers {
 		pi, err := peer.AddrInfoFromString(addr)
@@ -659,7 +718,6 @@ func (n *Node) SendAnnounce(multiaddrs []string) {
 		}(pi.ID)
 	}
 
-	// Отправляем всем текущим пирам
 	for _, p := range n.host.Network().Peers() {
 		isBootstrap := false
 		for _, addr := range bootstrapPeers {
@@ -776,7 +834,6 @@ func (n *Node) handleStream(stream network.Stream) {
 
 		addrs, ok := n.lookupPeer(targetID)
 
-		// Если announced пуст, но пир connected — отдаём relay-адрес
 		if !ok && n.host != nil {
 			targetPID, err := peer.Decode(targetID)
 			if err == nil {
@@ -825,8 +882,35 @@ func (n *Node) handleStream(stream network.Stream) {
 			replicaMsg.ExpiresAt = time.Time{}
 			replicaMsg.ReplicatedAt = time.Now()
 			replicaMsg.IsOwn = false
+
+			// Адресная маршрутизация (этап 4.2).
+			if replicaMsg.Recipient != "" && n.host != nil {
+				myID := n.host.ID().String()
+				if replicaMsg.Recipient != myID {
+					// Не нам.
+					if n.configEnableRelayServer {
+						// VPS — пересылаем дальше.
+						log.Printf("[REPLICA] relay forward to %s", replicaMsg.Recipient)
+						go n.replicateMessage(replicaMsg)
+					} else {
+						// Клиент — не маршрутизатор, дропаем.
+						log.Printf("[REPLICA] not for us (recipient=%s), dropping", replicaMsg.Recipient)
+					}
+					return
+				}
+				// Нам — добавляем в память, не реплицируем дальше.
+				if n.memory.Add(replicaMsg) {
+					log.Printf("[REPLICA] received addressed message for us: %s", replicaMsg.ID)
+					if n.messageHook != nil {
+						data, _ := json.Marshal(replicaMsg)
+						n.messageHook(string(data))
+					}
+				}
+				return
+			}
+
+			// Broadcast (без Recipient) — старое поведение.
 			if n.memory.Add(replicaMsg) {
-				// Пересылаем дальше — на VPS это маршрутизация к другим пирам
 				go n.replicateMessage(replicaMsg)
 				if n.messageHook != nil {
 					data, _ := json.Marshal(replicaMsg)
@@ -1014,8 +1098,6 @@ func (n *Node) pingPeers() {
 						n.markPeerDead(peerID.String())
 						return
 					}
-					// Если пир был dead и ожил — flush как страховка
-					// (основной триггер — Notifiee.ConnectedF).
 					if n.markPeerAlive(peerID.String()) {
 						go func() {
 							if n.hasPending() {
@@ -1043,7 +1125,6 @@ func (n *Node) reconnectLoop() {
 			}
 			peers := n.host.Network().Peers()
 			if len(peers) > 0 {
-				// Есть пиры — сбрасываем backoff.
 				if backoff != time.Second {
 					backoff = time.Second
 				}
@@ -1076,10 +1157,8 @@ func (n *Node) reconnectLoop() {
 			}
 
 			if connected {
-				// Успех — сбрасываем backoff.
 				backoff = time.Second
 			} else {
-				// Неудача — удваиваем, но не выше потолка.
 				backoff *= 2
 				if backoff > maxBackoff {
 					backoff = maxBackoff
@@ -1111,8 +1190,6 @@ func (n *Node) cleanupLoop() {
 }
 
 // markPeerAlive — помечает пир живым.
-// Возвращает true, если пир перешёл из состояния dead в alive.
-// Это событие восстановления — триггер для flush (страховка к Notifiee).
 func (n *Node) markPeerAlive(peerID string) bool {
 	n.mu.Lock()
 	defer n.mu.Unlock()
@@ -1182,6 +1259,9 @@ func (n *Node) processMessageRelayed(msg string, senderID string) {
 	}
 }
 
+// replicateMessage — отправляет сообщение по сети.
+// Адресное (Recipient != "") — конкретному получателю.
+// Broadcast (Recipient == "") — веер, старое поведение.
 func (n *Node) replicateMessage(msg Message) {
 	if n.host == nil {
 		return
@@ -1193,15 +1273,21 @@ func (n *Node) replicateMessage(msg Message) {
 	if err != nil {
 		return
 	}
+
+	// Адресная маршрутизация (этап 4.2).
+	if msg.Recipient != "" {
+		n.sendToRecipient(msg, data)
+		return
+	}
+
+	// Веер (broadcast).
 	peers := n.host.Network().Peers()
-	log.Printf("[REPLICA] msg id=%s sender=%s: %d peers in Network().Peers()",
-		msg.ID, msg.Sender, len(peers))
+	log.Printf("[REPLICA] broadcast msg id=%s sender=%s: %d peers", msg.ID, msg.Sender, len(peers))
 
 	var alive []peer.ID
 	for _, p := range peers {
 		dead := n.isPeerDead(p.String())
 		isSender := p.String() == msg.Sender
-		log.Printf("[REPLICA]   peer=%s dead=%v isSender=%v", p.String(), dead, isSender)
 		if isSender {
 			continue
 		}
@@ -1221,18 +1307,7 @@ func (n *Node) replicateMessage(msg Message) {
 		replicaCount = len(alive)
 	}
 	for i := 0; i < replicaCount; i++ {
-		go func(peerID peer.ID) {
-			randomDelay(10, 30)
-			ctx := context.Background()
-			s, err := n.host.NewStream(ctx, peerID, protocolID)
-			if err != nil {
-				log.Printf("[REPLICA] NewStream to %s failed: %v", peerID, err)
-				return
-			}
-			defer s.Close()
-			fmt.Fprintf(s, "%s%s\n", REPLICA_PREFIX, string(data))
-			log.Printf("[REPLICA] sent to %s", peerID)
-		}(alive[i])
+		go n.sendReplicaToPeer(alive[i], data)
 	}
 }
 
@@ -1263,16 +1338,21 @@ func (n *Node) requestRestore() {
 }
 
 func (n *Node) processMessageWithTTL(msg string, senderID string, isOwn bool, expiresAt time.Time) {
-	n.processMessageInternal(msg, senderID, isOwn, expiresAt, "")
+	n.processMessageInternal(msg, senderID, isOwn, expiresAt, "", "")
 }
 
 func (n *Node) processMessageWithID(msg string, senderID string, isOwn bool, expiresAt time.Time, id string) {
-	n.processMessageInternal(msg, senderID, isOwn, expiresAt, id)
+	n.processMessageInternal(msg, senderID, isOwn, expiresAt, id, "")
+}
+
+// processMessageWithRecipient — отправляет адресное сообщение конкретному получателю.
+func (n *Node) processMessageWithRecipient(msg string, senderID string, isOwn bool, expiresAt time.Time, id string, recipient string) {
+	n.processMessageInternal(msg, senderID, isOwn, expiresAt, id, recipient)
 }
 
 func (n *Node) processMessageWithModeAndTTL(msg string, senderID string, isOwn bool, mode int, expiresAt time.Time) {
 	if mode == 0 || n.host == nil {
-		n.processMessageInternal(msg, senderID, isOwn, expiresAt, "")
+		n.processMessageInternal(msg, senderID, isOwn, expiresAt, "", "")
 		return
 	}
 	relayCount := 4
@@ -1282,7 +1362,7 @@ func (n *Node) processMessageWithModeAndTTL(msg string, senderID string, isOwn b
 	}
 	relays := n.selectRelays(relayCount)
 	if len(relays) < relayCount {
-		n.processMessageInternal(msg, senderID, isOwn, expiresAt, "")
+		n.processMessageInternal(msg, senderID, isOwn, expiresAt, "", "")
 		return
 	}
 	n.sendViaRelayChain(relays, msg)
@@ -1347,10 +1427,10 @@ func (n *Node) sendViaRelayChain(relays []string, msg string) {
 }
 
 func (n *Node) processMessage(msg string, senderID string, isOwn bool) {
-	n.processMessageInternal(msg, senderID, isOwn, time.Time{}, "")
+	n.processMessageInternal(msg, senderID, isOwn, time.Time{}, "", "")
 }
 
-func (n *Node) processMessageInternal(msg string, senderID string, isOwn bool, expiresAt time.Time, providedID string) {
+func (n *Node) processMessageInternal(msg string, senderID string, isOwn bool, expiresAt time.Time, providedID string, recipient string) {
 	inputVector := textToVector(msg)
 	outputVector, _ := forward(inputVector, n.layers)
 	answer := vectorToText(outputVector)
@@ -1432,6 +1512,7 @@ func (n *Node) processMessageInternal(msg string, senderID string, isOwn bool, e
 		ID:        id,
 		Text:      msg,
 		Sender:    senderID,
+		Recipient: recipient,
 		Time:      time.Now().UTC().Format("2006-01-02T15:04:05"),
 		IsOwn:     isOwn,
 		Score:     0,
@@ -1448,7 +1529,7 @@ func (n *Node) processMessageInternal(msg string, senderID string, isOwn bool, e
 		}
 	}
 
-	if answer != "" {
+	if answer != "" && recipient == "" {
 		answerMsg := Message{
 			ID:       generateMsgID(answer),
 			Text:     answer,
@@ -1569,8 +1650,6 @@ func (n *Node) InitP2P() error {
 		n.e2eKeyFile = n.stateFile + ".e2e.key"
 		n.e2ePubFile = n.stateFile + ".e2e.pub"
 	}
-	// Загрузка или генерация E2E-ключа. Ошибку логируем, но не падаем —
-	// узел может работать без E2E (старый режим).
 	if err := n.loadOrGenerateE2EKey(); err != nil {
 		log.Printf("[E2E] init failed: %v", err)
 	}
@@ -1615,10 +1694,6 @@ func (n *Node) InitP2P() error {
 	}
 	n.host = host
 
-	// Notifiee — основной триггер flush on reconnect.
-	// libp2p эмитит Connected при любом новом соединении, включая
-	// восстановление через relay. Это архитектурно правильная точка
-	// реакции на "связь восстановилась".
 	n.host.Network().Notify(&nodeNotifiee{node: n})
 
 	log.Printf("[DIAG] Listen addrs immediately: %v", host.Addrs())
@@ -1645,7 +1720,6 @@ func (n *Node) InitP2P() error {
 	bootstrapPeers := n.loadBootstrapPeers()
 
 	if !n.configEnableRelayServer {
-		// Это клиент — пробуем резервацию relay-слота
 		for _, addr := range bootstrapPeers {
 			go func(addr string) {
 				peerInfo, err := peer.AddrInfoFromString(addr)
@@ -1668,7 +1742,6 @@ func (n *Node) InitP2P() error {
 			}(addr)
 		}
 	} else {
-		// Это relay-сервер — просто подключаемся
 		for _, addr := range bootstrapPeers {
 			go func(addr string) {
 				peerInfo, err := peer.AddrInfoFromString(addr)
@@ -1934,8 +2007,6 @@ func (n *Node) ConnectToPeer(multiaddr string) error {
 }
 
 // ConnectToPeerWithFallback — пробует все multiaddr параллельно.
-// Первый успешный dial — победа, остальные отменяются.
-// Если все fail — возвращает ошибку.
 func (n *Node) ConnectToPeerWithFallback(multiaddrs []string) (string, error) {
 	if len(multiaddrs) == 0 {
 		return "", fmt.Errorf("empty multiaddrs list")
@@ -1977,11 +2048,9 @@ func (n *Node) ConnectToPeerWithFallback(multiaddrs []string) (string, error) {
 	for i := 0; i < len(multiaddrs); i++ {
 		r := <-results
 		if r.err == nil {
-			// Первый успех — победа. Отменяем остальные.
 			cancel()
 			log.Printf("[CONNECT] success %s", r.addr)
 			go func() {
-				// ExchangePeers после успешного dial
 				time.Sleep(2 * time.Second)
 				peerInfo, err := peer.AddrInfoFromString(r.addr)
 				if err == nil {
@@ -1997,7 +2066,7 @@ func (n *Node) ConnectToPeerWithFallback(multiaddrs []string) (string, error) {
 	return "", fmt.Errorf("all dials failed: %v", lastErr)
 }
 
-// SendMessage — отправляет сообщение всем пирам
+// SendMessage — отправляет сообщение всем пирам (broadcast).
 func (n *Node) SendMessage(text string, ttl int) (string, error) {
 	if n.host == nil {
 		return "", fmt.Errorf("node not started")
@@ -2011,18 +2080,20 @@ func (n *Node) SendMessage(text string, ttl int) (string, error) {
 	return id, nil
 }
 
-// SendToPeer — отправляет сообщение конкретному пиру
+// SendToPeer — отправляет сообщение конкретному пиру (адресно).
 func (n *Node) SendToPeer(peerID string, text string, ttl int) (string, error) {
 	if n.host == nil {
 		return "", fmt.Errorf("node not started")
 	}
-	_ = peerID
+	if peerID == "" {
+		return "", fmt.Errorf("peerID is required")
+	}
 	var expiresAt time.Time
 	if ttl > 0 {
 		expiresAt = time.Now().Add(time.Duration(ttl) * time.Second)
 	}
 	id := generateMsgID(text)
-	n.processMessageWithID(text, n.host.ID().String(), true, expiresAt, id)
+	n.processMessageInternal(text, n.host.ID().String(), true, expiresAt, id, peerID)
 	return id, nil
 }
 
