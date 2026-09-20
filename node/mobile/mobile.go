@@ -311,20 +311,31 @@ func FindPeerByID(peerID string) string {
 	return string(data)
 }
 
-// GetE2EPublicKey — возвращает E2E-публичный ключ (base64).
+// GetEd25519PublicKey — возвращает Ed25519-публичный ключ (base64).
 // Используется для отображения/диагностики. Для QR — GetMyQRData.
-func GetE2EPublicKey() string {
+func GetEd25519PublicKey() string {
 	nodeMu.Lock()
 	defer nodeMu.Unlock()
 
 	if node == nil {
 		return ""
 	}
-	return node.GetE2EPublicKey()
+	return node.GetEd25519PublicKey()
+}
+
+// GetX25519PublicKey — возвращает X25519-публичный ключ (base64).
+func GetX25519PublicKey() string {
+	nodeMu.Lock()
+	defer nodeMu.Unlock()
+
+	if node == nil {
+		return ""
+	}
+	return node.GetX25519PublicKey()
 }
 
 // GetMyQRData — возвращает JSON для QR-кода версии 1.
-// Формат: {"v":1,"peerID":"Qm...","e2e_pub":"base64..."}
+// Формат: {"v":1,"peerID":"Qm...","ed25519_pub":"base64...","x25519_pub":"base64...","signature":""}
 func GetMyQRData() string {
 	nodeMu.Lock()
 	defer nodeMu.Unlock()

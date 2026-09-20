@@ -218,9 +218,15 @@ class MainActivity : FlutterActivity() {
                             runOnUiThread { result.success(response) }
                         }.start()
                     }
-                    "getE2EPublicKey" -> {
+                    "getEd25519PublicKey" -> {
                         Thread {
-                            val response = Mobile.getE2EPublicKey()
+                            val response = Mobile.getEd25519PublicKey()
+                            runOnUiThread { result.success(response) }
+                        }.start()
+                    }
+                    "getX25519PublicKey" -> {
+                        Thread {
+                            val response = Mobile.getX25519PublicKey()
                             runOnUiThread { result.success(response) }
                         }.start()
                     }

@@ -199,7 +199,7 @@ class LibP2PService {
   }
 
   /// Возвращает JSON для QR-кода версии 1:
-  /// {"v":1,"peerID":"Qm...","e2e_pub":"base64..."}
+  /// {"v":1,"peerID":"Qm...","ed25519_pub":"base64...","x25519_pub":"base64...","signature":""}
   /// Пустая строка — если узел не запущен.
   static Future<String> getMyQRData() async {
     try {
@@ -210,11 +210,22 @@ class LibP2PService {
     }
   }
 
-  /// Возвращает E2E-публичный ключ (base64).
+  /// Возвращает Ed25519-публичный ключ (base64).
   /// Пустая строка — если узел не запущен.
-  static Future<String> getE2EPublicKey() async {
+  static Future<String> getEd25519PublicKey() async {
     try {
-      final response = await _channel.invokeMethod<String>('getE2EPublicKey');
+      final response = await _channel.invokeMethod<String>('getEd25519PublicKey');
+      return response ?? '';
+    } on PlatformException {
+      return '';
+    }
+  }
+
+  /// Возвращает X25519-публичный ключ (base64).
+  /// Пустая строка — если узел не запущен.
+  static Future<String> getX25519PublicKey() async {
+    try {
+      final response = await _channel.invokeMethod<String>('getX25519PublicKey');
       return response ?? '';
     } on PlatformException {
       return '';

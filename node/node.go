@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/aes"
 	"crypto/cipher"
+	"crypto/ed25519"
 	cryptorand "crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
@@ -22,6 +23,8 @@ import (
 	"time"
 
 	ma "github.com/multiformats/go-multiaddr"
+	"golang.org/x/crypto/curve25519"
+	"golang.org/x/crypto/nacl/box"
 
 	"github.com/libp2p/go-libp2p"
 	"github.com/libp2p/go-libp2p/core/crypto"
@@ -53,8 +56,8 @@ const END_PREFIX = "[END]"
 
 const ANNOUNCE_TTL = 8 * time.Minute
 
-// E2E_VERSION — версия формата QR-обмена E2E-ключом.
-// 0 — старый формат (только PeerID). 1 — JSON с e2e_pub.
+// E2E_VERSION — версия формата QR-обмена E2E-ключами.
+// 0 — старый формат (только PeerID). 1 — JSON с ключами.
 const E2E_VERSION = 1
 
 // announcedPeer — запись о пире: список его multiaddr + когда последний раз видели.
@@ -63,11 +66,15 @@ type announcedPeer struct {
 	LastSeen   time.Time `json:"lastSeen"`
 }
 
-// qrDataV1 — формат QR-кода версии 1. Содержит PeerID и E2E-публичный ключ.
+// qrDataV1 — формат QR-кода версии 1.
+// Содержит PeerID, Ed25519-публичный (подпись), X25519-публичный (шифрование)
+// и подпись (заполнится на этапе 4.4).
 type qrDataV1 struct {
-	V      int    `json:"v"`
-	PeerID string `json:"peerID"`
-	E2EPub string `json:"e2e_pub"`
+	V          int    `json:"v"`
+	PeerID     string `json:"peerID"`
+	Ed25519Pub string `json:"ed25519_pub"`
+	X25519Pub  string `json:"x25519_pub"`
+	Signature  string `json:"signature"`
 }
 
 // Config — конфигурация узла
@@ -113,24 +120,28 @@ type Node struct {
 	// ANNOUNCE — справочник (используется на VPS)
 	announcedPeers    map[string]announcedPeer
 	announcedMu       sync.Mutex
-	announceMultiaddrs []string // наши собственные multiaddr для периодического ANNOUNCE
+	announceMultiaddrs []string
 
 	// RELAY — резервация слота на relay-сервере (VPS)
 	relayReservation *client.Reservation
 	relayMu          sync.Mutex
-	relayPeerInfo    peer.AddrInfo // адрес relay-сервера для перезапуска резервации
+	relayPeerInfo    peer.AddrInfo
 
 	// OFFLINE QUEUE — сообщения, ожидающие отправки при восстановлении связи
 	pendingMessages []Message
 	pendingMu       sync.Mutex
-	pendingFile     string // путь к файлу очереди
+	pendingFile     string
 
-	// E2E — ключ шифрования поверх транспорта (приложение↔приложение).
-	// Отдельный от PeerID. Разные ключи — разные файлы.
-	e2eKeyFile string
-	e2ePubFile string
-	e2ePrivKey crypto.PrivKey
-	e2ePubKey  string // base64 публичного ключа
+	// E2E — два ключа: Ed25519 (подпись) и X25519 (шифрование).
+	// Отдельно от PeerID. Разные ключи — разные файлы.
+	// Публичные ключи не хранятся — вычисляются из приватных.
+	ed25519KeyFile string
+	ed25519Priv    ed25519.PrivateKey // 64 байта (seed + public внутри)
+	ed25519Pub     ed25519.PublicKey  // 32 байта (кэш, вычисляется из priv)
+
+	x25519KeyFile string
+	x25519Priv    [32]byte // приватный
+	x25519Pub     [32]byte // кэш, вычисляется из priv
 }
 
 // NewNode — создаёт новый узел
@@ -220,75 +231,141 @@ func (n *Node) HandlePeerFound(peerInfo peer.AddrInfo) {
 }
 
 // ============================================================
-// E2E — отдельный ключ шифрования (этап 4.1)
+// E2E — два ключа: Ed25519 (подпись) + X25519 (шифрование).
+// Этап 4.3.1. Публичные ключи не хранятся — вычисляются из приватных.
 // ============================================================
 
-// loadOrGenerateE2EKey — загружает E2E-ключ из файлов или генерирует новый.
-// Использует Ed25519 (быстро, компактно, современно).
-// Приватный ключ — в e2eKeyFile, публичный — в e2ePubFile (base64).
-func (n *Node) loadOrGenerateE2EKey() error {
-	if n.e2eKeyFile == "" {
-		return fmt.Errorf("e2e key file path not set")
+// loadOrGenerateE2EKeys — загружает / генерирует Ed25519 и X25519 ключи.
+// Ed25519 — для подписи (4.4). X25519 — для шифрования (4.3).
+// Порядок: PeerID (уже загружен) → Ed25519 → X25519.
+func (n *Node) loadOrGenerateE2EKeys() {
+	if n.stateFile == "" {
+		log.Printf("[KEY] stateFile not set, E2E keys skipped")
+		return
+	}
+	if n.ed25519KeyFile == "" {
+		n.ed25519KeyFile = n.stateFile + ".ed25519.key"
+	}
+	if n.x25519KeyFile == "" {
+		n.x25519KeyFile = n.stateFile + ".x25519.key"
 	}
 
-	// Попытка загрузить существующий ключ.
-	if data, err := os.ReadFile(n.e2eKeyFile); err == nil {
-		priv, err := crypto.UnmarshalPrivateKey(data)
-		if err != nil {
-			log.Printf("[E2E] failed to unmarshal existing key: %v", err)
-			// Файл есть, но ключ не читается — генерируем новый.
-		} else {
-			n.e2ePrivKey = priv
-			pubBytes, _ := priv.GetPublic().Raw()
-			n.e2ePubKey = base64.StdEncoding.EncodeToString(pubBytes)
-			log.Printf("[E2E] loaded existing E2E key (pub=%s...)", truncate(n.e2ePubKey, 16))
+	if err := n.loadOrGenerateEd25519Key(); err != nil {
+		log.Printf("[KEY] ed25519 failed: %v", err)
+	}
+	if err := n.loadOrGenerateX25519Key(); err != nil {
+		log.Printf("[KEY] x25519 failed: %v", err)
+	}
+}
+
+// loadOrGenerateEd25519Key — загружает или генерирует Ed25519-ключ (подпись).
+// Файл: 64 байта (seed + public внутри).
+func (n *Node) loadOrGenerateEd25519Key() error {
+	// Попытка загрузить существующий.
+	if data, err := os.ReadFile(n.ed25519KeyFile); err == nil {
+		if len(data) == ed25519.PrivateKeySize {
+			n.ed25519Priv = ed25519.PrivateKey(data)
+			n.ed25519Pub = n.ed25519Priv.Public().(ed25519.PublicKey)
+			log.Printf("[KEY] loaded ed25519 (pub=%s...)",
+				truncate(base64.StdEncoding.EncodeToString(n.ed25519Pub), 16))
 			return nil
 		}
+		log.Printf("[KEY] regenerated ed25519 key (wrong size: %d)", len(data))
 	}
 
-	// Генерация нового Ed25519 ключа.
-	priv, _, err := crypto.GenerateKeyPair(crypto.Ed25519, -1)
+	// Генерация нового.
+	pub, priv, err := ed25519.GenerateKey(cryptorand.Reader)
 	if err != nil {
-		return fmt.Errorf("e2e keygen failed: %w", err)
+		return fmt.Errorf("ed25519 keygen failed: %w", err)
 	}
-	n.e2ePrivKey = priv
+	n.ed25519Priv = priv
+	n.ed25519Pub = pub
 
-	privBytes, err := crypto.MarshalPrivateKey(priv)
-	if err != nil {
-		return fmt.Errorf("e2e marshal failed: %w", err)
-	}
-	if err := os.WriteFile(n.e2eKeyFile, privBytes, 0600); err != nil {
-		return fmt.Errorf("e2e save priv failed: %w", err)
+	if err := os.WriteFile(n.ed25519KeyFile, priv, 0600); err != nil {
+		return fmt.Errorf("ed25519 save failed: %w", err)
 	}
 
-	pubBytes, _ := priv.GetPublic().Raw()
-	n.e2ePubKey = base64.StdEncoding.EncodeToString(pubBytes)
-	if err := os.WriteFile(n.e2ePubFile, []byte(n.e2ePubKey), 0644); err != nil {
-		return fmt.Errorf("e2e save pub failed: %w", err)
-	}
-
-	log.Printf("[E2E] generated new E2E key (pub=%s...)", truncate(n.e2ePubKey, 16))
+	log.Printf("[KEY] generated ed25519 (pub=%s...)",
+		truncate(base64.StdEncoding.EncodeToString(pub), 16))
 	return nil
 }
 
-// GetE2EPublicKey — возвращает E2E-публичный ключ в base64.
-func (n *Node) GetE2EPublicKey() string {
-	return n.e2ePubKey
+// loadOrGenerateX25519Key — загружает или генерирует X25519-ключ (шифрование).
+// Файл: 32 байта (приватный ключ).
+func (n *Node) loadOrGenerateX25519Key() error {
+	// Попытка загрузить существующий.
+	if data, err := os.ReadFile(n.x25519KeyFile); err == nil {
+		if len(data) == 32 {
+			copy(n.x25519Priv[:], data)
+			pub, err := deriveX25519Public(n.x25519Priv)
+			if err != nil {
+				log.Printf("[KEY] x25519 derive failed: %v", err)
+			} else {
+				n.x25519Pub = pub
+			}
+			log.Printf("[KEY] loaded x25519 (pub=%s...)",
+				truncate(base64.StdEncoding.EncodeToString(n.x25519Pub[:]), 16))
+			return nil
+		}
+		log.Printf("[KEY] regenerated x25519 key (wrong size: %d)", len(data))
+	}
+
+	// Генерация нового.
+	pub, priv, err := box.GenerateKey(cryptorand.Reader)
+	if err != nil {
+		return fmt.Errorf("x25519 keygen failed: %w", err)
+	}
+	n.x25519Priv = *priv
+	n.x25519Pub = *pub
+
+	if err := os.WriteFile(n.x25519KeyFile, n.x25519Priv[:], 0600); err != nil {
+		return fmt.Errorf("x25519 save failed: %w", err)
+	}
+
+	log.Printf("[KEY] generated x25519 (pub=%s...)",
+		truncate(base64.StdEncoding.EncodeToString(n.x25519Pub[:]), 16))
+	return nil
+}
+
+// deriveX25519Public — вычисляет публичный ключ из приватного X25519.
+// Использует curve25519.X25519 — рекомендованный API (не ScalarBaseMult).
+func deriveX25519Public(priv [32]byte) ([32]byte, error) {
+	pubBytes, err := curve25519.X25519(priv[:], curve25519.Basepoint)
+	if err != nil {
+		return [32]byte{}, err
+	}
+	var result [32]byte
+	copy(result[:], pubBytes)
+	return result, nil
+}
+
+// GetEd25519PublicKey — возвращает Ed25519-публичный ключ в base64.
+func (n *Node) GetEd25519PublicKey() string {
+	if len(n.ed25519Pub) == 0 {
+		return ""
+	}
+	return base64.StdEncoding.EncodeToString(n.ed25519Pub)
+}
+
+// GetX25519PublicKey — возвращает X25519-публичный ключ в base64.
+func (n *Node) GetX25519PublicKey() string {
+	return base64.StdEncoding.EncodeToString(n.x25519Pub[:])
 }
 
 // GetMyQRData — возвращает JSON для QR-кода версии 1.
-// Формат: {"v": 1, "peerID": "Qm...", "e2e_pub": "base64..."}
 func (n *Node) GetMyQRData() string {
 	if n.host == nil {
 		return ""
 	}
 	data, err := json.Marshal(qrDataV1{
-		V:      E2E_VERSION,
-		PeerID: n.host.ID().String(),
-		E2EPub: n.e2ePubKey,
+		V:          E2E_VERSION,
+		PeerID:     n.host.ID().String(),
+		Ed25519Pub: base64.StdEncoding.EncodeToString(n.ed25519Pub),
+		X25519Pub:  base64.StdEncoding.EncodeToString(n.x25519Pub[:]),
+		Signature:  "",
 	})
 	if err != nil {
-		log.Printf("[E2E] QR marshal failed: %v", err)
+		log.Printf("[KEY] QR marshal failed: %v", err)
 		return ""
 	}
 	return string(data)
@@ -384,7 +461,6 @@ func (n *Node) GetRelayAddrs() []string {
 // OFFLINE QUEUE — очередь сообщений при потере связи
 // ============================================================
 
-// loadPendingQueue — загружает очередь из файла.
 func (n *Node) loadPendingQueue() {
 	if n.pendingFile == "" {
 		return
@@ -404,7 +480,6 @@ func (n *Node) loadPendingQueue() {
 	log.Printf("[QUEUE] loaded %d pending messages", len(queue))
 }
 
-// savePendingQueue — сохраняет очередь в файл.
 func (n *Node) savePendingQueue() {
 	if n.pendingFile == "" {
 		return
@@ -424,7 +499,6 @@ func (n *Node) savePendingQueue() {
 	}
 }
 
-// enqueuePending — добавляет сообщение в очередь.
 func (n *Node) enqueuePending(msg Message) {
 	n.pendingMu.Lock()
 	n.pendingMessages = append(n.pendingMessages, msg)
@@ -434,14 +508,12 @@ func (n *Node) enqueuePending(msg Message) {
 	n.savePendingQueue()
 }
 
-// hasPending — true, если очередь непуста. Используется триггерами flush.
 func (n *Node) hasPending() bool {
 	n.pendingMu.Lock()
 	defer n.pendingMu.Unlock()
 	return len(n.pendingMessages) > 0
 }
 
-// flushPending — отправляет все накопленные сообщения.
 func (n *Node) flushPending() {
 	n.pendingMu.Lock()
 	queue := make([]Message, len(n.pendingMessages))
@@ -468,9 +540,6 @@ func (n *Node) flushPending() {
 	log.Printf("[QUEUE] flushed, remaining: %d", len(remaining))
 }
 
-// tryReplicate — пытается отправить сообщение пирам. true — если отправил хотя бы одному.
-// Для адресных сообщений (Recipient != "") — шлёт конкретному адресату
-// (напрямую или через bootstrap).
 func (n *Node) tryReplicate(msg Message) bool {
 	if n.host == nil {
 		return false
@@ -483,12 +552,10 @@ func (n *Node) tryReplicate(msg Message) bool {
 		return false
 	}
 
-	// Адресная маршрутизация.
 	if msg.Recipient != "" {
 		return n.sendToRecipient(msg, data)
 	}
 
-	// Веер (broadcast) — старое поведение.
 	peers := n.host.Network().Peers()
 	var alive []peer.ID
 	for _, p := range peers {
@@ -526,10 +593,6 @@ func (n *Node) tryReplicate(msg Message) bool {
 // АДРЕСНАЯ МАРШРУТИЗАЦИЯ (этап 4.2)
 // ============================================================
 
-// sendToRecipient — отправляет сообщение конкретному адресату по PeerID.
-// Если адресат подключён напрямую — шлём ему.
-// Если нет — шлём bootstrap-пиру (VPS), который маршрутизирует по Recipient.
-// Возвращает true, если удалось отправить хотя бы куда-то.
 func (n *Node) sendToRecipient(msg Message, data []byte) bool {
 	targetID, err := peer.Decode(msg.Recipient)
 	if err != nil {
@@ -537,7 +600,6 @@ func (n *Node) sendToRecipient(msg Message, data []byte) bool {
 		return false
 	}
 
-	// Проверяем прямое подключение к адресату.
 	for _, p := range n.host.Network().Peers() {
 		if p == targetID && !n.isPeerDead(p.String()) {
 			go n.sendReplicaToPeer(targetID, data)
@@ -546,14 +608,12 @@ func (n *Node) sendToRecipient(msg Message, data []byte) bool {
 		}
 	}
 
-	// Не подключён напрямую. Шлём bootstrap-пиру (VPS маршрутизирует).
 	bootstrapPeers := n.loadBootstrapPeers()
 	for _, addr := range bootstrapPeers {
 		pi, err := peer.AddrInfoFromString(addr)
 		if err != nil {
 			continue
 		}
-		// Не шлём самому себе (VPS — это мы).
 		if n.host.ID() == pi.ID {
 			continue
 		}
@@ -562,12 +622,10 @@ func (n *Node) sendToRecipient(msg Message, data []byte) bool {
 		return true
 	}
 
-	log.Printf("[REPLICA] no route to recipient %s", msg.Recipient)
+	log.Printf("[STATUS] recipient not found: %s", msg.Recipient)
 	return false
 }
 
-// sendReplicaToPeer — низкоуровневая отправка REPLICA-сообщения пиру.
-// Используется sendToRecipient и replicateMessage.
 func (n *Node) sendReplicaToPeer(targetID peer.ID, data []byte) {
 	randomDelay(10, 30)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -583,13 +641,9 @@ func (n *Node) sendReplicaToPeer(targetID peer.ID, data []byte) {
 }
 
 // ============================================================
-// NOTIFIEE — реакция на события libp2p (ConnectedF)
+// NOTIFIEE
 // ============================================================
 
-// nodeNotifiee — слушает события libp2p Network.
-// Основной триггер flush on reconnect: когда libp2p сам восстанавливает
-// соединение (например, через relay), ConnectedF срабатывает, и мы сразу
-// отправляем накопленную очередь, не дожидаясь тика announceLoop.
 type nodeNotifiee struct {
 	node *Node
 }
@@ -617,7 +671,6 @@ func (nn *nodeNotifiee) ListenClose(net network.Network, addr ma.Multiaddr) {}
 // ANNOUNCE — справочник пиров (VPS)
 // ============================================================
 
-// announcePeer — сохраняет список multiaddr, которые пир сам о себе сообщил.
 func (n *Node) announcePeer(peerID string, multiaddrs []string) {
 	if len(multiaddrs) == 0 {
 		return
@@ -634,7 +687,6 @@ func (n *Node) announcePeer(peerID string, multiaddrs []string) {
 	log.Printf("[ANNOUNCE] %s → %d addrs (%v)", peerID, len(multiaddrs), multiaddrs)
 }
 
-// lookupPeer — ищет multiaddr по PeerID. Удаляет устаревшие (>TTL).
 func (n *Node) lookupPeer(peerID string) ([]string, bool) {
 	n.announcedMu.Lock()
 	defer n.announcedMu.Unlock()
@@ -649,7 +701,6 @@ func (n *Node) lookupPeer(peerID string) ([]string, bool) {
 	return p.Multiaddrs, true
 }
 
-// cleanupAnnounced — удаляет записи старше TTL и записи отключённых пиров.
 func (n *Node) cleanupAnnounced() {
 	connected := make(map[string]bool)
 	if n.host != nil {
@@ -674,7 +725,6 @@ func (n *Node) cleanupAnnounced() {
 	}
 }
 
-// SendAnnounce — отправляет наш список multiaddr на bootstrap.
 func (n *Node) SendAnnounce(multiaddrs []string) {
 	if n.host == nil || len(multiaddrs) == 0 {
 		return
@@ -742,7 +792,6 @@ func (n *Node) SendAnnounce(multiaddrs []string) {
 	}
 }
 
-// FindPeerByID — ищет список multiaddr по PeerID через bootstrap-справочник.
 func (n *Node) FindPeerByID(targetID string) ([]string, error) {
 	if n.host == nil {
 		return nil, fmt.Errorf("node not started")
@@ -787,8 +836,6 @@ func (n *Node) FindPeerByID(targetID string) ([]string, error) {
 	return nil, fmt.Errorf("not found")
 }
 
-// parseMultiaddrsResponse — парсит ответ вида:
-// [PREFIX]\n<addr1>\n<addr2>\n[END]\n
 func parseMultiaddrsResponse(response, prefix string) []string {
 	lines := strings.Split(response, "\n")
 	if len(lines) == 0 {
@@ -883,22 +930,17 @@ func (n *Node) handleStream(stream network.Stream) {
 			replicaMsg.ReplicatedAt = time.Now()
 			replicaMsg.IsOwn = false
 
-			// Адресная маршрутизация (этап 4.2).
 			if replicaMsg.Recipient != "" && n.host != nil {
 				myID := n.host.ID().String()
 				if replicaMsg.Recipient != myID {
-					// Не нам.
 					if n.configEnableRelayServer {
-						// VPS — пересылаем дальше.
 						log.Printf("[REPLICA] relay forward to %s", replicaMsg.Recipient)
 						go n.replicateMessage(replicaMsg)
 					} else {
-						// Клиент — не маршрутизатор, дропаем.
 						log.Printf("[REPLICA] not for us (recipient=%s), dropping", replicaMsg.Recipient)
 					}
 					return
 				}
-				// Нам — добавляем в память, не реплицируем дальше.
 				if n.memory.Add(replicaMsg) {
 					log.Printf("[REPLICA] received addressed message for us: %s", replicaMsg.ID)
 					if n.messageHook != nil {
@@ -909,7 +951,6 @@ func (n *Node) handleStream(stream network.Stream) {
 				return
 			}
 
-			// Broadcast (без Recipient) — старое поведение.
 			if n.memory.Add(replicaMsg) {
 				go n.replicateMessage(replicaMsg)
 				if n.messageHook != nil {
@@ -1013,7 +1054,6 @@ func (n *Node) handleStream(stream network.Stream) {
 	n.processMessage(msg, remoteID, false)
 }
 
-// buildRelayAddrFor — строит relay-адрес для пира, подключённого к нам (VPS).
 func (n *Node) buildRelayAddrFor(targetID string) string {
 	if n.host == nil {
 		return ""
@@ -1189,7 +1229,6 @@ func (n *Node) cleanupLoop() {
 	}()
 }
 
-// markPeerAlive — помечает пир живым.
 func (n *Node) markPeerAlive(peerID string) bool {
 	n.mu.Lock()
 	defer n.mu.Unlock()
@@ -1259,9 +1298,6 @@ func (n *Node) processMessageRelayed(msg string, senderID string) {
 	}
 }
 
-// replicateMessage — отправляет сообщение по сети.
-// Адресное (Recipient != "") — конкретному получателю.
-// Broadcast (Recipient == "") — веер, старое поведение.
 func (n *Node) replicateMessage(msg Message) {
 	if n.host == nil {
 		return
@@ -1274,13 +1310,11 @@ func (n *Node) replicateMessage(msg Message) {
 		return
 	}
 
-	// Адресная маршрутизация (этап 4.2).
 	if msg.Recipient != "" {
 		n.sendToRecipient(msg, data)
 		return
 	}
 
-	// Веер (broadcast).
 	peers := n.host.Network().Peers()
 	log.Printf("[REPLICA] broadcast msg id=%s sender=%s: %d peers", msg.ID, msg.Sender, len(peers))
 
@@ -1345,7 +1379,6 @@ func (n *Node) processMessageWithID(msg string, senderID string, isOwn bool, exp
 	n.processMessageInternal(msg, senderID, isOwn, expiresAt, id, "")
 }
 
-// processMessageWithRecipient — отправляет адресное сообщение конкретному получателю.
 func (n *Node) processMessageWithRecipient(msg string, senderID string, isOwn bool, expiresAt time.Time, id string, recipient string) {
 	n.processMessageInternal(msg, senderID, isOwn, expiresAt, id, recipient)
 }
@@ -1637,7 +1670,6 @@ func (n *Node) InitP2P() error {
 		log.Println("[INIT] Состояние не найдено, начинаем с нуля")
 	}
 
-	// Инициализация очереди offline
 	if n.pendingFile == "" {
 		if n.stateFile != "" {
 			n.pendingFile = n.stateFile + ".queue"
@@ -1645,14 +1677,8 @@ func (n *Node) InitP2P() error {
 	}
 	n.loadPendingQueue()
 
-	// Инициализация путей E2E-ключей (разные ключи — разные файлы).
-	if n.e2eKeyFile == "" && n.stateFile != "" {
-		n.e2eKeyFile = n.stateFile + ".e2e.key"
-		n.e2ePubFile = n.stateFile + ".e2e.pub"
-	}
-	if err := n.loadOrGenerateE2EKey(); err != nil {
-		log.Printf("[E2E] init failed: %v", err)
-	}
+	// Инициализация E2E-ключей (Ed25519 + X25519).
+	n.loadOrGenerateE2EKeys()
 
 	var priv crypto.PrivKey
 	keyBytes, err := n.loadPrivateKey()
