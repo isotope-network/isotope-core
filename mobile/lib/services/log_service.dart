@@ -1,9 +1,11 @@
+// mobile/lib/services/log_service.dart
 import 'dart:io';
 import 'package:flutter/foundation.dart';
 
 class LogService {
   static final List<String> _logs = [];
   static const int _maxLogs = 1000;
+  static const int _maxMessageLength = 4096; // 4 КБ — защита от огромных строк
   static File? _logFile;
   static String _logFilePath = '';
 
@@ -18,11 +20,16 @@ class LogService {
         final content = await _logFile!.readAsString();
         final lines = content.split('\n');
         _logs.clear();
-        _logs.addAll(lines.where((l) => l.isNotEmpty));
+        for (final l in lines) {
+          if (l.isEmpty) continue;
+          _logs.add(_truncate(l));
+        }
         if (_logs.length > _maxLogs) {
           _logs.removeRange(0, _logs.length - _maxLogs);
         }
-        debugPrint('LogService: loaded ${_logs.length} logs from file');
+        // Перезаписываем файл очищенной и обрезанной версией
+        await _logFile!.writeAsString('${_logs.join('\n')}\n');
+        debugPrint('LogService: loaded ${_logs.length} logs from file (truncated)');
       } else {
         debugPrint('LogService: no log file found');
       }
@@ -32,10 +39,18 @@ class LogService {
     LogService.log('LogService: init END');
   }
 
+  /// Обрезает слишком длинную строку
+  static String _truncate(String s) {
+    if (s.length <= _maxMessageLength) return s;
+    final removed = s.length - _maxMessageLength;
+    return '${s.substring(0, _maxMessageLength)}...[truncated $removed chars]';
+  }
+
   /// Добавляет запись в лог
   static void log(String message) {
     final timestamp = _formatTime(DateTime.now());
-    final line = '[$timestamp] $message';
+    final safeMessage = _truncate(message);
+    final line = '[$timestamp] $safeMessage';
 
     _logs.add(line);
     if (_logs.length > _maxLogs) {

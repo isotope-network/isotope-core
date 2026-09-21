@@ -56,6 +56,7 @@ class _ConnectScreenState extends State<ConnectScreen> {
   VoidCallback? _chatListener;
   Timer? _coreLogsTimer;
   final Set<String> _coreLogsSeen = {};
+  static const int _maxCoreLogsSeen = 5000;
 
   String _myPeerId = '';
   bool _announced = false;
@@ -152,6 +153,10 @@ class _ConnectScreenState extends State<ConnectScreen> {
         if (_coreLogsSeen.contains(line)) continue;
         _coreLogsSeen.add(line);
         LogService.log('CORE: $line');
+      }
+      // Ограничиваем Set — защита от роста
+      if (_coreLogsSeen.length > _maxCoreLogsSeen) {
+        _coreLogsSeen.clear();
       }
     } catch (_) {}
   }

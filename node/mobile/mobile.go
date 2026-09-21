@@ -36,9 +36,25 @@ func (w *logWriter) Write(p []byte) (int, error) {
 	return len(p), nil
 }
 
-// addLog — добавляет запись в журнал
+// addLog — добавляет запись в журнал.
+// Защита от огромных строк: обрезаем до maxMsgLen.
+// Источник огромных строк — libp2p и другие библиотеки, которые пишут
+// через log.SetOutput; маркер [BIG N chars] помогает найти источник.
 func addLog(format string, args ...interface{}) {
 	msg := fmt.Sprintf(format, args...)
+
+	const maxMsgLen = 4096
+	if len(msg) > maxMsgLen {
+		removed := len(msg) - maxMsgLen
+		if len(msg) > 65536 {
+			// Особо большие — помечаем и оставляем префикс.
+			msg = fmt.Sprintf("[BIG %d chars] %s...[truncated %d chars]",
+				len(msg), msg[:256], removed)
+		} else {
+			msg = msg[:maxMsgLen] + fmt.Sprintf("...[truncated %d chars]", removed)
+		}
+	}
+
 	line := time.Now().Format("2006-01-02 15:04:05") + " " + msg
 
 	logsMu.Lock()
