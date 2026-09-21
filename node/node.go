@@ -17,6 +17,7 @@ import (
 	mathrand "math/rand"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -140,8 +141,13 @@ type Node struct {
 	ed25519Pub     ed25519.PublicKey  // 32 байта (кэш, вычисляется из priv)
 
 	x25519KeyFile string
-	x25519Priv    [32]byte // приватный
-	x25519Pub     [32]byte // кэш, вычисляется из priv
+	x25519Priv    [32]byte
+	x25519Pub     [32]byte
+
+	// CONTACTS — данные пользователя (не состояние узла).
+	// Отдельный файл isotope_contacts.json.
+	contactsFile string
+	contacts     *ContactsStore
 }
 
 // NewNode — создаёт новый узел
@@ -1680,6 +1686,15 @@ func (n *Node) InitP2P() error {
 	// Инициализация E2E-ключей (Ed25519 + X25519).
 	n.loadOrGenerateE2EKeys()
 
+	// Инициализация хранилища контактов (отдельно от state).
+	if n.contactsFile == "" && n.stateFile != "" {
+		n.contactsFile = filepath.Join(filepath.Dir(n.stateFile), "isotope_contacts.json")
+	}
+	if n.contactsFile != "" {
+		_ = os.MkdirAll(filepath.Dir(n.contactsFile), 0700)
+		n.contacts = NewContactsStore(n.contactsFile)
+	}
+
 	var priv crypto.PrivKey
 	keyBytes, err := n.loadPrivateKey()
 	if err != nil {
@@ -2193,6 +2208,36 @@ func (n *Node) ExchangePeers(peerID string) error {
 		}
 	}
 	return nil
+}
+
+// AddContact — добавляет или обновляет контакт.
+func (n *Node) AddContact(peerID, ed25519Pub, x25519Pub, signature, name string) error {
+	if n.contacts == nil {
+		return fmt.Errorf("contacts store not initialized")
+	}
+	return n.contacts.Add(Contact{
+		PeerID:     peerID,
+		Ed25519Pub: ed25519Pub,
+		X25519Pub:  x25519Pub,
+		Signature:  signature,
+		Name:       name,
+	})
+}
+
+// GetContacts — возвращает все контакты.
+func (n *Node) GetContacts() []Contact {
+	if n.contacts == nil {
+		return []Contact{}
+	}
+	return n.contacts.GetAll()
+}
+
+// GetContact — возвращает контакт по PeerID.
+func (n *Node) GetContact(peerID string) (Contact, bool) {
+	if n.contacts == nil {
+		return Contact{}, false
+	}
+	return n.contacts.Get(peerID)
 }
 
 // GetHost — возвращает libp2p host

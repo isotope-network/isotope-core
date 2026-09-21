@@ -232,6 +232,58 @@ class LibP2PService {
     }
   }
 
+/// Добавляет или обновляет контакт.
+  /// Возвращает {"status":"ok"} или {"error":"..."}.
+  static Future<Map<String, dynamic>> addContact({
+    required String peerID,
+    required String ed25519Pub,
+    required String x25519Pub,
+    String signature = '',
+    String name = '',
+  }) async {
+    try {
+      final response = await _channel.invokeMethod<String>('addContact', {
+        'peerID': peerID,
+        'ed25519Pub': ed25519Pub,
+        'x25519Pub': x25519Pub,
+        'signature': signature,
+        'name': name,
+      });
+      return _safeDecode(response);
+    } on PlatformException catch (e) {
+      return {'error': e.message ?? 'platform_error', 'operation': 'add_contact'};
+    }
+  }
+
+  /// Возвращает список контактов (JSON-массив).
+  static Future<List<dynamic>> getContacts() async {
+    try {
+      final response = await _channel.invokeMethod<String>('getContacts');
+      final raw = response ?? '[]';
+      try {
+        final decoded = jsonDecode(raw);
+        return decoded is List ? decoded : [];
+      } on FormatException {
+        return [];
+      }
+    } on PlatformException {
+      return [];
+    }
+  }
+
+  /// Возвращает контакт по PeerID.
+  /// {"peerID":"...","ed25519_pub":"...",...} или {"error":"..."}.
+  static Future<Map<String, dynamic>> getContact(String peerID) async {
+    try {
+      final response = await _channel.invokeMethod<String>('getContact', {
+        'peerID': peerID,
+      });
+      return _safeDecode(response);
+    } on PlatformException catch (e) {
+      return {'error': e.message ?? 'platform_error', 'operation': 'get_contact'};
+    }
+  }
+
   static Future<Map<String, dynamic>> joinDHT(String bootstrapPeers) async {
     try {
       final response = await _channel.invokeMethod<String>('joinDHT', {

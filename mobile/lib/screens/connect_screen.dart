@@ -677,18 +677,21 @@ class _ConnectScreenState extends State<ConnectScreen> {
       }
 
       String peerId = '';
-      String e2ePub = '';
+      String ed25519Pub = '';
+      String x25519Pub = '';
+      String signature = '';
 
-      // Этап 4.1: новый формат — JSON с версией.
+      // Этап 4.3: новый формат — JSON с версией.
       if (code.startsWith('{')) {
         try {
           final json = jsonDecode(code) as Map<String, dynamic>;
           final v = json['v'] as int? ?? 0;
           if (v >= 1) {
             peerId = (json['peerID'] as String?) ?? '';
-            e2ePub = (json['e2e_pub'] as String?) ?? '';
-            LogService.log('QR: распознан формат v:$v, peerID=$peerId, e2e_pub=${e2ePub.isNotEmpty ? "есть" : "нет"}');
-            // TODO 4.3: сохранить e2ePub для будущего E2E-шифрования.
+            ed25519Pub = (json['ed25519_pub'] as String?) ?? '';
+            x25519Pub = (json['x25519_pub'] as String?) ?? '';
+            signature = (json['signature'] as String?) ?? '';
+            LogService.log('QR: распознан формат v:$v, peerID=$peerId, ed25519=${ed25519Pub.isNotEmpty ? "есть" : "нет"}, x25519=${x25519Pub.isNotEmpty ? "есть" : "нет"}');
           }
         } catch (e) {
           LogService.log('QR: ошибка парсинга JSON: $e');
@@ -724,6 +727,22 @@ class _ConnectScreenState extends State<ConnectScreen> {
           );
         }
         return;
+      }
+
+      // Сохраняем контакт (если есть ключи).
+      if (ed25519Pub.isNotEmpty && x25519Pub.isNotEmpty) {
+        final saveResult = await LibP2PService.addContact(
+          peerID: peerId,
+          ed25519Pub: ed25519Pub,
+          x25519Pub: x25519Pub,
+          signature: signature,
+          name: '',
+        );
+        if (saveResult.containsKey('error')) {
+          LogService.log('QR: не удалось сохранить контакт: ${saveResult['error']}');
+        } else {
+          LogService.log('QR: контакт сохранён peerID=$peerId, verified=false');
+        }
       }
 
       await _findAndConnectByPeerId(peerId);

@@ -362,6 +362,58 @@ func GetMyQRData() string {
 	return node.GetMyQRData()
 }
 
+// AddContact — добавляет или обновляет контакт.
+func AddContact(peerID, ed25519Pub, x25519Pub, signature, name string) string {
+	nodeMu.Lock()
+	defer nodeMu.Unlock()
+
+	if node == nil {
+		return errorJSON("node not started")
+	}
+
+	if peerID == "" {
+		return errorJSON("peerID is required")
+	}
+
+	if err := node.AddContact(peerID, ed25519Pub, x25519Pub, signature, name); err != nil {
+		return errorJSON(err.Error())
+	}
+
+	addLog("[CONTACTS] added: %s", peerID)
+	return `{"status":"ok"}`
+}
+
+// GetContacts — возвращает JSON со всеми контактами.
+func GetContacts() string {
+	nodeMu.Lock()
+	defer nodeMu.Unlock()
+
+	if node == nil {
+		return `[]`
+	}
+
+	contacts := node.GetContacts()
+	data, _ := json.Marshal(contacts)
+	return string(data)
+}
+
+// GetContact — возвращает JSON контакта по PeerID.
+func GetContact(peerID string) string {
+	nodeMu.Lock()
+	defer nodeMu.Unlock()
+
+	if node == nil {
+		return errorJSON("node not started")
+	}
+
+	c, ok := node.GetContact(peerID)
+	if !ok {
+		return errorJSON("contact not found")
+	}
+	data, _ := json.Marshal(c)
+	return string(data)
+}
+
 // ConnectToPeerWithFallback — подключается к пиру, пробуя параллельно все multiaddr.
 // Принимает JSON-массив строк.
 func ConnectToPeerWithFallback(multiaddrsJSON string) string {

@@ -230,6 +230,30 @@ class MainActivity : FlutterActivity() {
                             runOnUiThread { result.success(response) }
                         }.start()
                     }
+"addContact" -> {
+                        val peerID = call.argument<String>("peerID") ?: ""
+                        val ed25519Pub = call.argument<String>("ed25519Pub") ?: ""
+                        val x25519Pub = call.argument<String>("x25519Pub") ?: ""
+                        val signature = call.argument<String>("signature") ?: ""
+                        val name = call.argument<String>("name") ?: ""
+                        Thread {
+                            val response = Mobile.addContact(peerID, ed25519Pub, x25519Pub, signature, name)
+                            runOnUiThread { result.success(response) }
+                        }.start()
+                    }
+                    "getContacts" -> {
+                        Thread {
+                            val response = Mobile.getContacts()
+                            runOnUiThread { result.success(response) }
+                        }.start()
+                    }
+                    "getContact" -> {
+                        val peerID = call.argument<String>("peerID") ?: ""
+                        Thread {
+                            val response = Mobile.getContact(peerID)
+                            runOnUiThread { result.success(response) }
+                        }.start()
+                    }
                     "getFilesDir" -> {
                         result.success(filesDir.absolutePath)
                     }
