@@ -351,7 +351,8 @@ func GetX25519PublicKey() string {
 }
 
 // GetMyQRData — возвращает JSON для QR-кода версии 1.
-// Формат: {"v":1,"peerID":"Qm...","ed25519_pub":"base64...","x25519_pub":"base64...","signature":""}
+// Формат: {"v":1,"peerID":"Qm...","ed25519_pub":"base64...","x25519_pub":"base64...","signature":"base64..."}
+// Signature — подпись peerID || x25519_pub (4.4).
 func GetMyQRData() string {
 	nodeMu.Lock()
 	defer nodeMu.Unlock()
@@ -363,6 +364,7 @@ func GetMyQRData() string {
 }
 
 // AddContact — добавляет или обновляет контакт.
+// Возвращает {"status":"ok","verified":true|false} — verified читается после записи.
 func AddContact(peerID, ed25519Pub, x25519Pub, signature, name string) string {
 	nodeMu.Lock()
 	defer nodeMu.Unlock()
@@ -379,8 +381,16 @@ func AddContact(peerID, ed25519Pub, x25519Pub, signature, name string) string {
 		return errorJSON(err.Error())
 	}
 
-	addLog("[CONTACTS] added: %s", peerID)
-	return `{"status":"ok"}`
+	verified := false
+	if c, ok := node.GetContact(peerID); ok {
+		verified = c.Verified
+	}
+	addLog("[CONTACTS] added: %s (verified=%v)", peerID, verified)
+
+	if verified {
+		return `{"status":"ok","verified":true}`
+	}
+	return `{"status":"ok","verified":false}`
 }
 
 // GetContacts — возвращает JSON со всеми контактами.
@@ -643,3 +653,4 @@ func parseBootstrapPeers(bootstrapPeers string) []string {
 	}
 	return peers
 }
+// node/mobile/mobile.go

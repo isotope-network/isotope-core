@@ -353,7 +353,60 @@ func (n *Node) GetX25519PublicKey() string {
 	return base64.StdEncoding.EncodeToString(n.x25519Pub[:])
 }
 
+// ============================================================
+// 4.4 — ПОДПИСЬ. Ed25519 подписывает peerID || x25519_pub.
+// Связка peerID + x25519_pub защищает от подмены:
+// злоумышленник не сможет подписать чужой x25519_pub своим ключом
+// и выдать себя за другого — peerID в подписи не совпадёт.
+// ============================================================
+
+// signMyX25519 — подпись peerID || x25519_pub приватным Ed25519-ключом.
+// Возвращает base64-подпись или "" при ошибке / отсутствии ключей.
+func (n *Node) signMyX25519() string {
+	if n.host == nil || len(n.ed25519Priv) == 0 {
+		return ""
+	}
+	peerID := n.host.ID().String()
+	// peerID || x25519_pub
+	msg := make([]byte, 0, len(peerID)+32)
+	msg = append(msg, []byte(peerID)...)
+	msg = append(msg, n.x25519Pub[:]...)
+
+	sig := ed25519.Sign(n.ed25519Priv, msg)
+	return base64.StdEncoding.EncodeToString(sig)
+}
+
+// verifyContactSignature — проверяет подпись контакта.
+// Подпись — над peerID || x25519_pub.
+// Возвращает true, только если все три декодировались корректно
+// и подпись валидна.
+func verifyContactSignature(peerID, ed25519PubB64, x25519PubB64, signatureB64 string) bool {
+	if peerID == "" || ed25519PubB64 == "" || x25519PubB64 == "" || signatureB64 == "" {
+		return false
+	}
+
+	edPub, err := base64.StdEncoding.DecodeString(ed25519PubB64)
+	if err != nil || len(edPub) != ed25519.PublicKeySize {
+		return false
+	}
+	xPub, err := base64.StdEncoding.DecodeString(x25519PubB64)
+	if err != nil || len(xPub) != 32 {
+		return false
+	}
+	sig, err := base64.StdEncoding.DecodeString(signatureB64)
+	if err != nil || len(sig) != ed25519.SignatureSize {
+		return false
+	}
+
+	msg := make([]byte, 0, len(peerID)+32)
+	msg = append(msg, []byte(peerID)...)
+	msg = append(msg, xPub...)
+
+	return ed25519.Verify(ed25519.PublicKey(edPub), msg, sig)
+}
+
 // GetMyQRData — возвращает JSON для QR-кода версии 1.
+// Signature — подпись peerID || x25519_pub. Заполняется на 4.4.
 func (n *Node) GetMyQRData() string {
 	if n.host == nil {
 		return ""
@@ -363,7 +416,7 @@ func (n *Node) GetMyQRData() string {
 		PeerID:     n.host.ID().String(),
 		Ed25519Pub: base64.StdEncoding.EncodeToString(n.ed25519Pub),
 		X25519Pub:  base64.StdEncoding.EncodeToString(n.x25519Pub[:]),
-		Signature:  "",
+		Signature:  n.signMyX25519(),
 	})
 	if err != nil {
 		log.Printf("[KEY] QR marshal failed: %v", err)
@@ -2326,15 +2379,38 @@ func (n *Node) ExchangePeers(peerID string) error {
 }
 
 // AddContact — добавляет или обновляет контакт.
+// 4.4: проверяет подпись над peerID || x25519_pub.
+// Результат:
+//   - подпись валидна       → Verified: true
+//   - подписи нет           → Verified: false
+//   - подпись невалидна     → Verified: false + лог
+//   - Ed25519Pub пустой при непустой Signature → Verified: false + лог
+// Отправка блокируется не здесь, а в encryptForRecipient (требует X25519Pub).
 func (n *Node) AddContact(peerID, ed25519Pub, x25519Pub, signature, name string) error {
 	if n.contacts == nil {
 		return fmt.Errorf("contacts store not initialized")
 	}
+
+	verified := false
+
+	if signature != "" {
+		if ed25519Pub == "" || x25519Pub == "" {
+			log.Printf("[CONTACT] incomplete keys for %s (ed25519=%v, x25519=%v) — contact saved as unverified",
+				peerID, ed25519Pub != "", x25519Pub != "")
+		} else if verifyContactSignature(peerID, ed25519Pub, x25519Pub, signature) {
+			verified = true
+			log.Printf("[CONTACT] signature verified for %s", peerID)
+		} else {
+			log.Printf("[CONTACT] signature invalid for %s — contact saved as unverified", peerID)
+		}
+	}
+
 	return n.contacts.Add(Contact{
 		PeerID:     peerID,
 		Ed25519Pub: ed25519Pub,
 		X25519Pub:  x25519Pub,
 		Signature:  signature,
+		Verified:   verified,
 		Name:       name,
 	})
 }
@@ -2369,3 +2445,4 @@ func (n *Node) SetDHT(d *DHTNode) {
 func (n *Node) GetDHT() *DHTNode {
 	return n.dhtNode
 }
+// node/node.go

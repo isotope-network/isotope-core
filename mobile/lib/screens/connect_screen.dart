@@ -58,6 +58,10 @@ class _ConnectScreenState extends State<ConnectScreen> {
   final Set<String> _coreLogsSeen = {};
   static const int _maxCoreLogsSeen = 5000;
 
+  /// Кеш статуса верификации контактов по PeerID.
+  /// Заполняется при сканировании QR и при загрузке контактов из ядра.
+  final Map<String, bool> _verifiedContacts = {};
+
   String _myPeerId = '';
   bool _announced = false;
 
@@ -93,8 +97,28 @@ class _ConnectScreenState extends State<ConnectScreen> {
         _checkBatteryOptimization();
 
         _scheduleAnnounce();
+        _loadContactsFromCore();
       }
     });
+  }
+
+  /// Загружает контакты из ядра и кеширует их verified-статус.
+  Future<void> _loadContactsFromCore() async {
+    try {
+      final contacts = await LibP2PService.getContacts();
+      if (!mounted) return;
+      for (final c in contacts) {
+        final peerID = c['peerID'] as String? ?? '';
+        final verified = c['verified'] as bool? ?? false;
+        if (peerID.isNotEmpty) {
+          _verifiedContacts[peerID] = verified;
+        }
+      }
+      setState(() {});
+      LogService.log('ConnectScreen: загружено контактов из ядра: ${_verifiedContacts.length}');
+    } catch (e) {
+      LogService.log('ConnectScreen: ошибка загрузки контактов: $e');
+    }
   }
 
   void _scheduleAnnounce() {
@@ -691,7 +715,7 @@ class _ConnectScreenState extends State<ConnectScreen> {
             ed25519Pub = (json['ed25519_pub'] as String?) ?? '';
             x25519Pub = (json['x25519_pub'] as String?) ?? '';
             signature = (json['signature'] as String?) ?? '';
-            LogService.log('QR: распознан формат v:$v, peerID=$peerId, ed25519=${ed25519Pub.isNotEmpty ? "есть" : "нет"}, x25519=${x25519Pub.isNotEmpty ? "есть" : "нет"}');
+            LogService.log('QR: распознан формат v:$v, peerID=$peerId, ed25519=${ed25519Pub.isNotEmpty ? "есть" : "нет"}, x25519=${x25519Pub.isNotEmpty ? "есть" : "нет"}, signature=${signature.isNotEmpty ? "есть" : "нет"}');
           }
         } catch (e) {
           LogService.log('QR: ошибка парсинга JSON: $e');
@@ -730,6 +754,7 @@ class _ConnectScreenState extends State<ConnectScreen> {
       }
 
       // Сохраняем контакт (если есть ключи).
+      bool contactVerified = false;
       if (ed25519Pub.isNotEmpty && x25519Pub.isNotEmpty) {
         final saveResult = await LibP2PService.addContact(
           peerID: peerId,
@@ -741,7 +766,18 @@ class _ConnectScreenState extends State<ConnectScreen> {
         if (saveResult.containsKey('error')) {
           LogService.log('QR: не удалось сохранить контакт: ${saveResult['error']}');
         } else {
-          LogService.log('QR: контакт сохранён peerID=$peerId, verified=false');
+          contactVerified = saveResult['verified'] == true;
+          _verifiedContacts[peerId] = contactVerified;
+          LogService.log('QR: контакт сохранён peerID=$peerId, verified=$contactVerified');
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text(contactVerified
+                    ? 'Контакт верифицирован'
+                    : 'Контакт не верифицирован'),
+              ),
+            );
+          }
         }
       }
 
@@ -1016,6 +1052,18 @@ class _ConnectScreenState extends State<ConnectScreen> {
     }
   }
 
+  /// Иконка верификации контакта (4.4).
+  /// verified: true → галочка, verified: false → предупреждение.
+  Widget? _verifiedBadge(String peerID) {
+    if (peerID.isEmpty) return null;
+    final verified = _verifiedContacts[peerID];
+    if (verified == null) return null;
+    if (verified) {
+      return const Icon(Icons.verified, size: 16, color: Colors.green);
+    }
+    return const Icon(Icons.warning_amber_rounded, size: 16, color: Colors.orange);
+  }
+
   @override
   void dispose() {
     final chatProvider = context.read<ChatProvider>();
@@ -1133,15 +1181,27 @@ class _ConnectScreenState extends State<ConnectScreen> {
                       final displayName = _displayName(node, chatProvider);
                       final lastMessage = _lastMessagePreview(node, chatProvider);
                       final lastTime = _lastMessageTime(node, chatProvider);
+                      final badge = _verifiedBadge(node.peerID);
 
                       return ListTile(
                         leading: Icon(
                           _getNodeIcon(node.status),
                           color: _getNodeIconColor(node.status),
                         ),
-                        title: Text(
-                          displayName,
-                          style: TextStyle(color: _getNodeTextColor(node.status)),
+                        title: Row(
+                          children: [
+                            Flexible(
+                              child: Text(
+                                displayName,
+                                style: TextStyle(color: _getNodeTextColor(node.status)),
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                            if (badge != null) ...[
+                              const SizedBox(width: 4),
+                              badge,
+                            ],
+                          ],
                         ),
                         subtitle: Text(
                           lastMessage,
@@ -1198,3 +1258,4 @@ class _ConnectScreenState extends State<ConnectScreen> {
     );
   }
 }
+// mobile/lib/screens/connect_screen.dart

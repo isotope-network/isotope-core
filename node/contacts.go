@@ -12,8 +12,8 @@ import (
 
 // Contact — запись о контакте.
 // Публичные ключи: Ed25519 (подпись) и X25519 (шифрование).
-// Signature — подпись ed25519_pub от PeerID-ключа владельца (заполняется на 4.4).
-// Verified — true после проверки подписи (4.4).
+// Signature — подпись peerID||x25519_pub от Ed25519-ключа владельца (4.4).
+// Verified — true после успешной проверки подписи (4.4). Сигнал UI, не пропуск.
 // Name — локальное имя, пустое при добавлении.
 type Contact struct {
 	PeerID     string `json:"peerID"`
@@ -119,7 +119,7 @@ func (cs *ContactsStore) saveLocked() error {
 
 // Add — добавляет или обновляет контакт по PeerID.
 // Если контакт уже есть — обновляет поля, кроме Name (сохраняется пользовательское).
-// Verified — сбрасывается в false (пока подпись не проверена на 4.4).
+// Verified передаётся вызывающим (Node.AddContact) — store только хранит, не решает.
 func (cs *ContactsStore) Add(c Contact) error {
 	cs.mu.Lock()
 	defer cs.mu.Unlock()
@@ -136,25 +136,23 @@ func (cs *ContactsStore) Add(c Contact) error {
 	// Ищем существующий.
 	for i := range cs.contacts {
 		if cs.contacts[i].PeerID == c.PeerID {
-			// Обновляем ключи и подпись, имя — сохраняем.
+			// Обновляем ключи, подпись и verified. Имя — сохраняем, если новое пустое.
 			existingName := cs.contacts[i].Name
 			cs.contacts[i] = c
 			if existingName != "" && c.Name == "" {
 				cs.contacts[i].Name = existingName
 			}
-			cs.contacts[i].Verified = false
 			if cs.contacts[i].AddedAt == "" {
 				cs.contacts[i].AddedAt = time.Now().UTC().Format(time.RFC3339)
 			}
-			log.Printf("[CONTACTS] updated %s", c.PeerID)
+			log.Printf("[CONTACTS] updated %s (verified=%v)", c.PeerID, cs.contacts[i].Verified)
 			return cs.saveLocked()
 		}
 	}
 
 	// Новый.
-	c.Verified = false
 	cs.contacts = append(cs.contacts, c)
-	log.Printf("[CONTACTS] added %s", c.PeerID)
+	log.Printf("[CONTACTS] added %s (verified=%v)", c.PeerID, c.Verified)
 	return cs.saveLocked()
 }
 
