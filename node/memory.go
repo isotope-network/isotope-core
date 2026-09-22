@@ -28,6 +28,7 @@ type Message struct {
 	ReplicatedFrom  string    `json:"replicatedFrom"` // от какого узла реплика
 	ReplicatedAt    time.Time `json:"replicatedAt"`   // когда реплицировано
 	Recipient       string    `json:"recipient,omitempty"` // адресат: PeerID (v1), позже — хеш E2E-ключа
+	Version         int       `json:"version,omitempty"`   // 0 = история/broadcast, 2 = E2E
 }
 
 // Memory — потокобезопасное хранилище сообщений (без лимита)

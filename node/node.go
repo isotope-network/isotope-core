@@ -61,6 +61,11 @@ const ANNOUNCE_TTL = 8 * time.Minute
 // 0 — старый формат (только PeerID). 1 — JSON с ключами.
 const E2E_VERSION = 1
 
+// MESSAGE_VERSION — версия формата сообщения.
+// 0 — история / broadcast (открытое).
+// 2 — E2E-шифрованное (Text содержит base64(nonce||ciphertext)).
+const MESSAGE_VERSION_E2E = 2
+
 // announcedPeer — запись о пире: список его multiaddr + когда последний раз видели.
 type announcedPeer struct {
 	Multiaddrs []string  `json:"multiaddrs"`
@@ -68,8 +73,6 @@ type announcedPeer struct {
 }
 
 // qrDataV1 — формат QR-кода версии 1.
-// Содержит PeerID, Ed25519-публичный (подпись), X25519-публичный (шифрование)
-// и подпись (заполнится на этапе 4.4).
 type qrDataV1 struct {
 	V          int    `json:"v"`
 	PeerID     string `json:"peerID"`
@@ -87,6 +90,7 @@ type Config struct {
 	EnableMDNS        bool
 	ListenIP          string
 	EnableRelayServer bool
+	IsRelay           bool // true для relay-узла (VPS): форвардит Version=2
 }
 
 // Node — основной узел сети
@@ -111,6 +115,7 @@ type Node struct {
 	configEnableMDNS       bool
 	configListenIP         string
 	configEnableRelayServer bool
+	isRelay                bool // true для relay-узла (VPS)
 	messageHook            func(string)
 	mu                     sync.Mutex
 	lastPing               map[string]time.Time
@@ -134,11 +139,9 @@ type Node struct {
 	pendingFile     string
 
 	// E2E — два ключа: Ed25519 (подпись) и X25519 (шифрование).
-	// Отдельно от PeerID. Разные ключи — разные файлы.
-	// Публичные ключи не хранятся — вычисляются из приватных.
 	ed25519KeyFile string
-	ed25519Priv    ed25519.PrivateKey // 64 байта (seed + public внутри)
-	ed25519Pub     ed25519.PublicKey  // 32 байта (кэш, вычисляется из priv)
+	ed25519Priv    ed25519.PrivateKey
+	ed25519Pub     ed25519.PublicKey
 
 	x25519KeyFile string
 	x25519Priv    [32]byte
@@ -168,6 +171,7 @@ func NewNode(cfg Config) *Node {
 		configEnableMDNS:       cfg.EnableMDNS,
 		configListenIP:         listenIP,
 		configEnableRelayServer: cfg.EnableRelayServer,
+		isRelay:                cfg.IsRelay || cfg.EnableRelayServer,
 		memory:                 Memory{seen: make(map[string]bool)},
 		announcedPeers:         make(map[string]announcedPeer),
 	}
@@ -242,8 +246,6 @@ func (n *Node) HandlePeerFound(peerInfo peer.AddrInfo) {
 // ============================================================
 
 // loadOrGenerateE2EKeys — загружает / генерирует Ed25519 и X25519 ключи.
-// Ed25519 — для подписи (4.4). X25519 — для шифрования (4.3).
-// Порядок: PeerID (уже загружен) → Ed25519 → X25519.
 func (n *Node) loadOrGenerateE2EKeys() {
 	if n.stateFile == "" {
 		log.Printf("[KEY] stateFile not set, E2E keys skipped")
@@ -265,9 +267,7 @@ func (n *Node) loadOrGenerateE2EKeys() {
 }
 
 // loadOrGenerateEd25519Key — загружает или генерирует Ed25519-ключ (подпись).
-// Файл: 64 байта (seed + public внутри).
 func (n *Node) loadOrGenerateEd25519Key() error {
-	// Попытка загрузить существующий.
 	if data, err := os.ReadFile(n.ed25519KeyFile); err == nil {
 		if len(data) == ed25519.PrivateKeySize {
 			n.ed25519Priv = ed25519.PrivateKey(data)
@@ -279,7 +279,6 @@ func (n *Node) loadOrGenerateEd25519Key() error {
 		log.Printf("[KEY] regenerated ed25519 key (wrong size: %d)", len(data))
 	}
 
-	// Генерация нового.
 	pub, priv, err := ed25519.GenerateKey(cryptorand.Reader)
 	if err != nil {
 		return fmt.Errorf("ed25519 keygen failed: %w", err)
@@ -297,9 +296,7 @@ func (n *Node) loadOrGenerateEd25519Key() error {
 }
 
 // loadOrGenerateX25519Key — загружает или генерирует X25519-ключ (шифрование).
-// Файл: 32 байта (приватный ключ).
 func (n *Node) loadOrGenerateX25519Key() error {
-	// Попытка загрузить существующий.
 	if data, err := os.ReadFile(n.x25519KeyFile); err == nil {
 		if len(data) == 32 {
 			copy(n.x25519Priv[:], data)
@@ -316,7 +313,6 @@ func (n *Node) loadOrGenerateX25519Key() error {
 		log.Printf("[KEY] regenerated x25519 key (wrong size: %d)", len(data))
 	}
 
-	// Генерация нового.
 	pub, priv, err := box.GenerateKey(cryptorand.Reader)
 	if err != nil {
 		return fmt.Errorf("x25519 keygen failed: %w", err)
@@ -334,7 +330,6 @@ func (n *Node) loadOrGenerateX25519Key() error {
 }
 
 // deriveX25519Public — вычисляет публичный ключ из приватного X25519.
-// Использует curve25519.X25519 — рекомендованный API (не ScalarBaseMult).
 func deriveX25519Public(priv [32]byte) ([32]byte, error) {
 	pubBytes, err := curve25519.X25519(priv[:], curve25519.Basepoint)
 	if err != nil {
@@ -383,6 +378,81 @@ func truncate(s string, n int) string {
 		return s
 	}
 	return s[:n]
+}
+
+// ============================================================
+// E2E-ШИФРОВАНИЕ (этап 4.3.3)
+// ============================================================
+
+// encryptForRecipient — шифрует text для получателя.
+// recipient — PeerID получателя. Требуется контакт с x25519_pub.
+// Возвращает payload: base64(nonce(24) || ciphertext).
+func (n *Node) encryptForRecipient(recipient, text string) (string, error) {
+	if n.contacts == nil {
+		return "", fmt.Errorf("contacts store not initialized")
+	}
+
+	contact, ok := n.contacts.Get(recipient)
+	if !ok {
+		return "", fmt.Errorf("contact not found: %s", recipient)
+	}
+	if contact.X25519Pub == "" {
+		return "", fmt.Errorf("contact has no E2E key: %s", recipient)
+	}
+
+	recipientPubBytes, err := base64.StdEncoding.DecodeString(contact.X25519Pub)
+	if err != nil || len(recipientPubBytes) != 32 {
+		return "", fmt.Errorf("invalid x25519_pub for %s", recipient)
+	}
+	var recipientPub [32]byte
+	copy(recipientPub[:], recipientPubBytes)
+
+	var nonce [24]byte
+	if _, err := cryptorand.Read(nonce[:]); err != nil {
+		return "", fmt.Errorf("nonce generation failed: %w", err)
+	}
+
+	ciphertext := box.Seal(nil, []byte(text), &nonce, &recipientPub, &n.x25519Priv)
+	payload := append(nonce[:], ciphertext...)
+	return base64.StdEncoding.EncodeToString(payload), nil
+}
+
+// decryptFromSender — расшифровывает payload от отправителя.
+// payload — base64(nonce(24) || ciphertext).
+func (n *Node) decryptFromSender(sender, payload string) (string, error) {
+	if n.contacts == nil {
+		return "", fmt.Errorf("contacts store not initialized")
+	}
+
+	contact, ok := n.contacts.Get(sender)
+	if !ok {
+		return "", fmt.Errorf("contact not found: %s", sender)
+	}
+	if contact.X25519Pub == "" {
+		return "", fmt.Errorf("contact has no E2E key: %s", sender)
+	}
+
+	senderPubBytes, err := base64.StdEncoding.DecodeString(contact.X25519Pub)
+	if err != nil || len(senderPubBytes) != 32 {
+		return "", fmt.Errorf("invalid x25519_pub for %s", sender)
+	}
+	var senderPub [32]byte
+	copy(senderPub[:], senderPubBytes)
+
+	raw, err := base64.StdEncoding.DecodeString(payload)
+	if err != nil || len(raw) < 24 {
+		return "", fmt.Errorf("invalid payload from %s", sender)
+	}
+
+	var nonce [24]byte
+	copy(nonce[:], raw[:24])
+	ciphertext := raw[24:]
+
+	plaintext, ok := box.Open(nil, ciphertext, &nonce, &senderPub, &n.x25519Priv)
+	if !ok {
+		return "", fmt.Errorf("decryption failed for %s", sender)
+	}
+	return string(plaintext), nil
 }
 
 // ============================================================
@@ -929,17 +999,51 @@ func (n *Node) handleStream(stream network.Stream) {
 		payload := strings.TrimPrefix(msg, REPLICA_PREFIX)
 		var replicaMsg Message
 		if err := json.Unmarshal([]byte(payload), &replicaMsg); err == nil {
-			if plaintext, ok := n.deobfuscate(replicaMsg.Text); ok {
-				replicaMsg.Text = plaintext
+			// Деобфускация только для Version < 2 (история, broadcast).
+			if replicaMsg.Version < 2 {
+				if plaintext, ok := n.deobfuscate(replicaMsg.Text); ok {
+					replicaMsg.Text = plaintext
+				}
 			}
 			replicaMsg.ExpiresAt = time.Time{}
 			replicaMsg.ReplicatedAt = time.Now()
 			replicaMsg.IsOwn = false
 
+			// Version 2 — E2E-шифрованное. Маршрутизация по Recipient.
+			if replicaMsg.Version == MESSAGE_VERSION_E2E {
+				myID := n.host.ID().String()
+				if replicaMsg.Recipient == myID {
+					// Нам — расшифровываем.
+					plaintext, err := n.decryptFromSender(replicaMsg.Sender, replicaMsg.Text)
+					if err != nil {
+						log.Printf("[REPLICA] decrypt failed from %s: %v", replicaMsg.Sender, err)
+						return
+					}
+					replicaMsg.Text = plaintext
+					if n.memory.Add(replicaMsg) {
+						log.Printf("[REPLICA] decrypted message for us: %s", replicaMsg.ID)
+						if n.messageHook != nil {
+							data, _ := json.Marshal(replicaMsg)
+							n.messageHook(string(data))
+						}
+					}
+					return
+				}
+				// Не нам.
+				if n.isRelay {
+					log.Printf("[REPLICA] relay forward (v2) to %s", replicaMsg.Recipient)
+					go n.replicateMessage(replicaMsg)
+				} else {
+					log.Printf("[REPLICA] not for us (v2, recipient=%s), dropping", replicaMsg.Recipient)
+				}
+				return
+			}
+
+			// Version 0 — старая логика.
 			if replicaMsg.Recipient != "" && n.host != nil {
 				myID := n.host.ID().String()
 				if replicaMsg.Recipient != myID {
-					if n.configEnableRelayServer {
+					if n.isRelay {
 						log.Printf("[REPLICA] relay forward to %s", replicaMsg.Recipient)
 						go n.replicateMessage(replicaMsg)
 					} else {
@@ -1090,8 +1194,10 @@ func (n *Node) handleReplicaData(data string) {
 			payload := strings.TrimPrefix(line, REPLICA_PREFIX)
 			var replicaMsg Message
 			if err := json.Unmarshal([]byte(payload), &replicaMsg); err == nil {
-				if plaintext, ok := n.deobfuscate(replicaMsg.Text); ok {
-					replicaMsg.Text = plaintext
+				if replicaMsg.Version < 2 {
+					if plaintext, ok := n.deobfuscate(replicaMsg.Text); ok {
+						replicaMsg.Text = plaintext
+					}
 				}
 				replicaMsg.ExpiresAt = time.Time{}
 				replicaMsg.ReplicatedAt = time.Now()
@@ -1157,7 +1263,6 @@ func (n *Node) pingPeers() {
 		}
 	}()
 }
-
 
 func (n *Node) reconnectLoop() {
 	go func() {
@@ -1378,20 +1483,22 @@ func (n *Node) requestRestore() {
 }
 
 func (n *Node) processMessageWithTTL(msg string, senderID string, isOwn bool, expiresAt time.Time) {
-	n.processMessageInternal(msg, senderID, isOwn, expiresAt, "", "")
+	n.processMessageInternal(msg, senderID, isOwn, expiresAt, "", "", 0)
 }
 
 func (n *Node) processMessageWithID(msg string, senderID string, isOwn bool, expiresAt time.Time, id string) {
-	n.processMessageInternal(msg, senderID, isOwn, expiresAt, id, "")
+	n.processMessageInternal(msg, senderID, isOwn, expiresAt, id, "", 0)
 }
 
-func (n *Node) processMessageWithRecipient(msg string, senderID string, isOwn bool, expiresAt time.Time, id string, recipient string) {
-	n.processMessageInternal(msg, senderID, isOwn, expiresAt, id, recipient)
+// processMessageWithRecipient — отправляет адресное сообщение конкретному получателю.
+// version — 2 для E2E-шифрованных.
+func (n *Node) processMessageWithRecipient(msg string, senderID string, isOwn bool, expiresAt time.Time, id string, recipient string, version int) {
+	n.processMessageInternal(msg, senderID, isOwn, expiresAt, id, recipient, version)
 }
 
 func (n *Node) processMessageWithModeAndTTL(msg string, senderID string, isOwn bool, mode int, expiresAt time.Time) {
 	if mode == 0 || n.host == nil {
-		n.processMessageInternal(msg, senderID, isOwn, expiresAt, "", "")
+		n.processMessageInternal(msg, senderID, isOwn, expiresAt, "", "", 0)
 		return
 	}
 	relayCount := 4
@@ -1401,7 +1508,7 @@ func (n *Node) processMessageWithModeAndTTL(msg string, senderID string, isOwn b
 	}
 	relays := n.selectRelays(relayCount)
 	if len(relays) < relayCount {
-		n.processMessageInternal(msg, senderID, isOwn, expiresAt, "", "")
+		n.processMessageInternal(msg, senderID, isOwn, expiresAt, "", "", 0)
 		return
 	}
 	n.sendViaRelayChain(relays, msg)
@@ -1466,10 +1573,10 @@ func (n *Node) sendViaRelayChain(relays []string, msg string) {
 }
 
 func (n *Node) processMessage(msg string, senderID string, isOwn bool) {
-	n.processMessageInternal(msg, senderID, isOwn, time.Time{}, "", "")
+	n.processMessageInternal(msg, senderID, isOwn, time.Time{}, "", "", 0)
 }
 
-func (n *Node) processMessageInternal(msg string, senderID string, isOwn bool, expiresAt time.Time, providedID string, recipient string) {
+func (n *Node) processMessageInternal(msg string, senderID string, isOwn bool, expiresAt time.Time, providedID string, recipient string, version int) {
 	inputVector := textToVector(msg)
 	outputVector, _ := forward(inputVector, n.layers)
 	answer := vectorToText(outputVector)
@@ -1552,6 +1659,7 @@ func (n *Node) processMessageInternal(msg string, senderID string, isOwn bool, e
 		Text:      msg,
 		Sender:    senderID,
 		Recipient: recipient,
+		Version:   version,
 		Time:      time.Now().UTC().Format("2006-01-02T15:04:05"),
 		IsOwn:     isOwn,
 		Score:     0,
@@ -2122,6 +2230,7 @@ func (n *Node) SendMessage(text string, ttl int) (string, error) {
 }
 
 // SendToPeer — отправляет сообщение конкретному пиру (адресно).
+// Требуется контакт с x25519_pub. Шифрует через box.Seal (Version=2).
 func (n *Node) SendToPeer(peerID string, text string, ttl int) (string, error) {
 	if n.host == nil {
 		return "", fmt.Errorf("node not started")
@@ -2129,12 +2238,18 @@ func (n *Node) SendToPeer(peerID string, text string, ttl int) (string, error) {
 	if peerID == "" {
 		return "", fmt.Errorf("peerID is required")
 	}
+
+	encrypted, err := n.encryptForRecipient(peerID, text)
+	if err != nil {
+		return "", fmt.Errorf("encrypt failed: %w", err)
+	}
+
 	var expiresAt time.Time
 	if ttl > 0 {
 		expiresAt = time.Now().Add(time.Duration(ttl) * time.Second)
 	}
 	id := generateMsgID(text)
-	n.processMessageInternal(text, n.host.ID().String(), true, expiresAt, id, peerID)
+	n.processMessageInternal(encrypted, n.host.ID().String(), true, expiresAt, id, peerID, MESSAGE_VERSION_E2E)
 	return id, nil
 }
 

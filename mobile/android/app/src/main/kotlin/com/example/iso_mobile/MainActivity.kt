@@ -160,6 +160,19 @@ class MainActivity : FlutterActivity() {
                             runOnUiThread { result.success(response) }
                         }.start()
                     }
+                    "sendToPeer" -> {
+                        val peerID = call.argument<String>("peerID") ?: ""
+                        val text = call.argument<String>("text") ?: ""
+                        val ttl = when (val t = call.argument<Any>("ttl")) {
+                            is Long -> t
+                            is Int -> t.toLong()
+                            else -> 0L
+                        }
+                        Thread {
+                            val response = Mobile.sendToPeer(peerID, text, ttl)
+                            runOnUiThread { result.success(response) }
+                        }.start()
+                    }
                     "getMessages" -> {
                         Thread {
                             val response = Mobile.getMessages()

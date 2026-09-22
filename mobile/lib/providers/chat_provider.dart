@@ -121,9 +121,14 @@ class ChatProvider extends ChangeNotifier {
     this.api = api;
     this.ws = ws;
     this.p2p = p2p;
-    _currentNodeIp = nodeIp.split(':')[0];
+    // Извлекаем PeerID: убираем префикс libp2p:// если есть.
+    var clean = nodeIp;
+    if (clean.startsWith('libp2p://')) {
+      clean = clean.substring('libp2p://'.length);
+    }
+    _currentNodeIp = clean.split(':')[0];
 
-    LogService.log('ChatProvider.configure: nodeIp=$nodeIp');
+    LogService.log('ChatProvider.configure: nodeIp=$nodeIp, peerID=$_currentNodeIp');
   }
 
   Future<void> _loadOwnMessageIds() async {
@@ -411,7 +416,19 @@ class ChatProvider extends ChangeNotifier {
       return false;
     }
 
-    final response = await sendViaLibP2P(text);
+    // Если есть PeerID получателя — адресная E2E-отправка.
+    // Иначе — broadcast (обратная совместимость).
+    Map<String, dynamic> response;
+    if (_currentNodeIp.isNotEmpty && _currentNodeIp.startsWith('Qm')) {
+      response = await LibP2PService.sendToPeer(
+        peerID: _currentNodeIp,
+        text: text,
+        ttl: _currentTtl,
+      );
+    } else {
+      response = await sendViaLibP2P(text);
+    }
+
     if (response.containsKey('error')) {
       _error = 'Ошибка отправки: ${response['error']}';
       _safeNotify();

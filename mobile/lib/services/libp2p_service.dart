@@ -84,6 +84,25 @@ class LibP2PService {
     }
   }
 
+  /// Отправляет сообщение конкретному пиру (E2E-шифрованное).
+  /// Требует контакт с x25519_pub.
+  static Future<Map<String, dynamic>> sendToPeer({
+    required String peerID,
+    required String text,
+    int ttl = 0,
+  }) async {
+    try {
+      final response = await _channel.invokeMethod<String>('sendToPeer', {
+        'peerID': peerID,
+        'text': text,
+        'ttl': ttl,
+      });
+      return _safeDecode(response);
+    } on PlatformException catch (e) {
+      return {'error': e.message ?? 'platform_error', 'operation': 'send_to_peer'};
+    }
+  }
+
   static Future<List<dynamic>> getMessages() async {
     try {
       final response = await _channel.invokeMethod<String>('getMessages');
