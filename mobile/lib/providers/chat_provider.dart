@@ -1,3 +1,4 @@
+// mobile/lib/providers/chat_provider.dart
 import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/material.dart';
@@ -121,14 +122,39 @@ class ChatProvider extends ChangeNotifier {
     this.api = api;
     this.ws = ws;
     this.p2p = p2p;
-    // Извлекаем PeerID: убираем префикс libp2p:// если есть.
-    var clean = nodeIp;
+
+    _currentNodeIp = _extractPeerID(nodeIp);
+    LogService.log('ChatProvider.configure: nodeIp=$nodeIp, peerID=$_currentNodeIp');
+  }
+
+  /// Извлекает PeerID из строки. Поддерживает:
+  /// - "libp2p://QmX..."                 → QmX...
+  /// - "/ip4/.../p2p/QmX..."             → QmX...
+  /// - "/ip4/.../p2p-circuit/p2p/QmX..." → QmX...
+  /// - "QmX..."                          → QmX...
+  /// - "QmX...:8081"                     → QmX...
+  String _extractPeerID(String input) {
+    if (input.isEmpty) return '';
+
+    var clean = input.trim();
+
+    // Убираем префикс libp2p://
     if (clean.startsWith('libp2p://')) {
       clean = clean.substring('libp2p://'.length);
     }
-    _currentNodeIp = clean.split(':')[0];
 
-    LogService.log('ChatProvider.configure: nodeIp=$nodeIp, peerID=$_currentNodeIp');
+    // multiaddr: PeerID — всегда после последнего /p2p/
+    if (clean.contains('/p2p/')) {
+      clean = clean.split('/p2p/').last;
+    }
+
+    // На случай "QmX...:8081" — отрезаем порт, если есть ":".
+    // PeerID (base58btc) содержит только буквы и цифры, без ":".
+    if (clean.contains(':')) {
+      clean = clean.split(':')[0];
+    }
+
+    return clean;
   }
 
   Future<void> _loadOwnMessageIds() async {
@@ -283,7 +309,7 @@ class ChatProvider extends ChangeNotifier {
   }
 
   void setCurrentNode(String nodeIp) {
-    _currentNodeIp = nodeIp.split(':')[0];
+    _currentNodeIp = _extractPeerID(nodeIp);
     _safeNotify();
   }
 
@@ -528,3 +554,4 @@ class ChatProvider extends ChangeNotifier {
     super.dispose();
   }
 }
+// mobile/lib/providers/chat_provider.dart
