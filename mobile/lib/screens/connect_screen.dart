@@ -558,12 +558,56 @@ class _ConnectScreenState extends State<ConnectScreen> {
     );
   }
 
-  void _showBootstrapDialog() {
+  /// Настройки — bottom sheet. Пока два пункта:
+  /// «Подключение» (адрес bootstrap) и «Ввести код контакта» (ручной ввод).
+  void _showSettingsDialog() {
+    showModalBottomSheet(
+      context: context,
+      builder: (ctx) {
+        return SafeArea(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Padding(
+                padding: EdgeInsets.all(16),
+                child: Text(
+                  'Настройки',
+                  style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18),
+                ),
+              ),
+              ListTile(
+                leading: const Icon(Icons.link),
+                title: const Text('Подключение'),
+                subtitle: const Text('Адрес подключения'),
+                onTap: () {
+                  Navigator.pop(ctx);
+                  _showConnectionDialog();
+                },
+              ),
+              ListTile(
+                leading: const Icon(Icons.input),
+                title: const Text('Ввести код контакта'),
+                subtitle: const Text('Для продвинутых'),
+                onTap: () {
+                  Navigator.pop(ctx);
+                  _showManualCodeDialog();
+                },
+              ),
+              const SizedBox(height: 8),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  /// Подключение — диалог с адресом подключения (bootstrap).
+  void _showConnectionDialog() {
     showDialog(
       context: context,
       builder: (ctx) {
         return AlertDialog(
-          title: const Text('Bootstrap-адрес'),
+          title: const Text('Подключение'),
           content: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
@@ -571,7 +615,7 @@ class _ConnectScreenState extends State<ConnectScreen> {
                 controller: _bootstrapController,
                 decoration: const InputDecoration(
                   hintText: '/ip4/.../tcp/9001/ws/p2p/Qm...',
-                  labelText: 'Multiaddr bootstrap-узла',
+                  labelText: 'Адрес подключения',
                 ),
                 maxLines: 3,
                 minLines: 1,
@@ -589,6 +633,54 @@ class _ConnectScreenState extends State<ConnectScreen> {
                 if (mounted) setState(() {});
               },
               child: const Text('Сохранить'),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  /// Ввод кода контакта вручную — для продвинутых (отладка).
+  void _showManualCodeDialog() {
+    showDialog(
+      context: context,
+      builder: (ctx) {
+        return AlertDialog(
+          title: const Text('Ввести код контакта'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                controller: _multiaddrController,
+                decoration: const InputDecoration(
+                  hintText: 'Qm... или /ip4/.../p2p/Qm...',
+                  labelText: 'Код контакта',
+                ),
+                maxLines: 3,
+                minLines: 1,
+              ),
+              const SizedBox(height: 8),
+              const Text(
+                'Попросите друга показать код.',
+                style: TextStyle(fontSize: 12, color: Colors.grey),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Отмена')),
+            TextButton(
+              onPressed: () {
+                final addr = _multiaddrController.text.trim();
+                Navigator.pop(ctx);
+                if (addr.isNotEmpty) {
+                  if (addr.startsWith('/')) {
+                    _connectViaMultiaddr(addr);
+                  } else {
+                    _findAndConnectByPeerId(addr);
+                  }
+                }
+              },
+              child: const Text('Подключиться'),
             ),
           ],
         );
@@ -862,43 +954,6 @@ class _ConnectScreenState extends State<ConnectScreen> {
     }
   }
 
-  void _showManualMultiaddrDialog() {
-    showDialog(
-      context: context,
-      builder: (ctx) {
-        return AlertDialog(
-          title: const Text('Ввести PeerID или multiaddr'),
-          content: TextField(
-            controller: _multiaddrController,
-            decoration: const InputDecoration(
-              hintText: 'Qm... или /ip4/.../p2p/Qm...',
-              labelText: 'PeerID или multiaddr контакта',
-            ),
-            maxLines: 3,
-            minLines: 1,
-          ),
-          actions: [
-            TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Отмена')),
-            TextButton(
-              onPressed: () {
-                final addr = _multiaddrController.text.trim();
-                Navigator.pop(ctx);
-                if (addr.isNotEmpty) {
-                  if (addr.startsWith('/')) {
-                    _connectViaMultiaddr(addr);
-                  } else {
-                    _findAndConnectByPeerId(addr);
-                  }
-                }
-              },
-              child: const Text('Подключиться'),
-            ),
-          ],
-        );
-      },
-    );
-  }
-
   Future<void> _connectViaMultiaddr(String multiaddr) async {
     final clean = multiaddr.trim();
     try {
@@ -916,6 +971,7 @@ class _ConnectScreenState extends State<ConnectScreen> {
     }
   }
 
+  /// Добавить контакт — bottom sheet. Три опции.
   void _showAddContactDialog() {
     showModalBottomSheet(
       context: context,
@@ -933,29 +989,29 @@ class _ConnectScreenState extends State<ConnectScreen> {
               ),
               ListTile(
                 leading: const Icon(Icons.qr_code_scanner),
-                title: const Text('Сканировать QR'),
-                subtitle: const Text('Наведите камеру или выберите изображение из файла'),
+                title: const Text('Сканировать QR-код'),
+                subtitle: const Text('Друг показывает код, вы сканируете'),
                 onTap: () {
                   Navigator.pop(ctx);
                   _scanQR();
                 },
               ),
               ListTile(
-                leading: const Icon(Icons.wifi_find),
-                title: const Text('Найти рядом'),
-                subtitle: const Text('Поиск контактов в той же сети (NSD)'),
+                leading: const Icon(Icons.qr_code),
+                title: const Text('Показать мой QR-код'),
+                subtitle: const Text('Друг сканирует ваш код'),
                 onTap: () {
                   Navigator.pop(ctx);
-                  _scanNearby();
+                  _showMyQR();
                 },
               ),
               ListTile(
-                leading: const Icon(Icons.input),
-                title: const Text('Ввести вручную'),
-                subtitle: const Text('PeerID или multiaddr контакта'),
+                leading: const Icon(Icons.wifi_find),
+                title: const Text('Найти рядом'),
+                subtitle: const Text('Поиск контактов в той же сети'),
                 onTap: () {
                   Navigator.pop(ctx);
-                  _showManualMultiaddrDialog();
+                  _scanNearby();
                 },
               ),
               const SizedBox(height: 8),
@@ -1083,19 +1139,14 @@ class _ConnectScreenState extends State<ConnectScreen> {
         title: const Text('ISOTOPE'),
         actions: [
           IconButton(
-            icon: const Icon(Icons.qr_code),
-            onPressed: _showMyQR,
-            tooltip: 'Показать мой QR',
-          ),
-          IconButton(
             icon: const Icon(Icons.person_add),
             onPressed: _showAddContactDialog,
             tooltip: 'Добавить контакт',
           ),
           IconButton(
             icon: const Icon(Icons.settings),
-            onPressed: _showBootstrapDialog,
-            tooltip: 'Bootstrap-адрес',
+            onPressed: _showSettingsDialog,
+            tooltip: 'Настройки',
           ),
           IconButton(
             icon: const Icon(Icons.article_outlined),
