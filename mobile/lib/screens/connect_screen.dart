@@ -615,7 +615,7 @@ class _ConnectScreenState extends State<ConnectScreen> {
         if (_myPeerId.isEmpty) {
           if (mounted) {
             ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(content: Text('PeerID ещё не готов, подождите')),
+              const SnackBar(content: Text('Код ещё не готов, подождите')),
             );
           }
           return;
@@ -653,10 +653,9 @@ class _ConnectScreenState extends State<ConnectScreen> {
                   style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold),
                 ),
                 const SizedBox(height: 6),
-                Text(
-                  _myPeerId,
-                  style: const TextStyle(fontSize: 10, fontFamily: 'monospace'),
-                  textAlign: TextAlign.center,
+                const Text(
+                  'Ваш код для добавления',
+                  style: TextStyle(fontSize: 11, color: Colors.grey),
                 ),
               ],
             ),
@@ -738,7 +737,7 @@ class _ConnectScreenState extends State<ConnectScreen> {
       if (peerId.isEmpty) {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Не удалось распознать PeerID')),
+            const SnackBar(content: Text('Не удалось распознать код')),
           );
         }
         return;
@@ -773,8 +772,8 @@ class _ConnectScreenState extends State<ConnectScreen> {
             ScaffoldMessenger.of(context).showSnackBar(
               SnackBar(
                 content: Text(contactVerified
-                    ? 'Контакт верифицирован'
-                    : 'Контакт не верифицирован'),
+                    ? 'Контакт проверен'
+                    : 'Контакт не проверен'),
               ),
             );
           }
@@ -1115,12 +1114,6 @@ class _ConnectScreenState extends State<ConnectScreen> {
                 padding: const EdgeInsets.all(12),
                 decoration: BoxDecoration(color: Colors.green.shade50, borderRadius: BorderRadius.circular(8)),
                 child: Text('📍 Ваш адрес: $_localIp:8081', style: const TextStyle(fontWeight: FontWeight.bold), textAlign: TextAlign.center),
-              ),
-            if (_bootstrapPeers.isNotEmpty)
-              Container(
-                padding: const EdgeInsets.all(8),
-                decoration: BoxDecoration(color: Colors.orange.shade50, borderRadius: BorderRadius.circular(8)),
-                child: Text('🔗 Bootstrap: ${_bootstrapPeers.length > 50 ? _bootstrapPeers.substring(0, 50) : _bootstrapPeers}...', style: const TextStyle(fontSize: 10), textAlign: TextAlign.center),
               ),
             if (_status != null)
               Container(
