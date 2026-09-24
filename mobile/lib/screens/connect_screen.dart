@@ -1198,18 +1198,24 @@ class _ConnectScreenState extends State<ConnectScreen> {
                         child: Column(
                           mainAxisAlignment: MainAxisAlignment.center,
                           children: [
-                            Icon(Icons.people_outline, size: 64, color: Colors.grey.shade400),
+                            Icon(Icons.group_outlined, size: 64, color: Colors.grey.shade400),
                             const SizedBox(height: 16),
                             const Text(
-                              'Нет контактов',
+                              'Пока никого нет',
                               style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
                             ),
                             const SizedBox(height: 8),
                             Text(
-                              'Нажмите «Добавить контакт» и покажите QR-код, '
-                              'отправьте ссылку или найдите рядом.',
+                              'Добавьте первый контакт —\n'
+                              'и сможете общаться без цензуры и слежки.',
                               style: TextStyle(fontSize: 13, color: Colors.grey.shade700),
                               textAlign: TextAlign.center,
+                            ),
+                            const SizedBox(height: 20),
+                            FilledButton.icon(
+                              onPressed: _showAddContactDialog,
+                              icon: const Icon(Icons.person_add),
+                              label: const Text('Добавить контакт'),
                             ),
                           ],
                         ),
