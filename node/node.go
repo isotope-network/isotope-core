@@ -532,20 +532,36 @@ func (n *Node) ReserveRelaySlot(ctx context.Context, relayAddrInfo peer.AddrInfo
 	return nil
 }
 
-// relayLoop — периодически обновляет резервацию.
+// relayLoop — периодически проверяет наличие резервации и обновляет её.
+// Интервал — 30 секунд. Проверяет не только таймер истечения,
+// но и сам факт наличия резервации (resv == nil — пересоздаём).
 func (n *Node) relayLoop() {
 	go func() {
 		for {
-			time.Sleep(2 * time.Minute)
+			time.Sleep(30 * time.Second)
+
 			n.relayMu.Lock()
 			resv := n.relayReservation
 			relayInfo := n.relayPeerInfo
 			n.relayMu.Unlock()
 
-			if resv == nil || relayInfo.ID == "" {
+			if relayInfo.ID == "" {
 				continue
 			}
-			if time.Until(resv.Expiration) > 30*time.Second {
+
+			// Нет резервации — пересоздаём немедленно.
+			if resv == nil {
+				ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+				err := n.ReserveRelaySlot(ctx, relayInfo)
+				cancel()
+				if err != nil {
+					log.Printf("[RELAY] loop reserve failed: %v", err)
+				}
+				continue
+			}
+
+			// Есть резервация. Обновляем за 5 минут до истечения.
+			if time.Until(resv.Expiration) > 5*time.Minute {
 				continue
 			}
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -782,9 +798,16 @@ func (nn *nodeNotifiee) Connected(net network.Network, conn network.Conn) {
 	log.Printf("[NOTIFY] connected to %s", remote)
 	go func() {
 		time.Sleep(1 * time.Second)
+
 		if nn.node.hasPending() {
 			log.Printf("[NOTIFY] flushing pending after connect to %s", remote)
 			nn.node.flushPending()
+		}
+
+		// Если reconnect с relay-сервером (VPS) — немедленно
+		// пересоздать резервацию и анонсировать новый адрес.
+		if nn.node.isRelayAddr(remote) {
+			nn.node.refreshRelayAndAnnounce()
 		}
 	}()
 }
@@ -795,6 +818,53 @@ func (nn *nodeNotifiee) Disconnected(net network.Network, conn network.Conn) {
 
 func (nn *nodeNotifiee) Listen(net network.Network, addr ma.Multiaddr)      {}
 func (nn *nodeNotifiee) ListenClose(net network.Network, addr ma.Multiaddr) {}
+
+// isRelayAddr — true, если remote — наш relay-сервер (bootstrap).
+// Используется в Notifiee, чтобы реагировать только на relay-reconnect.
+func (n *Node) isRelayAddr(remotePeerID string) bool {
+	for _, addr := range n.loadBootstrapPeers() {
+		pi, err := peer.AddrInfoFromString(addr)
+		if err != nil {
+			continue
+		}
+		if pi.ID.String() == remotePeerID {
+			return true
+		}
+	}
+	return false
+}
+
+// refreshRelayAndAnnounce — немедленно пересоздаёт резервацию на VPS
+// и анонсирует новый адрес. Вызывается из Notifiee при reconnect с VPS.
+// Это закрывает «первое окно»: резервация теряется при disconnect,
+// а relayLoop её обновляет только через N минут.
+// SendAnnounce вызывается только если есть announceMultiaddrs — иначе
+// первый ANNOUNCE придёт от Flutter (_sendAnnounce).
+func (n *Node) refreshRelayAndAnnounce() {
+	n.relayMu.Lock()
+	relayInfo := n.relayPeerInfo
+	n.relayMu.Unlock()
+
+	if relayInfo.ID == "" {
+		// Нет relay-инфо — нечего пересоздавать.
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	err := n.ReserveRelaySlot(ctx, relayInfo)
+	cancel()
+	if err != nil {
+		log.Printf("[RELAY] refresh on reconnect failed: %v", err)
+		return
+	}
+	log.Printf("[RELAY] refreshed on reconnect")
+
+	// Анонсируем немедленно, если есть что. Это закрывает «второе окно»:
+	// при смене relay-адреса другие узлы узнают о нём сразу, а не через 4 минуты.
+	if len(n.announceMultiaddrs) > 0 {
+		n.SendAnnounce(n.announceMultiaddrs)
+	}
+}
 
 // ============================================================
 // ANNOUNCE — справочник пиров (VPS)
@@ -927,7 +997,7 @@ func (n *Node) FindPeerByID(targetID string) ([]string, error) {
 	}
 
 	if addrs, ok := n.lookupPeer(targetID); ok {
-		log.Printf("[FIND] local hit: %s → %d addrs", targetID, len(addrs))
+		log.Printf("[FIND] local hit: %s → %d addrs: %v", targetID, len(addrs), addrs)
 		return addrs, nil
 	}
 
@@ -954,7 +1024,7 @@ func (n *Node) FindPeerByID(targetID string) ([]string, error) {
 		response := strings.TrimSpace(string(buf[:nr]))
 		addrs := parseMultiaddrsResponse(response, FOUND_PREFIX)
 		if len(addrs) > 0 {
-			log.Printf("[FIND] %s → %d addrs (via %s)", targetID, len(addrs), pi.ID)
+			log.Printf("[FIND] %s → %d addrs (via %s): %v", targetID, len(addrs), pi.ID, addrs)
 			return addrs, nil
 		}
 		if strings.HasPrefix(response, NOT_FOUND_PREFIX) {
