@@ -835,7 +835,17 @@ class _ConnectScreenState extends State<ConnectScreen> {
         return;
       }
 
-      if (peerId == _myPeerId) {
+      // Проверка «свой QR» — берём PeerID напрямую из Go,
+      // не полагаемся на _myPeerId (может быть пуст до первого _sendAnnounce).
+      String myPeerIdNow = _myPeerId;
+      if (myPeerIdNow.isEmpty) {
+        try {
+          final status = await LibP2PService.getStatus();
+          myPeerIdNow = status['id'] as String? ?? '';
+          _myPeerId = myPeerIdNow;
+        } catch (_) {}
+      }
+      if (myPeerIdNow.isNotEmpty && peerId == myPeerIdNow) {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(content: Text('Это ваш собственный код')),

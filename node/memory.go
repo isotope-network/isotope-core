@@ -14,6 +14,7 @@ import (
 type Message struct {
 	ID              string    `json:"id"`
 	Text            string    `json:"text"`
+	PlainText       string    `json:"plainText,omitempty"` // открытый текст своих E2E-сообщений (v2)
 	Sender          string    `json:"sender"`
 	Time            string    `json:"time"`
 	IsOwn           bool      `json:"isOwn"`
@@ -60,6 +61,22 @@ func (m *Memory) Add(msg Message) bool {
 
 	m.messages = append(m.messages, msg)
 	return true
+}
+
+// Remove — удаляет сообщение по ID. Возвращает true, если было.
+// Чистит seen, чтобы ID можно было переиспользовать.
+func (m *Memory) Remove(id string) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	for i, msg := range m.messages {
+		if msg.ID == id {
+			m.messages = append(m.messages[:i], m.messages[i+1:]...)
+			delete(m.seen, id)
+			return true
+		}
+	}
+	return false
 }
 
 // GetAll — возвращает все сообщения
@@ -363,3 +380,4 @@ func (am *AssocMemory) CleanupOldAssociations(days int) {
 	}
 	am.associations = alive
 }
+// node/memory.go

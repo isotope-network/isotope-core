@@ -340,6 +340,49 @@ func deriveX25519Public(priv [32]byte) ([32]byte, error) {
 	return result, nil
 }
 
+// e2eCleanupFlagPath — путь к флагу однократной E2E-очистки.
+// Отдельный файл рядом со state: isotope_state.json.e2e_cleanup.
+func (n *Node) e2eCleanupFlagPath() string {
+	if n.stateFile == "" {
+		return ""
+	}
+	return n.stateFile + ".e2e_cleanup"
+}
+
+// runE2ECleanupOnce — однократная очистка своих E2E-сообщений без PlainText.
+// Удаляет мусор: сообщения, у которых Text = шифротекст, а PlainText не был
+// сохранён (до фикса). Работает один раз — флаг в отдельном файле.
+func (n *Node) runE2ECleanupOnce() {
+	flagPath := n.e2eCleanupFlagPath()
+	if flagPath == "" {
+		return
+	}
+	// Уже сделано?
+	if _, err := os.Stat(flagPath); err == nil {
+		return
+	}
+
+	all := n.memory.GetAll()
+	removed := 0
+	for _, msg := range all {
+		if msg.IsOwn && msg.Version == MESSAGE_VERSION_E2E && msg.PlainText == "" {
+			if n.memory.Remove(msg.ID) {
+				removed++
+			}
+		}
+	}
+
+	// Флаг — до saveState. Чтобы повторный запуск не задублировал очистку.
+	_ = os.WriteFile(flagPath, []byte("true"), 0600)
+
+	if removed > 0 {
+		log.Printf("[E2E CLEANUP] removed %d own messages without plaintext", removed)
+		go n.saveState()
+	} else {
+		log.Printf("[E2E CLEANUP] no messages to remove")
+	}
+}
+
 // GetEd25519PublicKey — возвращает Ed25519-публичный ключ в base64.
 func (n *Node) GetEd25519PublicKey() string {
 	if len(n.ed25519Pub) == 0 {
@@ -1606,22 +1649,22 @@ func (n *Node) requestRestore() {
 }
 
 func (n *Node) processMessageWithTTL(msg string, senderID string, isOwn bool, expiresAt time.Time) {
-	n.processMessageInternal(msg, senderID, isOwn, expiresAt, "", "", 0)
+	n.processMessageInternal(msg, senderID, isOwn, expiresAt, "", "", 0, "")
 }
 
 func (n *Node) processMessageWithID(msg string, senderID string, isOwn bool, expiresAt time.Time, id string) {
-	n.processMessageInternal(msg, senderID, isOwn, expiresAt, id, "", 0)
+	n.processMessageInternal(msg, senderID, isOwn, expiresAt, id, "", 0, "")
 }
 
 // processMessageWithRecipient — отправляет адресное сообщение конкретному получателю.
 // version — 2 для E2E-шифрованных.
 func (n *Node) processMessageWithRecipient(msg string, senderID string, isOwn bool, expiresAt time.Time, id string, recipient string, version int) {
-	n.processMessageInternal(msg, senderID, isOwn, expiresAt, id, recipient, version)
+	n.processMessageInternal(msg, senderID, isOwn, expiresAt, id, recipient, version, "")
 }
 
 func (n *Node) processMessageWithModeAndTTL(msg string, senderID string, isOwn bool, mode int, expiresAt time.Time) {
 	if mode == 0 || n.host == nil {
-		n.processMessageInternal(msg, senderID, isOwn, expiresAt, "", "", 0)
+		n.processMessageInternal(msg, senderID, isOwn, expiresAt, "", "", 0, "")
 		return
 	}
 	relayCount := 4
@@ -1631,7 +1674,7 @@ func (n *Node) processMessageWithModeAndTTL(msg string, senderID string, isOwn b
 	}
 	relays := n.selectRelays(relayCount)
 	if len(relays) < relayCount {
-		n.processMessageInternal(msg, senderID, isOwn, expiresAt, "", "", 0)
+		n.processMessageInternal(msg, senderID, isOwn, expiresAt, "", "", 0, "")
 		return
 	}
 	n.sendViaRelayChain(relays, msg)
@@ -1696,10 +1739,10 @@ func (n *Node) sendViaRelayChain(relays []string, msg string) {
 }
 
 func (n *Node) processMessage(msg string, senderID string, isOwn bool) {
-	n.processMessageInternal(msg, senderID, isOwn, time.Time{}, "", "", 0)
+	n.processMessageInternal(msg, senderID, isOwn, time.Time{}, "", "", 0, "")
 }
 
-func (n *Node) processMessageInternal(msg string, senderID string, isOwn bool, expiresAt time.Time, providedID string, recipient string, version int) {
+func (n *Node) processMessageInternal(msg string, senderID string, isOwn bool, expiresAt time.Time, providedID string, recipient string, version int, plainText string) {
 	inputVector := textToVector(msg)
 	outputVector, _ := forward(inputVector, n.layers)
 	answer := vectorToText(outputVector)
@@ -1780,6 +1823,7 @@ func (n *Node) processMessageInternal(msg string, senderID string, isOwn bool, e
 	newMsg := Message{
 		ID:        id,
 		Text:      msg,
+		PlainText: plainText, // открытый текст своих E2E; для входящих/broadcast — ""
 		Sender:    senderID,
 		Recipient: recipient,
 		Version:   version,
@@ -1907,6 +1951,9 @@ func (n *Node) InitP2P() error {
 		log.Println("[INIT] Состояние не найдено, начинаем с нуля")
 	}
 
+	// Однократная очистка своих E2E-сообщений без PlainText (баг до фикса).
+	n.runE2ECleanupOnce()
+
 	if n.pendingFile == "" {
 		if n.stateFile != "" {
 			n.pendingFile = n.stateFile + ".queue"
@@ -1965,6 +2012,15 @@ func (n *Node) InitP2P() error {
 		return err
 	}
 	n.host = host
+
+	// Автоочистка: удалить self-contact (баг старых версий — свой QR).
+	if n.contacts != nil {
+		myID := n.host.ID().String()
+		if _, ok := n.contacts.Get(myID); ok {
+			_ = n.contacts.Remove(myID)
+			log.Printf("[CONTACTS] removed self-contact %s (auto-cleanup)", myID)
+		}
+	}
 
 	n.host.Network().Notify(&nodeNotifiee{node: n})
 
@@ -2372,7 +2428,9 @@ func (n *Node) SendToPeer(peerID string, text string, ttl int) (string, error) {
 		expiresAt = time.Now().Add(time.Duration(ttl) * time.Second)
 	}
 	id := generateMsgID(text)
-	n.processMessageInternal(encrypted, n.host.ID().String(), true, expiresAt, id, peerID, MESSAGE_VERSION_E2E)
+	// plainText = text (открытый) — сохраняется для UI.
+	// В сеть уходит encrypted (Text). PlainText — только для локального показа.
+	n.processMessageInternal(encrypted, n.host.ID().String(), true, expiresAt, id, peerID, MESSAGE_VERSION_E2E, text)
 	return id, nil
 }
 
@@ -2459,6 +2517,11 @@ func (n *Node) ExchangePeers(peerID string) error {
 func (n *Node) AddContact(peerID, ed25519Pub, x25519Pub, signature, name string) error {
 	if n.contacts == nil {
 		return fmt.Errorf("contacts store not initialized")
+	}
+
+	// Защита на уровне ядра: нельзя добавить себя в контакты.
+	if n.host != nil && peerID == n.host.ID().String() {
+		return fmt.Errorf("cannot add self as contact")
 	}
 
 	verified := false

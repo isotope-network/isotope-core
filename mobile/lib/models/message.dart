@@ -1,6 +1,9 @@
+// mobile/lib/models/message.dart
 class Message {
   final String id;
   final String text;
+  final String plainText;
+  final int version;
   final String sender;
   final String time;
   final bool isOwn;
@@ -15,6 +18,8 @@ class Message {
   Message({
     required this.id,
     required this.text,
+    this.plainText = '',
+    this.version = 0,
     required this.sender,
     required this.time,
     required this.isOwn,
@@ -31,6 +36,8 @@ class Message {
     return Message(
       id: json['id'] ?? '',
       text: json['text'] ?? '',
+      plainText: json['plainText'] ?? '',
+      version: json['version'] ?? 0,
       sender: json['sender'] ?? '',
       time: json['time'] ?? '',
       isOwn: json['isOwn'] ?? false,
@@ -50,6 +57,8 @@ class Message {
     return {
       'id': id,
       'text': text,
+      'plainText': plainText,
+      'version': version,
       'sender': sender,
       'time': time,
       'isOwn': isOwn,
@@ -61,6 +70,16 @@ class Message {
       'ttl': ttl,
       'expiresAt': expiresAt?.toIso8601String(),
     };
+  }
+
+  /// Текст для отображения в UI.
+  /// Для своих E2E-сообщений (Version=2) — PlainText (открытый).
+  /// Для остальных — Text (входящие уже открытые, broadcast — открытые).
+  String get displayText {
+    if (isOwn && version == 2 && plainText.isNotEmpty) {
+      return plainText;
+    }
+    return text;
   }
 
   /// Проверка: истекло ли сообщение
@@ -152,3 +171,4 @@ class Message {
     return '${ttl ~/ 86400}д';
   }
 }
+// mobile/lib/models/message.dart
