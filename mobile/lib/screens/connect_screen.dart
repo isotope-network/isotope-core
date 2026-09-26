@@ -104,21 +104,32 @@ class _ConnectScreenState extends State<ConnectScreen> {
 
   /// Загружает контакты из ядра и кеширует их verified-статус.
   Future<void> _loadContactsFromCore() async {
-    try {
-      final contacts = await LibP2PService.getContacts();
-      if (!mounted) return;
-      for (final c in contacts) {
-        final peerID = c['peerID'] as String? ?? '';
-        final verified = c['verified'] as bool? ?? false;
-        if (peerID.isNotEmpty) {
-          _verifiedContacts[peerID] = verified;
+    // Retry: Go-ядро может стартовать позже Flutter-экрана.
+    // До 5 попыток с интервалом 2 сек.
+    for (int attempt = 0; attempt < 5; attempt++) {
+      try {
+        final contacts = await LibP2PService.getContacts();
+        if (!mounted) return;
+        if (contacts.isNotEmpty) {
+          for (final c in contacts) {
+            final peerID = c['peerID'] as String? ?? '';
+            final verified = c['verified'] as bool? ?? false;
+            if (peerID.isNotEmpty) {
+              _verifiedContacts[peerID] = verified;
+            }
+          }
+          setState(() {});
+          LogService.log('ConnectScreen: загружено контактов из ядра: ${_verifiedContacts.length} (попытка ${attempt + 1})');
+          return;
         }
+        // Пусто — попробуем через 2 сек (ядро ещё стартует).
+        await Future.delayed(const Duration(seconds: 2));
+      } catch (e) {
+        LogService.log('ConnectScreen: ошибка загрузки контактов (попытка ${attempt + 1}): $e');
+        await Future.delayed(const Duration(seconds: 2));
       }
-      setState(() {});
-      LogService.log('ConnectScreen: загружено контактов из ядра: ${_verifiedContacts.length}');
-    } catch (e) {
-      LogService.log('ConnectScreen: ошибка загрузки контактов: $e');
     }
+    LogService.log('ConnectScreen: не удалось загрузить контакты после 5 попыток');
   }
 
   void _scheduleAnnounce() {
