@@ -129,9 +129,10 @@ type Node struct {
 	announceMultiaddrs []string
 
 	// RELAY — резервация слота на relay-сервере (VPS)
-	relayReservation *client.Reservation
-	relayMu          sync.Mutex
-	relayPeerInfo    peer.AddrInfo
+	relayReservation  *client.Reservation
+	relayMu           sync.Mutex
+	relayPeerInfo     peer.AddrInfo
+	lastRelayRefresh  time.Time
 
 	// OFFLINE QUEUE — сообщения, ожидающие отправки при восстановлении связи
 	pendingMessages []Message
@@ -580,8 +581,11 @@ func (n *Node) ReserveRelaySlot(ctx context.Context, relayAddrInfo peer.AddrInfo
 // но и сам факт наличия резервации (resv == nil — пересоздаём).
 func (n *Node) relayLoop() {
 	go func() {
+		backoff := 2 * time.Second
+		const maxBackoff = 30 * time.Second
+
 		for {
-			time.Sleep(30 * time.Second)
+			time.Sleep(backoff)
 
 			n.relayMu.Lock()
 			resv := n.relayReservation
@@ -592,27 +596,32 @@ func (n *Node) relayLoop() {
 				continue
 			}
 
-			// Нет резервации — пересоздаём немедленно.
+			needReserve := false
 			if resv == nil {
-				ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-				err := n.ReserveRelaySlot(ctx, relayInfo)
-				cancel()
-				if err != nil {
-					log.Printf("[RELAY] loop reserve failed: %v", err)
-				}
+				needReserve = true
+			} else if time.Until(resv.Expiration) < 5*time.Minute {
+				needReserve = true
+			}
+
+			if !needReserve {
+				// Всё хорошо, сбрасываем backoff.
+				backoff = 2 * time.Second
 				continue
 			}
 
-			// Есть резервация. Обновляем за 5 минут до истечения.
-			if time.Until(resv.Expiration) > 5*time.Minute {
-				continue
-			}
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			err := n.ReserveRelaySlot(ctx, relayInfo)
 			cancel()
 			if err != nil {
-				log.Printf("[RELAY] refresh failed: %v", err)
+				log.Printf("[RELAY] reserve failed (backoff=%s): %v", backoff, err)
+				backoff *= 2
+				if backoff > maxBackoff {
+					backoff = maxBackoff
+				}
+				continue
 			}
+			// Успех — сброс.
+			backoff = 2 * time.Second
 		}
 	}()
 }
@@ -885,6 +894,12 @@ func (n *Node) isRelayAddr(remotePeerID string) bool {
 // первый ANNOUNCE придёт от Flutter (_sendAnnounce).
 func (n *Node) refreshRelayAndAnnounce() {
 	n.relayMu.Lock()
+	// Throttle: не чаще одного раза в 10 секунд.
+	if time.Since(n.lastRelayRefresh) < 10*time.Second {
+		n.relayMu.Unlock()
+		return
+	}
+	n.lastRelayRefresh = time.Now()
 	relayInfo := n.relayPeerInfo
 	n.relayMu.Unlock()
 
