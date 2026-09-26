@@ -72,7 +72,7 @@ class MessageBubble extends StatelessWidget {
                     ),
                     const SizedBox(height: 6),
                     Text(
-                      message.text,
+                      message.displayText,
                       style: const TextStyle(fontSize: 15),
                     ),
                     if (isOwn && message.deliveryStatus != null) ...[

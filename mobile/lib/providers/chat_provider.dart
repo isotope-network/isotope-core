@@ -45,6 +45,8 @@ class ChatProvider extends ChangeNotifier {
           return Message(
             id: m.id,
             text: m.text,
+            plainText: m.plainText,
+            version: m.version,
             sender: m.sender,
             time: m.time,
             isOwn: _ownMessageIds.contains(m.id) || m.isOwn,
@@ -292,6 +294,8 @@ class ChatProvider extends ChangeNotifier {
         return Message(
           id: map['id'] ?? '',
           text: map['text'] ?? '',
+          plainText: map['plainText'] ?? '',
+          version: map['version'] ?? 0,
           sender: sender,
           time: map['time'] ?? DateTime.now().toUtc().toIso8601String(),
           isOwn: shortSender == shortMyID || map['isOwn'] == true,
@@ -344,6 +348,8 @@ class ChatProvider extends ChangeNotifier {
     final msg = Message(
       id: id,
       text: data['text'] ?? '',
+      plainText: data['plainText'] ?? '',
+      version: data['version'] ?? 0,
       sender: data['sender'] ?? 'P2P',
       time: data['time'] ?? DateTime.now().toUtc().toIso8601String(),
       isOwn: data['isOwn'] ?? false,
@@ -518,6 +524,8 @@ class ChatProvider extends ChangeNotifier {
     final updated = Message(
       id: target.id,
       text: target.text,
+      plainText: target.plainText,
+      version: target.version,
       sender: target.sender,
       time: target.time,
       isOwn: target.isOwn,
