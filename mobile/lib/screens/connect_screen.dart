@@ -858,6 +858,7 @@ class _ConnectScreenState extends State<ConnectScreen> {
       String ed25519Pub = '';
       String x25519Pub = '';
       String signature = '';
+      bool readEnabled = true;
 
       // Этап 4.3: новый формат — JSON с версией.
       if (code.startsWith('{')) {
@@ -869,7 +870,9 @@ class _ConnectScreenState extends State<ConnectScreen> {
             ed25519Pub = (json['ed25519_pub'] as String?) ?? '';
             x25519Pub = (json['x25519_pub'] as String?) ?? '';
             signature = (json['signature'] as String?) ?? '';
-            LogService.log('QR: распознан формат v:$v, peerID=$peerId, ed25519=${ed25519Pub.isNotEmpty ? "есть" : "нет"}, x25519=${x25519Pub.isNotEmpty ? "есть" : "нет"}, signature=${signature.isNotEmpty ? "есть" : "нет"}');
+            // read_enabled — опционально. Дефолт true (обратная совместимость).
+            readEnabled = (json['read_enabled'] as bool?) ?? true;
+            LogService.log('QR: распознан формат v:$v, peerID=$peerId, ed25519=${ed25519Pub.isNotEmpty ? "есть" : "нет"}, x25519=${x25519Pub.isNotEmpty ? "есть" : "нет"}, signature=${signature.isNotEmpty ? "есть" : "нет"}, read_enabled=$readEnabled');
           }
         } catch (e) {
           LogService.log('QR: ошибка парсинга JSON: $e');
@@ -926,6 +929,7 @@ class _ConnectScreenState extends State<ConnectScreen> {
           x25519Pub: x25519Pub,
           signature: signature,
           name: '',
+          readEnabled: readEnabled,
         );
         if (saveResult.containsKey('error')) {
           LogService.log('QR: не удалось сохранить контакт: ${saveResult['error']}');

@@ -372,8 +372,9 @@ func GetMyQRData() string {
 }
 
 // AddContact — добавляет или обновляет контакт.
+// readEnabled — сообщил ли контакт, что делится статусом прочтения.
 // Возвращает {"status":"ok","verified":true|false} — verified читается после записи.
-func AddContact(peerID, ed25519Pub, x25519Pub, signature, name string) string {
+func AddContact(peerID, ed25519Pub, x25519Pub, signature, name string, readEnabled bool) string {
 	nodeMu.Lock()
 	defer nodeMu.Unlock()
 
@@ -385,7 +386,7 @@ func AddContact(peerID, ed25519Pub, x25519Pub, signature, name string) string {
 		return errorJSON("peerID is required")
 	}
 
-	if err := node.AddContact(peerID, ed25519Pub, x25519Pub, signature, name); err != nil {
+	if err := node.AddContact(peerID, ed25519Pub, x25519Pub, signature, name, readEnabled); err != nil {
 		return errorJSON(err.Error())
 	}
 
@@ -399,6 +400,50 @@ func AddContact(peerID, ed25519Pub, x25519Pub, signature, name string) string {
 		return `{"status":"ok","verified":true}`
 	}
 	return `{"status":"ok","verified":false}`
+}
+
+// SetContactReadEnabled — устанавливает read_enabled для контакта.
+func SetContactReadEnabled(peerID string, enabled bool) string {
+	nodeMu.Lock()
+	defer nodeMu.Unlock()
+
+	if node == nil {
+		return errorJSON("node not started")
+	}
+	if peerID == "" {
+		return errorJSON("peerID is required")
+	}
+	if err := node.SetContactReadEnabled(peerID, enabled); err != nil {
+		return errorJSON(err.Error())
+	}
+	return `{"status":"ok"}`
+}
+
+// SetMyReadEnabled — устанавливает мою настройку "делюсь ли статусом прочтения".
+func SetMyReadEnabled(enabled bool) string {
+	nodeMu.Lock()
+	defer nodeMu.Unlock()
+
+	if node == nil {
+		return errorJSON("node not started")
+	}
+	node.SetMyReadEnabled(enabled)
+	return `{"status":"ok"}`
+}
+
+// GetMyReadEnabled — возвращает мою настройку.
+func GetMyReadEnabled() string {
+	nodeMu.Lock()
+	defer nodeMu.Unlock()
+
+	if node == nil {
+		return `{"read_enabled":true}`
+	}
+	enabled := node.GetMyReadEnabled()
+	if enabled {
+		return `{"read_enabled":true}`
+	}
+	return `{"read_enabled":false}`
 }
 
 // SendContactRequest — отправляет запрос на контакт по PeerID.

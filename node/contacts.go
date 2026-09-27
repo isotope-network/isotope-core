@@ -16,13 +16,14 @@ import (
 // Verified — true после успешной проверки подписи (4.4). Сигнал UI, не пропуск.
 // Name — локальное имя, пустое при добавлении.
 type Contact struct {
-	PeerID     string `json:"peerID"`
-	Ed25519Pub string `json:"ed25519_pub"`
-	X25519Pub  string `json:"x25519_pub"`
-	Signature  string `json:"signature"`
-	Verified   bool   `json:"verified"`
-	Name       string `json:"name"`
-	AddedAt    string `json:"added_at"`
+	PeerID      string `json:"peerID"`
+	Ed25519Pub  string `json:"ed25519_pub"`
+	X25519Pub   string `json:"x25519_pub"`
+	Signature   string `json:"signature"`
+	Verified    bool   `json:"verified"`
+	Name        string `json:"name"`
+	AddedAt     string `json:"added_at"`
+	ReadEnabled bool   `json:"read_enabled"`
 }
 
 // ContactsFile — формат файла isotope_contacts.json.
@@ -84,6 +85,23 @@ func (cs *ContactsStore) Load() error {
 	if file.Contacts == nil {
 		file.Contacts = []Contact{}
 	}
+
+	// Обратная совместимость: старые контакты без read_enabled
+	// (поле отсутствует в JSON → false) считаем как read_enabled = true.
+	var rawFile struct {
+		Contacts []map[string]interface{} `json:"contacts"`
+	}
+	_ = json.Unmarshal(data, &rawFile)
+	for i := range file.Contacts {
+		if i < len(rawFile.Contacts) {
+			if _, ok := rawFile.Contacts[i]["read_enabled"]; !ok {
+				file.Contacts[i].ReadEnabled = true
+			}
+		} else {
+			file.Contacts[i].ReadEnabled = true
+		}
+	}
+
 	cs.contacts = file.Contacts
 	log.Printf("[CONTACTS] loaded %d contacts", len(cs.contacts))
 	return nil
@@ -137,10 +155,15 @@ func (cs *ContactsStore) Add(c Contact) error {
 	for i := range cs.contacts {
 		if cs.contacts[i].PeerID == c.PeerID {
 			// Обновляем ключи, подпись и verified. Имя — сохраняем, если новое пустое.
+			// read_enabled — не понижаем: если было true, остаётся true.
 			existingName := cs.contacts[i].Name
+			existingReadEnabled := cs.contacts[i].ReadEnabled
 			cs.contacts[i] = c
 			if existingName != "" && c.Name == "" {
 				cs.contacts[i].Name = existingName
+			}
+			if existingReadEnabled {
+				cs.contacts[i].ReadEnabled = true
 			}
 			if cs.contacts[i].AddedAt == "" {
 				cs.contacts[i].AddedAt = time.Now().UTC().Format(time.RFC3339)
@@ -204,3 +227,5 @@ func (cs *ContactsStore) Remove(peerID string) error {
 	log.Printf("[CONTACTS] removed %s", peerID)
 	return cs.saveLocked()
 }
+
+// node/contacts.go

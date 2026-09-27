@@ -252,6 +252,7 @@ class LibP2PService {
   }
 
 /// Добавляет или обновляет контакт.
+  /// readEnabled — сообщил ли контакт, что делится статусом прочтения.
   /// Возвращает {"status":"ok"} или {"error":"..."}.
   static Future<Map<String, dynamic>> addContact({
     required String peerID,
@@ -259,6 +260,7 @@ class LibP2PService {
     required String x25519Pub,
     String signature = '',
     String name = '',
+    bool readEnabled = true,
   }) async {
     try {
       final response = await _channel.invokeMethod<String>('addContact', {
@@ -267,6 +269,7 @@ class LibP2PService {
         'x25519Pub': x25519Pub,
         'signature': signature,
         'name': name,
+        'readEnabled': readEnabled,
       });
       return _safeDecode(response);
     } on PlatformException catch (e) {

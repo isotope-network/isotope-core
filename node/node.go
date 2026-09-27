@@ -75,6 +75,7 @@ const (
 	StatusSent      MessageStatus = 1
 	StatusDelivered MessageStatus = 2
 	StatusRead      MessageStatus = 3
+	StatusHidden    MessageStatus = 4 // доставлено, но прочтение скрыто
 )
 
 // announcedPeer — запись о пире: список его multiaddr + когда последний раз видели.
@@ -85,11 +86,12 @@ type announcedPeer struct {
 
 // qrDataV1 — формат QR-кода версии 1.
 type qrDataV1 struct {
-	V          int    `json:"v"`
-	PeerID     string `json:"peerID"`
-	Ed25519Pub string `json:"ed25519_pub"`
-	X25519Pub  string `json:"x25519_pub"`
-	Signature  string `json:"signature"`
+	V           int    `json:"v"`
+	PeerID      string `json:"peerID"`
+	Ed25519Pub  string `json:"ed25519_pub"`
+	X25519Pub   string `json:"x25519_pub"`
+	Signature   string `json:"signature"`
+	ReadEnabled *bool  `json:"read_enabled,omitempty"` // nil — не передан (дефолт true)
 }
 
 // Config — конфигурация узла
@@ -174,6 +176,12 @@ type Node struct {
 	// Используется в UI (этап 1.5). Сейчас — только накапливается.
 	messageStatus   map[string]MessageStatus
 	messageStatusMu sync.Mutex
+
+	// myReadEnabled — настройка "делюсь ли я статусом прочтения".
+	// true (по умолчанию) — отправляю [READ] и вижу чужие [READ].
+	// false — не отправляю [READ], чужие не отображаю (✓✓🔒).
+	// TODO(1.5+): UI-настройка в Приватности.
+	myReadEnabled bool
 }
 
 // NewNode — создаёт новый узел
@@ -197,6 +205,7 @@ func NewNode(cfg Config) *Node {
 		isRelay:                 cfg.IsRelay || cfg.EnableRelayServer,
 		memory:                  Memory{seen: make(map[string]bool)},
 		announcedPeers:          make(map[string]announcedPeer),
+		myReadEnabled:           true,
 	}
 }
 
@@ -477,12 +486,14 @@ func (n *Node) GetMyQRData() string {
 	if n.host == nil {
 		return ""
 	}
+	readEnabled := n.myReadEnabled
 	data, err := json.Marshal(qrDataV1{
-		V:          E2E_VERSION,
-		PeerID:     n.host.ID().String(),
-		Ed25519Pub: base64.StdEncoding.EncodeToString(n.ed25519Pub),
-		X25519Pub:  base64.StdEncoding.EncodeToString(n.x25519Pub[:]),
-		Signature:  n.signMyX25519(),
+		V:           E2E_VERSION,
+		PeerID:      n.host.ID().String(),
+		Ed25519Pub:  base64.StdEncoding.EncodeToString(n.ed25519Pub),
+		X25519Pub:   base64.StdEncoding.EncodeToString(n.x25519Pub[:]),
+		Signature:   n.signMyX25519(),
+		ReadEnabled: &readEnabled,
 	})
 	if err != nil {
 		log.Printf("[KEY] QR marshal failed: %v", err)
@@ -1419,8 +1430,15 @@ func (n *Node) handleServiceMessage(m Message) {
 		log.Printf("[SERVICE] delivered ack ref=%s from=%s", m.Ref, m.Sender)
 
 	case TypeRead:
-		n.setMessageStatus(m.Ref, StatusRead)
-		log.Printf("[SERVICE] read ack ref=%s from=%s", m.Ref, m.Sender)
+		// Если я не делюсь статусом прочтения — не показываю чужой [READ].
+		// Иконка становится ✓✓🔒 (StatusHidden), а не ✓✓ (цвет).
+		if !n.myReadEnabled {
+			n.setMessageStatus(m.Ref, StatusHidden)
+			log.Printf("[SERVICE] read ack (hidden, myReadEnabled=false) ref=%s from=%s", m.Ref, m.Sender)
+		} else {
+			n.setMessageStatus(m.Ref, StatusRead)
+			log.Printf("[SERVICE] read ack ref=%s from=%s", m.Ref, m.Sender)
+		}
 
 	case TypeContactRequest:
 		n.handleContactRequest(m)
@@ -2648,6 +2666,11 @@ func (n *Node) sendConfirmation(msgType MessageType, ref, recipient string) erro
 	if ref == "" || recipient == "" {
 		return fmt.Errorf("ref and recipient are required")
 	}
+	// [READ] отправляется только если делюсь статусом прочтения.
+	// [DELIVERED] — всегда.
+	if msgType == TypeRead && !n.myReadEnabled {
+		return nil
+	}
 
 	id := generateMsgID(fmt.Sprintf("%s:%s", ref, msgTypeString(msgType)))
 	msg := Message{
@@ -2860,7 +2883,7 @@ func (n *Node) AcceptRequestByID(id string) error {
 		return fmt.Errorf("request not found: %s", id)
 	}
 
-	if err := n.AddContact(req.PeerID, req.Ed25519Pub, req.X25519Pub, req.Signature, req.Name); err != nil {
+	if err := n.AddContact(req.PeerID, req.Ed25519Pub, req.X25519Pub, req.Signature, req.Name, req.ReadEnabled); err != nil {
 		return fmt.Errorf("add contact failed: %w", err)
 	}
 
@@ -2978,7 +3001,7 @@ func (n *Node) ExchangePeers(peerID string) error {
 //   - Ed25519Pub пустой при непустой Signature → Verified: false + лог
 //
 // Отправка блокируется не здесь, а в encryptForRecipient (требует X25519Pub).
-func (n *Node) AddContact(peerID, ed25519Pub, x25519Pub, signature, name string) error {
+func (n *Node) AddContact(peerID, ed25519Pub, x25519Pub, signature, name string, readEnabled bool) error {
 	if n.contacts == nil {
 		return fmt.Errorf("contacts store not initialized")
 	}
@@ -3003,13 +3026,40 @@ func (n *Node) AddContact(peerID, ed25519Pub, x25519Pub, signature, name string)
 	}
 
 	return n.contacts.Add(Contact{
-		PeerID:     peerID,
-		Ed25519Pub: ed25519Pub,
-		X25519Pub:  x25519Pub,
-		Signature:  signature,
-		Verified:   verified,
-		Name:       name,
+		PeerID:      peerID,
+		Ed25519Pub:  ed25519Pub,
+		X25519Pub:   x25519Pub,
+		Signature:   signature,
+		Verified:    verified,
+		Name:        name,
+		ReadEnabled: readEnabled,
 	})
+}
+
+// SetContactReadEnabled — устанавливает read_enabled для контакта.
+// Используется для UI-настройки (изменить после добавления).
+// MVP: read_enabled фиксируется при добавлении. Этот метод — для UI позже.
+func (n *Node) SetContactReadEnabled(peerID string, enabled bool) error {
+	if n.contacts == nil {
+		return fmt.Errorf("contacts store not initialized")
+	}
+	c, ok := n.contacts.Get(peerID)
+	if !ok {
+		return fmt.Errorf("contact not found: %s", peerID)
+	}
+	c.ReadEnabled = enabled
+	return n.contacts.Add(c)
+}
+
+// SetMyReadEnabled — устанавливает мою настройку "делюсь ли статусом прочтения".
+// Используется UI (Приватность). TODO(1.5+): сохранение в state.
+func (n *Node) SetMyReadEnabled(enabled bool) {
+	n.myReadEnabled = enabled
+}
+
+// GetMyReadEnabled — возвращает текущую настройку.
+func (n *Node) GetMyReadEnabled() bool {
+	return n.myReadEnabled
 }
 
 // GetContacts — возвращает все контакты.
