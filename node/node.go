@@ -2258,10 +2258,12 @@ func (n *Node) InitP2P() error {
 		}
 	}
 
-	dhtNode, err := NewDHT(host)
-	if err == nil {
-		n.dhtNode = dhtNode
-		dhtNode.JoinDHT(bootstrapPeers)
+	if !n.isRelay {
+		dhtNode, err := NewDHT(host)
+		if err == nil {
+			n.dhtNode = dhtNode
+			dhtNode.JoinDHT(bootstrapPeers)
+		}
 	}
 
 	if len(n.layers) == 0 {
