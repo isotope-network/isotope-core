@@ -2,6 +2,7 @@
 package core
 
 import (
+	"bytes"
 	"context"
 	"crypto/aes"
 	"crypto/cipher"
@@ -1137,12 +1138,28 @@ func parseMultiaddrsResponse(response, prefix string) []string {
 
 func (n *Node) handleStream(stream network.Stream) {
 	defer stream.Close()
-	buf := make([]byte, 2*1024*1024)
-	nr, err := stream.Read(buf)
-	if err != nil {
-		return
+
+	// Читаем до \n или до EOF — libp2p может фрагментировать сообщение.
+	stream.SetReadDeadline(time.Now().Add(15 * time.Second))
+
+	var full []byte
+	buf := make([]byte, 64*1024)
+	for {
+		nr, err := stream.Read(buf)
+		if nr > 0 {
+			full = append(full, buf[:nr]...)
+			if bytes.Contains(buf[:nr], []byte("\n")) {
+				break
+			}
+		}
+		if err != nil {
+			break
+		}
+		if len(full) > 4*1024*1024 {
+			break
+		}
 	}
-	msg := strings.TrimSpace(string(buf[:nr]))
+	msg := strings.TrimSpace(string(full))
 
 	if strings.HasPrefix(msg, ANNOUNCE_PREFIX) {
 		remoteID := stream.Conn().RemotePeer().String()
