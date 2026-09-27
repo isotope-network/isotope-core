@@ -2267,10 +2267,12 @@ func (n *Node) InitP2P() error {
 		}
 	}
 
-	dhtNode, err := NewDHT(host)
-	if err == nil {
-		n.dhtNode = dhtNode
-		dhtNode.JoinDHT(bootstrapPeers)
+	if !n.isRelay {
+		dhtNode, err := NewDHT(host)
+		if err == nil {
+			n.dhtNode = dhtNode
+			dhtNode.JoinDHT(bootstrapPeers)
+		}
 	}
 
 	if len(n.layers) == 0 {
@@ -2284,7 +2286,9 @@ func (n *Node) InitP2P() error {
 	}
 
 	n.pingPeers()
-	n.reconnectLoop()
+	if !n.isRelay {
+		n.reconnectLoop()
+	}
 	n.announceLoop()
 	n.cleanupLoop()
 	n.relayLoop()
