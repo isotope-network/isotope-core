@@ -27,7 +27,13 @@ const String BOOTSTRAP_PEER_ID = 'QmR8u5YFdcKpM2onQvk7KV5qioai87aysi9JWLdV1LX1bi
 const String ISOTOPE_QR_PREFIX = 'isotope:';
 
 class ConnectScreen extends StatefulWidget {
-  const ConnectScreen({super.key});
+  /// Если задан — при старте экрана автоматически выполнится действие:
+  /// 'scan'   — открыть сканер QR.
+  /// 'showQR' — показать мой QR.
+  /// null     — обычный старт.
+  final String? initialAction;
+
+  const ConnectScreen({super.key, this.initialAction});
 
   @override
   State<ConnectScreen> createState() => _ConnectScreenState();
@@ -65,6 +71,9 @@ class _ConnectScreenState extends State<ConnectScreen> {
   String _myPeerId = '';
   bool _announced = false;
 
+  /// Флаг: initialAction уже обработан — не повторяем.
+  bool _initialActionHandled = false;
+
   @override
   void initState() {
     super.initState();
@@ -81,6 +90,35 @@ class _ConnectScreenState extends State<ConnectScreen> {
       _pullCoreLogs();
     });
     Future.delayed(const Duration(seconds: 3), () => _pullCoreLogs());
+
+    // Обработка initialAction — после первого кадра,
+    // когда UI готов к показу диалогов/snackbar.
+    if (widget.initialAction != null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _handleInitialAction();
+      });
+    }
+  }
+
+  Future<void> _handleInitialAction() async {
+    if (_initialActionHandled) return;
+    _initialActionHandled = true;
+
+    // Небольшая пауза — чтобы ConnectScreen успел отрисоваться
+    // и контекст был доступен для Navigator / showDialog.
+    await Future.delayed(const Duration(milliseconds: 300));
+    if (!mounted) return;
+
+    switch (widget.initialAction) {
+      case 'scan':
+        _scanQR();
+        break;
+      case 'showQR':
+        _showMyQR();
+        break;
+      default:
+        break;
+    }
   }
 
   Future<void> _initAsync() async {
