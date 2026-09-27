@@ -2275,7 +2275,9 @@ func (n *Node) InitP2P() error {
 	}
 
 	n.pingPeers()
-	n.reconnectLoop()
+	if !n.isRelay {
+		n.reconnectLoop()
+	}
 	n.announceLoop()
 	n.cleanupLoop()
 	n.relayLoop()
