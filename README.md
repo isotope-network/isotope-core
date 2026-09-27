@@ -86,6 +86,16 @@ No server. No company. No single center.
 Nodes discover each other via mDNS, DHT, Bluetooth.
 The network lives as long as at least one node lives.
 
+**Privacy by Default.**
+Every message is end-to-end encrypted.
+The relay sees only ciphertext.
+The key belongs only to the sender and the recipient.
+
+**Emergent Trust.**
+Verified is a signal, not a pass.
+Weight is earned, not proven.
+Trust grows from interaction, not from authority.
+
 ---
 
 ## Architectural Properties
@@ -114,6 +124,22 @@ Node weight is a universal pass.
 | 0.7–1.0 | Vote, relay, replicas |
 
 [Details →](docs/architecture/WEIGHT_ACCESS_MODEL.md)
+
+---
+
+## Security Layers
+
+| Layer | What is protected | Status |
+|-------|-------------------|--------|
+| Obfuscation | Traffic masking | ✅ v1.13 |
+| E2E encryption | Message content (from relay) | ✅ v1.24 |
+| Signature | Sender authenticity | ✅ v1.24 |
+| Metadata | Who talks to whom | 🔜 v2.0+ (Onion) |
+| Traffic patterns | Timing, volume | 🔜 Padding, mixing |
+
+**What works now:** message content is protected from relay and from interception. Sender authenticity is verified. Relay sees only ciphertext.
+
+**What comes later:** metadata protection (Onion routing), traffic pattern protection (padding, mixing).
 
 ---
 
@@ -165,7 +191,7 @@ Once a day — a single notification:
 
 ## Status
 
-**v1.21.0 — stable (mobile stabilization).**
+**v1.26.0 — stable (E2E, signatures, UI).**
 
 Implemented:
 - P2P network: libp2p + mDNS + DHT + Gossip
@@ -185,41 +211,56 @@ Implemented:
 - Channels with weight levels
 - REST API + WebSocket
 - Mobile app (Flutter + gomobile FFI)
-- libp2p on mobile via .aar (67 MB)
-- Stable PeerID on mobile (isotope_state.json.key)
-- Network change handling (connectivity_plus, debounce 10 sec)
-- NodeInfo model with heartbeat and dead detection
+- libp2p on mobile via .aar
+- Stable PeerID on mobile
+- Network change handling (connectivity_plus)
+- NodeInfo model with heartbeat
 - Log transfer from Go core to Flutter
-- Dynamic port search (8081+)
+- Dynamic port search
 - NSD discovery with PeerID and multiaddr
 - Network health monitoring
 - 67 autotests
 - 5 nodes in docker-compose
 
-**Mobile stabilization (v1.21.0):**
-- Single message ID from Go core (duplicates fixed)
-- replicateMessage() excludes sender
-- Non-blocking Mobile calls (ANR fixed on slow devices)
-- Reconnect loop (peers check every 30 sec)
-- pingPeers() interval reduced to 15 sec
-- Unread badge and "Unread" line
-- _ownMessageIds persisted in SharedPreferences
-- Verified on real phones: reconnect after backgrounding, no ANR
+**E2E encryption (v1.24):**
+- X25519 keypairs for message encryption (box.Seal)
+- Ed25519 keypairs for signatures
+- QR format v:1 with ed25519_pub, x25519_pub, signature
+- E2E encryption of message content (nonce || ciphertext)
+- Version 2 messages — E2E
+- Relay sees only ciphertext
+- Contact verification via Ed25519 signature over peerID || x25519_pub
+- Verified flag: signal in UI, not a pass
+
+**Stability (v1.25–v1.26):**
+- PlainText for own E2E messages (UI shows plaintext, network keeps ciphertext)
+- Auto-cleanup of old E2E messages without PlainText
+- Self-QR blocked (three levels: UI, core, auto-cleanup)
+- Relay reservation refresh on reconnect
+- Relay exponential backoff for reservation retry
+- Retry loading contacts (race with Go startup)
+- Upsert nodes on alive-event (status unknown → alive)
+
+**UI (v1.25):**
+- Terminology: technical terms removed from UI
+- Single add-contact entry (QR scan, show QR, nearby)
+- Settings in bottom sheet
+- Empty state with action button
 
 **Deferred:**
 - BLE — unstable, disabled
-- Samsung Android 10 — likely fixed by non-blocking calls
-- DHT — core only, not in mobile
+- Samsung Android 10 — crash
+- DHT Provide — falls with few peers
 - TTL circular dial — UI improvement
 
 In development:
-- Stage 2: Foreground Service (Android)
-- Stage 3: Battery Optimization Whitelist
-- Hole punching via /p2p-circuit/
-- DHT announce for mobile
+- Stage 1.4: First launch (3 screens)
+- Contact protocol (stages 4–8)
+- Single source of truth for contacts
+- Metadata protection — Onion (v2.0+)
+- Traffic patterns — Padding, mixing
 - PWA + F-Droid
 - Offline communication (Bluetooth mesh, Wi-Fi Direct)
-- Traffic morphing
 - Image steganography
 - ISOTOPE Enterprise (B2B data exchange)
 - ISOTOPE AI Mesh (distributed AI inference)

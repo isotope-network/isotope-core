@@ -2,9 +2,9 @@
 
 ## Текущий статус
 
-**Версия:** v1.23.0 (relay-circuit, multi-address ANNOUNCE, flush on reconnect)
+**Версия:** v1.26.0 (E2E, подписи, UI)
 
-Ядро — библиотека (package core). Работает на десктопе (HTTP, libp2p, DHT) и на мобильных (libp2p FFI, NSD, HTTP). Связь между телефонами в разных сетях (Wi-Fi ↔ LTE) через relay на VPS.
+Ядро — библиотека (package core). E2E-шифрование работает. Подпись контактов. Relay-стабильность. UI этап 1.1–1.3 закрыт.
 
 ---
 
@@ -32,77 +32,91 @@
 ### Рефакторинг (v1.18.1)
 - package main → package core
 - Точка входа: node/main/main.go
-- Экспорт API: Config, NewNode, InitP2P, StartHTTP, StartMobile, Stop, HashText
+- Экспорт API
 
 ### Мобильная версия (v1.19.0)
-- libp2p через FFI (gomobile, .aar 67 МБ)
-- Методы: start, send, getMessages, getPeers, getWeight, getStatus, getMultiaddrs, connectToPeer
-- Стабильный PeerID (isotope_state.json.key)
-- Обработка смены сети (connectivity_plus, debounce 10 сек)
-- NodeInfo: PeerID, multiaddrs, lastSeen, status
-- Heartbeat с счётчиком неудач (3 → dead)
+- libp2p через FFI (.aar)
+- Стабильный PeerID
+- Обработка смены сети
+- NodeInfo, heartbeat
 - Логирование Go → Flutter
-- Динамический поиск порта (8081+)
-- NSD-обнаружение с PeerID и multiaddr
-- HTTP-связь между телефонами
-- Бейджи непрочитанных
-- История сообщений
+- NSD-обнаружение
 
 ### Мобильная стабилизация (v1.21.0)
-- Единый ID сообщений из Go-ядра (устранены дубликаты)
-- replicateMessage() исключает отправителя
-- Non-blocking Mobile calls (MainActivity.kt — устранён ANR)
-- Reconnect loop (каждые 30 сек проверка пиров)
-- pingPeers() — интервал сокращён до 15 сек
-- Бейдж непрочитанных + линия «Непрочитанные»
-- _ownMessageIds в SharedPreferences
-- Проверено на реальных телефонах: reconnect после сворачивания, отсутствие ANR
+- Единый ID сообщений (дубликаты устранены)
+- Non-blocking Mobile calls (ANR устранён)
+- Reconnect loop
+- Бейдж непрочитанных
 
 ### Foreground Service (v1.22.0)
-- Foreground Service (Android): соединения не разрываются при сворачивании
-- Battery Optimization Whitelist: запрос на исключения батареи
-- Отображение пиров через libp2p (Wi-Fi / LTE)
+- Foreground Service (Android)
+- Battery Optimization Whitelist
+- Отображение пиров через libp2p
 
 ### Relay-circuit (v1.23.0)
-- Multi-address ANNOUNCE: announcedPeer — список []string
-- Формат ANNOUNCE: [ANNOUNCE]\n<addr1>\n<addr2>\n[END]
-- FIND отдаёт массив адресов
-- ConnectToPeerWithFallback — пробует адреса по очереди
-- Резервация relay-слота через client.Reserve
-- GetRelayAddrs — строит relay-адрес из bootstrap
-- ANNOUNCE автоматически добавляет relay-адрес
-- FIND fallback — relay-адрес, если announced пуст
-- VPS handleStream форвардит реплики дальше
-- Flush on reconnect (три уровня: Notifiee, markPeerAlive, reconnectLoop)
-- Результат: связь Wi-Fi ↔ LTE через интернет, flush за 1 сек
+- Multi-address ANNOUNCE
+- Relay-circuit (client.Reserve)
+- Flush on reconnect (три уровня)
+
+### E2E-шифрование (v1.24.0)
+- 4.1 E2E keypair, QR v:1
+- 4.2 Recipient, адресная маршрутизация
+- 4.3.1 Ed25519 + X25519 ключи
+- 4.3.2 isotope_contacts.json
+- 4.3.3 E2E-шифрование (box.Seal, Version=2)
+- 4.4 Ed25519 подпись над peerID || x25519_pub
+- Backoff reconnect 1 → 30 сек
+- Параллельный dial
+- TTL 5 → 8 мин
+- Обрезка логов 4KB
+- Fix configure (PeerID из multiaddr)
+
+### UI 1.1–1.3 (v1.25.0)
+- UI 1.1: терминология (технические термины убраны)
+- UI 1.2: единый вход «Добавить контакт»
+- UI 1.3: пустое состояние с кнопкой
+
+### Стабильность (v1.26.0)
+- PlainText для своих E2E-сообщений
+- Автоочистка старых E2E без PlainText
+- Self-QR блокируется (три уровня)
+- Relay: refresh reservation on reconnect
+- Relay: exponential backoff
+- Retry loading contacts
+- Upsert nodes on alive-event
 
 ---
 
 ## В работе / Ближайшие задачи
 
 ### Приоритет 1 (сейчас)
-- ✅ D — backoff reconnect (закрыто)
-- 🔜 **Параллельный dial** в ConnectToPeerWithFallback (~30 строк, убирает задержку 5-7 сек)
-- 🔜 **E2E шифрование** поверх обфускации (критично, до контакт-протокола)
-- 🔜 **ANNOUNCE_TTL:** 5 мин → 8 мин (зазор 4 мин от announceLoop 4 мин)
+- 🔜 **Этап 1.4 UI** — первый запуск (3 экрана)
+- 🔜 **Единый источник истины для контактов** — сейчас 4 хранилища (NodeStore, _discoveredNodes, _nodesMap, _pendingNodes)
 
 ### Приоритет 2
-- 🔜 Контакт-протокол (этапы 1–8):
-  1. Терминология (человеческие слова: контакт, связь, ключ, имя)
-  2. QR = PeerID (работает, нужно UI-оформление)
-  3. Ссылка (isotope:<peerID>)
-  4. NSD
-  5. Запрос
-  6. Seed-фраза (обсудить отдельно)
-  7. DHT 15+
+- 🔜 **Контакт-протокол (этапы 4–8):**
+  4. NSD-подтверждение (обоюдное)
+  5. Запрос на контакт (как в Signal)
+  6. Seed-фраза для восстановления PeerID
+  7. DHT активация при 15+ узлах
   8. Локальный вес
+- 🔜 **Periodic FIND** для активных контактов (закрывает второе окно ANNOUNCE)
 
 ### Приоритет 3
-- 🔜 BLE — возрождение
-- 🔜 Samsung Android 10 — краш (вероятно, решён non-blocking вызовами)
+- 🔜 Foreground service — разное поведение на Xiaomi/Huawei
+- 🔜 VPS reconnectLoop — шумит вхолостую, отключить на relay-сервере
 - 🔜 DHT Provide — падает при малом числе пиров
-- 🔜 Уведомления системы (не только бейдж)
-- 🔜 Foreground Service — надёжнее
+- 🔜 Samsung Android 10 — краш
+- 🔜 ANNOUNCE TTL expired — эпизодически
+- 🔜 VPS memory:66 — мусор от старых сессий
+
+### Приоритет 4 (v2.0+)
+- 🔜 **Onion-маршрутизация** — защита метаданных
+- 🔜 **Обфускация трафика** — после onion
+- 🔜 **Padding, mixing** — временны́е паттерны
+- 🔜 **BLE** — возрождение
+- 🔜 **Hole punching** через /p2p-circuit/
+- 🔜 **DHT на мобильном** (при 15+ узлах)
 
 ---
 
@@ -114,11 +128,8 @@
 - Foreground Service + Battery Whitelist
 - Hole punching через /p2p-circuit/
 - DHT на мобильном (при 15+ узлах)
-- Мультиплексирование транспортов (Wi-Fi, BLE, мобильная сеть)
-- **Условие отключения VPS:** когда одновременно выполнены:
-  1. DHT покрывает 15+ узлов (иммунитет включается)
-  2. Hole punching работает для большинства NAT (CGNAT, симметричный NAT)
-  3. Есть 2-3 независимых relay-узла в сети (не на нашем VPS)
+- Мультиплексирование транспортов
+- **Условие отключения VPS:** DHT 15+ узлов + hole punching + 2-3 relay-узла
 
 ### v3.0 — ISOTOPE AI Mesh
 - Распределённый инференс ИИ
@@ -126,7 +137,7 @@
 - Семантическая маршрутизация (Latent Semantic Router)
 - Облегчённые модели на узлах
 - Этический паспорт моделей
-- Маршрутизация запросов: ближайший узел → дата-центр
+- Маршрутизация: ближайший узел → дата-центр
 
 ### v3.1 — Развитие AI Mesh
 - (внутренняя разработка, детали не публикуются)
@@ -140,25 +151,36 @@
 
 ---
 
+## Уровни защиты
+
+| Уровень | Что защищено | Статус |
+|---------|--------------|--------|
+| Обфускация | Маскировка трафика | ✅ v1.13 |
+| E2E-шифрование | Содержимое (от relay) | ✅ v1.24 |
+| Подпись | Подлинность отправителя | ✅ v1.24 |
+| Метаданные | Кто с кем общается | 🔜 v2.0+ (Onion) |
+| Временны́е паттерны | Тайминг, объём | 🔜 Padding, mixing |
+
+---
+
 ## Отложено
 
-- BLE — нестабилен на текущем стеке, вернуться после v2.0
-- IPFS для сайта — заблокирован в России, не работает с Cloudflare
-- Samsung Android 10 — краш при запуске
-- DHT Provide — при малом числе пиров падает (нужно 15+)
+- BLE — нестабилен на текущем стеке
+- IPFS для сайта — заблокирован в России
+- Samsung Android 10 — краш
+- DHT Provide — при малом числе пиров
 - Уведомления системы
-- Оптимизация ANNOUNCE (убрать дубли relay-адресов)
+- Оптимизация ANNOUNCE (дубли relay-адресов)
 
 ---
 
 ## Инфраструктура
 
-### VPS bootstrap/relay (v1.23.0)
+### VPS bootstrap/relay
 - IP: 186.246.31.176
 - PeerID: QmR8u5YFdcKpM2onQvk7KV5qioai87aysi9JWLdV1LX1bi
 - Bootstrap multiaddr: /ip4/186.246.31.176/tcp/9001/ws/p2p/QmR8u5YFdcKpM2onQvk7KV5qioai87aysi9JWLdV1LX1bi
 - Порты: 9000 (TCP), 9001 (WS), 8081 (HTTP API)
-- Код на коммите: 6b223c0
 - Роль: временная инфраструктура (relay для узлов за NAT)
 
 ### Обновление VPS
@@ -166,9 +188,9 @@ cd /root/isotope-core && git pull && cd node && go build -o isotope-node ./main
 # Ctrl+C в окне VPS, затем:
 cd /root/isotope && NODE_ID=bootstrap ISOTOPE_PORT=9000 ISOTOPE_HTTP_PORT=8081 ISOTOPE_ENABLE_RELAY=true /root/isotope-core/node/isotope-node
 
-⚠️ НЕ удалять /root/isotope/state/ — PeerID изменится, телефоны потеряют связь.
+НЕ удалять /root/isotope/state/ — PeerID изменится.
 
-### Сборка .aar (только если менялся Go-код)
+### Сборка .aar
 cd D:\isotope\node
 del isotope.aar
 gomobile bind -target=android -androidapi 21 -ldflags "-checklinkname=0" -o isotope.aar ./mobile
@@ -184,11 +206,12 @@ flutter build apk --debug
 
 ## Стратегия
 
-1. **Мобильная стабилизация** — v1.21–v1.23
-2. **E2E + контакт-протокол** — сейчас
-3. **Foreground Service и офлайн** — v2.0
-4. **AI Mesh** — v3.0
-5. **Полная автономия** — v4.0
+1. **E2E и подписи** — v1.24 (закрыто)
+2. **UI и стабильность** — v1.25–v1.26 (закрыто)
+3. **Контакт-протокол** — сейчас
+4. **Onion, padding, mixing** — v2.0+
+5. **AI Mesh** — v3.0
+6. **Полная автономия** — v4.0
 
-Каждый этап — это новый уровень децентрализации.
+Каждый этап — новый уровень децентрализации.
 VPS отключается, когда DHT и hole punching закроют его роль.

@@ -1,109 +1,151 @@
 # История изменений ISOTOPE
 
+## v1.26.0 (2026-09-27)
+
+### Добавлено
+- PlainText в Message: свои E2E-сообщения сохраняются открытым текстом для UI
+- Автоочистка: удаление своих E2E-сообщений без PlainText при первом запуске
+- Флаг .e2e_cleanup рядом со state
+- Memory.Remove — с чисткой seen
+- Relay: refresh reservation on reconnect + 30s loop check
+- Relay: exponential backoff для reservation retry (2 → 30 сек)
+- UI: отображение plainText для своих E2E-сообщений
+
+### Исправлено
+- Свой QR блокируется (три уровня: UI + ядро + автоочистка)
+- UI: retry loading contacts from core (гонка с Go startup)
+- Upsert nodes on alive-event — статус меняется с unknown на alive
+
+### Коммиты
+- d0e9744 — own QR blocked, PlainText for own E2E messages, auto-cleanup
+- 3235060 — relay: refresh reservation on reconnect + 30s loop check
+- 882c998 — relay: exponential backoff for reservation retry
+- abc5f01 — UI: display plainText for own E2E messages
+- 6e1d1b9 — UI: retry loading contacts from core
+- 2f35fb1 — UI: upsert nodes on alive-event
+
+### Следующий шаг
+- Этап 1.4 UI — первый запуск (3 экрана)
+- Контакт-протокол (этапы 4–8)
+- Единый источник истины для контактов
+
+---
+
+## v1.25.0 (2026-09-25)
+
+### Добавлено
+- UI 1.1 — терминология: технические термины убраны из интерфейса
+- UI 1.2 — единый вход «Добавить контакт», настройки в bottom sheet
+- UI 1.3 — пустое состояние с кнопкой действия
+
+### Коммиты
+- 5ebe222 — UI 1.1: remove technical terms from UI
+- 4940998 — UI 1.2: single add-contact entry, settings bottom sheet
+- 988fe17 — UI 1.3: empty state with action button
+
+### Следующий шаг
+- Этап 1.4 — первый запуск
+- Продолжение контакт-протокола
+
+---
+
+## v1.24.0 (2026-09-23)
+
+### Добавлено
+- E2E 4.1 — генерация ключей, QR v:1 с e2e_pub
+- E2E 4.2 — поле Recipient, адресная маршрутизация
+- E2E 4.3.1 — Ed25519 + X25519, раздельные ключи, curve25519.X25519
+- E2E 4.3.2 — isotope_contacts.json с флагом verified
+- E2E 4.3.3 — шифрование Text через box.Seal, Version=2
+- E2E 4.4 — Ed25519 подпись над peerID || x25519_pub, флаг verified
+- Backoff reconnect: 1 → 30 сек, сброс при успехе
+- Параллельный dial в ConnectToPeerWithFallback
+- ANNOUNCE TTL 5 → 8 мин, удаление disconnected сразу
+
+### Исправлено
+- Логи: обрезка длинных строк (4KB max)
+- Извлечение PeerID из multiaddr в configure
+
+### Коммиты
+- e54d056 — E2E 4.1: keypair generation, QR v:1
+- 9c2fc8b — E2E 4.2: Recipient field, address-based routing
+- dc82e81 — E2E 4.3.1: Ed25519+X25519 keypairs, QR v:1
+- f3aaeab — E2E 4.3.2: isotope_contacts.json
+- 3a3b859 — E2E 4.3.3: encrypt Text via box.Seal, Version=2
+- 39c97c5 — E2E 4.4: Ed25519 signature, verified flag
+- 1d2e3d3 — reconnect: exponential backoff
+- 57cfeaf — connect: parallel dial
+- 87524bd — announce: TTL 5→8 min
+- 1a44715 — logs: truncate long lines
+- b225a22 — fix: extract PeerID from multiaddr in configure
+
+### Уровни защиты (после v1.24.0)
+- Содержимое от перехвата — E2E
+- Содержимое от relay — E2E
+- Подлинность отправителя — подпись
+
+### Следующий шаг
+- Метаданные — Onion (v2.0+)
+- Контакт-протокол
+
+---
+
 ## v1.23.0 (2026-09-17)
 
 ### Добавлено
 - Multi-address ANNOUNCE (Слой A):
-  - announcedPeer — теперь список []string
-  - Формат ANNOUNCE многострочный: [ANNOUNCE]\n<addr1>\n<addr2>\n[END]
+  - announcedPeer — список []string
+  - Формат ANNOUNCE: [ANNOUNCE]\n<addr1>\n<addr2>\n[END]
   - FIND отдаёт массив адресов
-  - ConnectToPeerWithFallback — пробует адреса по очереди
+  - ConnectToPeerWithFallback — перебор адресов
 - Relay-circuit (Слой B):
   - Резервация relay-слота через client.Reserve
-  - GetRelayAddrs — строит relay-адрес из bootstrap
+  - GetRelayAddrs — relay-адрес из bootstrap
   - ANNOUNCE автоматически добавляет relay-адрес
-  - FIND fallback — relay-адрес, если announced пуст
-  - VPS handleStream форвардит реплики дальше
+  - FIND fallback — relay-адрес
+  - VPS handleStream форвардит реплики
 - Flush on reconnect (три уровня):
-  - Notifiee ConnectedF — основной триггер (реакция на факт соединения)
-  - markPeerAlive → dead → alive — страховка
-  - reconnectLoop — третий рубеж
-  - Результат: flush за 1 сек вместо 3-4 минут
+  - Notifiee ConnectedF
+  - markPeerAlive → dead → alive
+  - reconnectLoop
+  - Результат: flush за 1 сек вместо 3-4 мин
 
 ### Изменено
 - VPS PeerID: QmNmr3Yq... → QmR8u5YF...
-- Relay-circuit: VPS работает как relay для мобильных узлов в Doze
-- Условие отключения VPS: когда DHT покроет 15+ узлов и hole punching заработает для большинства NAT
+- Условие отключения VPS: DHT 15+ узлов + hole punching + 2-3 relay-узла
 
 ### Коммиты
 - 9b5c6c2 — multi-address ANNOUNCE + relay-circuit
-- 6b223c0 — flush on libp2p ConnectedF + markPeerAlive alive-transition
-
-### Проверено на реальных телефонах
-- Связь между телефонами в разных сетях (Wi-Fi ↔ LTE)
-- Через NAT оператора (CGNAT) — через relay на VPS
-- QR = PeerID — контакт устанавливается
-- FIND через VPS — поиск multiaddr по PeerID
-- Сообщения доходят через relay
-- Бейдж, входящие, разделитель — работают
-- Flush offline queue за 1 сек после восстановления связи
-
-### Следующий шаг
-- Backoff reconnect
-- Параллельный dial (убрать задержку QR)
-- E2E шифрование поверх обфускации
-- Контакт-протокол (терминология → QR → ссылка → NSD → запрос → seed-фраза → DHT 15+ → локальный вес)
+- 6b223c0 — flush on libp2p ConnectedF
 
 ---
 
 ## v1.22.0 (2026-09-13)
 
 ### Добавлено
-- Foreground Service (Android): соединения не разрываются, когда приложение свёрнуто
-- Battery Optimization Whitelist: запрос на добавление ISOTOPE в исключения батареи
-- Отображение пиров через libp2p: узлы видят друг друга независимо от сети (Wi-Fi / LTE)
+- Foreground Service (Android)
+- Battery Optimization Whitelist
+- Отображение пиров через libp2p
 
 ### Коммиты
 - b706f97 — Foreground Service (Android)
 - 716a48f — Battery Optimization Whitelist
 - ccec4be — Отображение пиров через libp2p
 
-### Следующий шаг
-- Улучшение отображения пиров
-- Подготовка к прямой связи между узлами
-
 ---
 
 ## v1.21.0 (2026-09-11)
 
 ### Исправлено
-- Дубликаты сообщений (корень в Go-ядре):
-  - processMessageWithID() — принимает ID параметром, не генерирует
-  - SendMessage() передаёт свой ID в processMessageWithID()
-  - replicateMessage() исключает отправителя: if p.String() == msg.Sender { continue }
-  - Dart _addMessage() — простая проверка containsKey(msg.id)
-- Бейдж непрочитанных и линия «Непрочитанные»:
-  - _ownMessageIds сохраняется в SharedPreferences (own_message_ids)
-  - unreadSnapshot — снимок до обнуления, используется для линии
-  - setChatOpen(false) вызывается в ConnectScreen после Navigator.pop
-  - loadMessages() загружает все сообщения (свои и входящие)
-- Зависание UI на медленных телефонах (ANR):
-  - Все вызовы Mobile.* в MainActivity.kt обёрнуты в Thread { ... } + runOnUiThread
-  - Обёрнуты: start, stop, send, getMessages, getPeers, getStatus, getMultiaddrs, connectToPeer, joinDHT, findPeer, findPeersViaNetwork, provide, getDHTInfo
+- Дубликаты сообщений (единый ID из Go)
+- Бейдж непрочитанных + линия «Непрочитанные»
+- ANR на медленных телефонах (non-blocking Mobile calls)
+- Reconnect loop + keepalive (15 сек ping)
 
-### Добавлено
-- Reconnect loop + keepalive (node/node.go):
-  - reconnectLoop() — каждые 30 сек проверяет len(Network().Peers())
-  - Если 0 — переподключается к bootstrap + ExchangePeers
-  - pingPeers() — интервал сокращён с 30 до 15 секунд
-- Проверено: peers 2 → 0 (5 мин свёрнутыми) → 2 (30-60 сек после разворачивания)
-
-### Проверено на реальных телефонах
-- P2P-сообщения через VPS relay
-- Бейдж непрочитанных
-- Линия «Непрочитанные»
-- История (свои/входящие, загрузка после перезапуска)
-- Прокрутка истории
-- Reconnect после сворачивания
-- Отсутствие ANR на медленном телефоне
-
-### Инфраструктура
-- VPS bootstrap/relay:
-  - IP: 186.246.31.176
-  - PeerID: QmNmr3YqGD9uKpPCx7W86t7Tc3vrBJF1GbmTAzDQ25Sskx
-  - Bootstrap multiaddr: /ip4/186.246.31.176/tcp/9001/ws/p2p/QmNmr3YqGD9uKpPCx7W86t7Tc3vrBJF1GbmTAzDQ25Sskx
-  - Порты: 9000 (TCP), 9001 (WS), 8081 (HTTP API)
-- ВАЖНО: не удалять /root/isotope/state/ — PeerID изменится, телефоны потеряют связь
+### Коммиты
+- ec0c59e — pass message ID from SendMessage
+- 919967d — do not replicate back to sender
+- c06d8a8 — non-blocking Mobile calls + reconnect loop
 
 ---
 
@@ -112,30 +154,14 @@
 ### Добавлено
 - Рефакторинг ядра: package main → package core
 - main/main.go — точка входа для десктопа
-- mobile/mobile.go — обёртка для gomobile
-- libp2p через FFI (.aar 67 МБ, подключён к Flutter через MethodChannel)
-- Методы мобильной обёртки: start, send, getMessages, getPeers, getWeight, getStatus, getMultiaddrs, connectToPeer
-- GetMultiaddrs() и ConnectToPeer() в ядро
-- ListenIP в Config
-- Стабильный PeerID: приватный ключ в isotope_state.json.key, восстановление при перезапуске
-- Обработка смены сети: connectivity_plus, debounce 10 сек, перезапуск узла с новым IP, приоритет Wi-Fi
-- Модель NodeInfo: PeerID, multiaddrs, lastSeen, status
-- Хранение списка узлов в SharedPreferences
-- Heartbeat с счётчиком неудач (3 → dead), снятие dead при получении сообщения
-- Кнопка «Обновить» — полная очистка и пересканирование
-- Логирование: перехват логов Go-ядра и передача в Flutter
-- Кнопка «Сохранить журнал» через Android Intent
-- Динамический поиск свободного порта (8081+), порт передаётся через NSD
-
-### Что работает
-- HTTP-связь между телефонами
-- libp2p P2P-соединение
+- mobile/mobile.go — обёртка gomobile
+- libp2p через FFI (.aar 67 МБ, MethodChannel)
+- Стабильный PeerID (isotope_state.json.key)
+- Обработка смены сети (connectivity_plus)
+- NodeInfo, heartbeat, dead-статус
+- Логирование Go → Flutter
+- Динамический поиск порта (8081+)
 - NSD-обнаружение с PeerID и multiaddr
-- Отправка/приём сообщений
-- Бейджи непрочитанных
-- История сообщений
-- Стабильный PeerID
-- Обработка смены сети
 
 ---
 
@@ -143,28 +169,9 @@
 
 ### Добавлено
 - Рефакторинг ядра: package main → package core
-- Точка входа: node/main/main.go (package main)
+- Точка входа: node/main/main.go
 - Экспорт публичного API: Config, NewNode, InitP2P, StartHTTP, StartMobile, Stop
 - HashText — экспортирован
-- Транспорты настраиваются через Config
-- Подготовка структуры для gomobile (node/mobile/mobile.go)
-
-### Изменено
-- Ядро теперь — библиотека, а не исполняемый файл
-- Dockerfile: сборка из node/main
-- docker-compose.yml: 5 узлов с новой структурой
-- Makefile: команды для библиотеки + CLI
-- go test ./... — ok
-
-### Миграция
-Для запуска узла:
-
-go build -o isotope-node ./node/main
-./isotope-node --config config.json
-
-Для использования как библиотеки:
-
-import core "sbimain"
 
 ---
 
@@ -173,8 +180,7 @@ import core "sbimain"
 ### Добавлено
 - Каналы с весовыми уровнями (G4): Channel, ChannelStore
 - Пороги доступа: full=0.3, comment=0.5, vote=0.7
-- Эндпоинты: POST/GET /channels, POST/GET /channels/{id}/messages
-- Доступ зависит от веса узла
+- Эндпоинты: POST/GET /channels
 
 ---
 
@@ -182,55 +188,44 @@ import core "sbimain"
 
 ### Добавлено
 - Самоадаптация: node/adapt.go
-- Сбор метрик: avgWeight, lowWeightRatio, highWeightRatio
-- Правила: порог архивации, интервал синхронизации
+- Метрики: avgWeight, lowWeightRatio, highWeightRatio
 - Фоновая адаптация каждые 5 минут
-- Адаптивный learningRate
-- Адаптивный порог архивации и очистки
 
 ---
 
 ## v1.16 (2026-08-16)
 
 ### Добавлено
-- Onion Routing v2: цепочка из 4 relay (анонимный режим)
-- Цепочка из 5 relay + задержка (скрытый режим)
+- Onion Routing v2: цепочка из 4-5 relay
 - Выбор relay по весу > 0.7
-- Fallback на обычных пиров
-- getPeerWeight — средний вес сообщений пира
+- getPeerWeight
 
 ---
 
 ## v1.15 (2026-08-16)
 
 ### Добавлено
-- Репликация сообщений на 2 случайных живых узла
+- Репликация на 2 случайных живых узла
 - Поля ReplicatedFrom, ReplicatedAt
-- Восстановление при старте через [RESTORE] и [REPLICA]
-- Стабильный PeerID: приватный ключ в state/private_key_N.bin
+- Стабильный PeerID: приватный ключ в state/
 
 ---
 
 ## v1.14 (2026-08-16)
 
 ### Добавлено
-- Голосовая стеганография: LSB-встраивание в WAV
+- Голосовая стеганография: LSB в WAV
 - node/stego.go: embedLSB, extractLSB
-- Случайное распределение через seed от ключа
-- node/stego_test.go: 5 юнит-тестов
 - Эндпоинт POST /send_stego
-- [STEGO] префикс в handleStream
-- Буфер увеличен до 2 МБ
 
 ---
 
 ## v1.13 (2026-08-16)
 
 ### Добавлено
-- Обфускация трафика: AES-GCM с префиксом [SHUF]
+- Обфускация: AES-GCM с префиксом [SHUF]
 - Случайные задержки 5-50 мс
 - Дедупликация: форвардинг только из handleSend
-- Лимиты ресурсов: 0.5 CPU, 512 MiB на узел
 
 ---
 
@@ -239,8 +234,7 @@ import core "sbimain"
 ### Добавлено
 - Селф-хилинг: heartbeat каждые 30 сек
 - Обнаружение мёртвых пиров: 5 сек без PONG
-- Relay выбирает только живых
-- Автоперезапуск: restart: unless-stopped
+- Автоперезапуск
 
 ---
 
@@ -248,10 +242,8 @@ import core "sbimain"
 
 ### Добавлено
 - Исчезающие сообщения (TTL): вечно, 60 сек, 3600 сек
-- ExpiresAt в структуре Message
-- Фоновая очистка раз в 60 секунд
+- ExpiresAt в Message
 - Локальное шифрование state: AES-256-GCM
-- Пароль из ENV: ISOTOPE_STATE_PASSWORD
 
 ---
 
@@ -259,12 +251,7 @@ import core "sbimain"
 
 ### Добавлено
 - Onion Routing v1: три режима анонимности
-- mode=0: обычный (прямое соединение)
-- mode=1: анонимный (цепочка из 2 relay-пиров)
-- mode=2: скрытый (3 relay-пира + задержка 10-60 сек)
-- selectRelays: случайный выбор пиров
-- sendViaRelayChain: отправка через цепочку
-- Поле Relayed в структуре Message
+- mode=0 обычный, mode=1 анонимный, mode=2 скрытый
 
 ---
 
@@ -274,15 +261,14 @@ import core "sbimain"
 - 5 узлов в docker-compose
 - Документация: три столпа ISOTOPE
 - README (EN + RU) под новую концепцию
-- docs/FAQ.md: 20 вопросов экспертов
-- Весовая модель доступа
+- docs/FAQ.md: 20 вопросов
 
 ---
 
 ## v1.8 (2026-08-14)
 
 ### Добавлено
-- Ассоциативная память: узлы запоминают, кто у кого что спрашивал
+- Ассоциативная память
 - Децентрализованный bootstrap: mDNS, DHT, вручную через ENV
 
 ---
@@ -291,7 +277,7 @@ import core "sbimain"
 
 ### Добавлено
 - WebSocket + TLS: трафик неотличим от HTTPS
-- Новый универсальный этический хеш: семь заповедей, собранных из всех учений
+- Новый универсальный этический хеш: семь заповедей
 
 ---
 
@@ -300,7 +286,6 @@ import core "sbimain"
 ### Добавлено
 - Priority Gossip: поле Priority в Message
 - TTL форвардинга зависит от приоритета
-- Приоритет от узлов с весом > 0.7
 
 ---
 
@@ -310,14 +295,9 @@ import core "sbimain"
 - REST API для внешних клиентов
 - WebSocket для реального времени
 - Пагинация для /messages
-- CORS middleware на всех эндпоинтах
+- CORS middleware
 - Мобильное приложение (Flutter, базовая версия)
-- Статусы доставки с форвардингом
 - Защита памяти (лимит 10 000 сообщений, архив)
-
-### Изменено
-- Синхронизация слоёв через gossip-протокол
-- Метрики логирования: английские метки [MSG], [TRAIN], [SYNC], [FEEDBACK]
 
 ---
 
@@ -329,7 +309,7 @@ import core "sbimain"
 - Марковские цепочки для русских ответов
 - Кнопки preHash/antiHash в дашборде
 - Мониторинг здоровья сети
-- 55 автотестов (позже расширено до 67)
+- 55 автотестов (позже 67)
 
 ---
 
