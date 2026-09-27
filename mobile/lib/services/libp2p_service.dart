@@ -274,6 +274,27 @@ class LibP2PService {
     }
   }
 
+  /// Возвращает статусы всех сообщений: {"<msg_id>": 1|2|3, ...}.
+  /// 1 — отправлено, 2 — доставлено, 3 — прочитано.
+  /// Пустая map — если узел не запущен или статусов нет.
+  static Future<Map<String, int>> getMessageStatuses() async {
+    try {
+      final response = await _channel.invokeMethod<String>('getMessageStatuses');
+      final raw = response ?? '{}';
+      try {
+        final decoded = jsonDecode(raw);
+        if (decoded is Map) {
+          return decoded.map((k, v) => MapEntry(k.toString(), (v as num).toInt()));
+        }
+        return {};
+      } on FormatException {
+        return {};
+      }
+    } on PlatformException {
+      return {};
+    }
+  }
+
   /// Возвращает список контактов (JSON-массив).
   static Future<List<dynamic>> getContacts() async {
     try {

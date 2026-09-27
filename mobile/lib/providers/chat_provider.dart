@@ -42,6 +42,11 @@ class ChatProvider extends ChangeNotifier {
   // Повторный [READ] для того же ref — не ошибка (идемпотентно).
   final Set<String> _readSent = {};
 
+  // Статусы своих сообщений: msg_id → 1/2/3.
+  // 1=sent, 2=delivered, 3=read. Заполняется из Go-ядра (этап 1.5).
+  final Map<String, int> _messageStatuses = {};
+  Timer? _statusTimer;
+
   List<Message> get allMessages {
     final list = _messagesMap.values
         .where((m) => m.sender != '🌐 Сеть')
@@ -59,6 +64,7 @@ class ChatProvider extends ChangeNotifier {
             weight: m.weight,
             archived: m.archived,
             deliveryStatus: m.deliveryStatus,
+            messageStatus: _messageStatuses[m.id],
             channel: m.channel,
             ttl: m.ttl,
             expiresAt: m.expiresAt,
@@ -264,11 +270,45 @@ class ChatProvider extends ChangeNotifier {
       _subscribeToMessages();
       await loadMessages();
 
+      _startStatusPolling();
+
       _safeNotify();
     } catch (e) {
       LogService.log('libp2p: ИСКЛЮЧЕНИЕ при старте: $e');
       _libp2pAvailable = false;
       _safeNotify();
+    }
+  }
+
+  /// Запускает периодический опрос статусов сообщений из Go-ядра.
+  /// Каждые 3 секунды тянет map {msg_id: 1|2|3} и обновляет UI.
+  void _startStatusPolling() {
+    _statusTimer?.cancel();
+    _statusTimer = Timer.periodic(const Duration(seconds: 3), (_) async {
+      await refreshMessageStatuses();
+    });
+  }
+
+  /// Обновляет статусы сообщений из Go-ядра.
+  Future<void> refreshMessageStatuses() async {
+    if (!_libp2pStarted) return;
+    try {
+      final statuses = await LibP2PService.getMessageStatuses();
+      if (statuses.isEmpty) return;
+
+      bool changed = false;
+      for (final entry in statuses.entries) {
+        final prev = _messageStatuses[entry.key];
+        if (prev == null || entry.value > prev) {
+          _messageStatuses[entry.key] = entry.value;
+          changed = true;
+        }
+      }
+      if (changed) {
+        _safeNotify();
+      }
+    } catch (_) {
+      // Тихий fail — статусы не критичны.
     }
   }
 
@@ -519,6 +559,10 @@ class ChatProvider extends ChangeNotifier {
 
     _addMessage(msg);
 
+    // Локально сразу ставим статус "отправлено" (1).
+    // Go-ядро подтвердит/обновит через refreshMessageStatuses.
+    _messageStatuses[msg.id] = 1;
+
     p2p?.saveOwnMessage(_currentNodeIp, msg);
 
     return true;
@@ -581,6 +625,7 @@ class ChatProvider extends ChangeNotifier {
 
   @override
   void dispose() {
+    _statusTimer?.cancel();
     _messageSub?.cancel();
     stopLibP2P();
     super.dispose();

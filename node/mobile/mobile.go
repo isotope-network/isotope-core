@@ -488,6 +488,22 @@ func SendRead(ref, recipient string) string {
 	return `{"status":"ok"}`
 }
 
+// GetMessageStatuses — возвращает JSON со статусами всех сообщений.
+// Формат: {"<msg_id>": 1|2|3, ...}. 0 — неизвестен (не включается).
+// 1 — отправлено, 2 — доставлено, 3 — прочитано.
+// Вызывается из UI для отрисовки галочек.
+func GetMessageStatuses() string {
+	nodeMu.Lock()
+	defer nodeMu.Unlock()
+
+	if node == nil {
+		return `{}`
+	}
+	statuses := node.GetMessageStatuses()
+	data, _ := json.Marshal(statuses)
+	return string(data)
+}
+
 // GetContacts — возвращает JSON со всеми контактами.
 func GetContacts() string {
 	nodeMu.Lock()

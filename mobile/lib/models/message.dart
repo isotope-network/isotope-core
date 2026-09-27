@@ -11,6 +11,7 @@ class Message {
   final double weight;
   final bool archived;
   final String? deliveryStatus;
+  final int? messageStatus; // 1=sent, 2=delivered, 3=read (из Go-ядра)
   final String? channel;
   final int ttl;
   final DateTime? expiresAt;
@@ -27,10 +28,32 @@ class Message {
     required this.weight,
     required this.archived,
     this.deliveryStatus,
+    this.messageStatus,
     this.channel,
     this.ttl = 0,
     this.expiresAt,
   });
+
+  /// Копия с обновлённым messageStatus.
+  Message withStatus(int? status) {
+    return Message(
+      id: id,
+      text: text,
+      plainText: plainText,
+      version: version,
+      sender: sender,
+      time: time,
+      isOwn: isOwn,
+      score: score,
+      weight: weight,
+      archived: archived,
+      deliveryStatus: deliveryStatus,
+      messageStatus: status,
+      channel: channel,
+      ttl: ttl,
+      expiresAt: expiresAt,
+    );
+  }
 
   factory Message.fromJson(Map<String, dynamic> json) {
     return Message(
@@ -45,6 +68,7 @@ class Message {
       weight: (json['weight'] ?? 0.5).toDouble(),
       archived: json['archived'] ?? false,
       deliveryStatus: json['deliveryStatus'],
+      messageStatus: json['messageStatus'],
       channel: json['channel'],
       ttl: json['ttl'] ?? 0,
       expiresAt: json['expiresAt'] != null
@@ -66,6 +90,7 @@ class Message {
       'weight': weight,
       'archived': archived,
       'deliveryStatus': deliveryStatus,
+      'messageStatus': messageStatus,
       'channel': channel,
       'ttl': ttl,
       'expiresAt': expiresAt?.toIso8601String(),
@@ -154,6 +179,35 @@ class Message {
 
   /// Вес для бейджа
   String get weightLabel => '⚖${weight.toStringAsFixed(2)}';
+
+  /// Иконка статуса сообщения из Go-ядра (1/2/3).
+  /// 1=sent, 2=delivered, 3=read.
+  String get messageStatusIcon {
+    switch (messageStatus) {
+      case 1:
+        return '✓';
+      case 2:
+        return '✓✓';
+      case 3:
+        return '✓✓🔒';
+      default:
+        return '';
+    }
+  }
+
+  /// Цвет статуса сообщения.
+  int get messageStatusColor {
+    switch (messageStatus) {
+      case 1:
+        return 0xFF999999;
+      case 2:
+        return 0xFF999999;
+      case 3:
+        return 0xFF4CAF50;
+      default:
+        return 0xFF999999;
+    }
+  }
 
   /// Тип отправителя: свой, чужой, сеть
   String get senderType {
