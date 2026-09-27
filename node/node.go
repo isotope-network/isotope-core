@@ -1218,8 +1218,15 @@ func (n *Node) handleStream(stream network.Stream) {
 		payload := strings.TrimPrefix(msg, REPLICA_PREFIX)
 		var replicaMsg Message
 		if err := json.Unmarshal([]byte(payload), &replicaMsg); err == nil {
-			// Служебные типы обрабатываются отдельно (не идут в UI).
-			if n.handleServiceMessage(replicaMsg) {
+			// Сервисные сообщения (DELIVERED/READ/CONTACT_*):
+			// мне → обработать, relay → форвард, иначе → drop.
+			if n.isServiceType(replicaMsg.Type) {
+				myID := n.host.ID().String()
+				if replicaMsg.Recipient == myID {
+					n.handleServiceMessage(replicaMsg)
+				} else if n.isRelay {
+					go n.replicateMessage(replicaMsg)
+				}
 				return
 			}
 			// Деобфускация только для Version < 2 (история, broadcast).
@@ -1393,34 +1400,36 @@ func (n *Node) handleStream(stream network.Stream) {
 	n.processMessage(msg, remoteID, false)
 }
 
-// handleServiceMessage — обрабатывает служебные сообщения (Type != 0).
-// Возвращает true, если сообщение обработано и его не нужно показывать в UI.
-func (n *Node) handleServiceMessage(m Message) bool {
+// isServiceType — классификация. Только тип, без побочных эффектов.
+// Сервисные сообщения не идут в UI.
+func (n *Node) isServiceType(t MessageType) bool {
+	switch t {
+	case TypeDelivered, TypeRead, TypeContactRequest, TypeContactAccept, TypeContactReject:
+		return true
+	}
+	return false
+}
+
+// handleServiceMessage — обработка сервисного сообщения.
+// Вызывается только если Recipient == myID (проверка в handleStream).
+func (n *Node) handleServiceMessage(m Message) {
 	switch m.Type {
 	case TypeDelivered:
 		n.setMessageStatus(m.Ref, StatusDelivered)
 		log.Printf("[SERVICE] delivered ack ref=%s from=%s", m.Ref, m.Sender)
-		return true
 
 	case TypeRead:
 		n.setMessageStatus(m.Ref, StatusRead)
 		log.Printf("[SERVICE] read ack ref=%s from=%s", m.Ref, m.Sender)
-		return true
 
 	case TypeContactRequest:
 		n.handleContactRequest(m)
-		return true
 
 	case TypeContactAccept:
 		n.handleContactAccept(m)
-		return true
 
 	case TypeContactReject:
 		n.handleContactReject(m)
-		return true
-
-	default:
-		return false
 	}
 }
 
@@ -2258,12 +2267,10 @@ func (n *Node) InitP2P() error {
 		}
 	}
 
-	if !n.isRelay {
-		dhtNode, err := NewDHT(host)
-		if err == nil {
-			n.dhtNode = dhtNode
-			dhtNode.JoinDHT(bootstrapPeers)
-		}
+	dhtNode, err := NewDHT(host)
+	if err == nil {
+		n.dhtNode = dhtNode
+		dhtNode.JoinDHT(bootstrapPeers)
 	}
 
 	if len(n.layers) == 0 {
@@ -2277,9 +2284,7 @@ func (n *Node) InitP2P() error {
 	}
 
 	n.pingPeers()
-	if !n.isRelay {
-		n.reconnectLoop()
-	}
+	n.reconnectLoop()
 	n.announceLoop()
 	n.cleanupLoop()
 	n.relayLoop()
@@ -2816,6 +2821,20 @@ func (n *Node) getMessageStatus(id string) MessageStatus {
 	n.messageStatusMu.Lock()
 	defer n.messageStatusMu.Unlock()
 	return n.messageStatus[id]
+}
+
+// GetMessageStatuses — возвращает копию map статусов для UI.
+// Формат: map[msg_id]status (1/2/3). Статус 0 не включается.
+func (n *Node) GetMessageStatuses() map[string]MessageStatus {
+	n.messageStatusMu.Lock()
+	defer n.messageStatusMu.Unlock()
+	result := make(map[string]MessageStatus, len(n.messageStatus))
+	for id, s := range n.messageStatus {
+		if s > 0 {
+			result[id] = s
+		}
+	}
+	return result
 }
 
 // GetRequests — возвращает все pending-запросы на контакт.
