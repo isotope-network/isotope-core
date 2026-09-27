@@ -592,7 +592,9 @@ class P2PService {
 
     final existing = _nodesMap[peerID];
     if (existing != null) {
-      // Узел уже есть (загружен как unknown/dead) — обновляем и эмитим для UI
+      // Узел уже есть (загружен как unknown/dead) — обновляем и эмитим для UI.
+      // Эмитим КАЖДЫЙ раз, даже если статус уже alive — иначе ConnectScreen
+      // может не получить обновление (гонка при старте).
       final updated = existing.copyWith(
         status: NodeStatus.alive,
         lastSeen: DateTime.now(),

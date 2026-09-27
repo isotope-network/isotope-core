@@ -199,15 +199,20 @@ class _ConnectScreenState extends State<ConnectScreen> {
   void _syncDiscoveredNodesFromP2P() {
     try {
       final p2p = context.read<P2PService>();
-      int added = 0;
+      int changed = 0;
       for (final node in p2p.discoveredNodes) {
         if (node.peerID == BOOTSTRAP_PEER_ID) continue;
-        if (_discoveredNodes.any((n) => n.key == node.key)) continue;
-        _discoveredNodes.add(node);
-        added++;
+        // Upsert: если уже есть — ЗАМЕНИТЬ (обновить статус), не игнорировать.
+        final idx = _discoveredNodes.indexWhere((n) => n.key == node.key);
+        if (idx >= 0) {
+          _discoveredNodes[idx] = node;
+        } else {
+          _discoveredNodes.add(node);
+        }
+        changed++;
       }
-      if (added > 0 && mounted) {
-        LogService.log('ConnectScreen: синхронизировано контактов: $added');
+      if (changed > 0 && mounted) {
+        LogService.log('ConnectScreen: синхронизировано контактов: $changed');
         setState(() {
           _status = 'Контактов: ${_discoveredNodes.length}';
         });
@@ -427,7 +432,12 @@ class _ConnectScreenState extends State<ConnectScreen> {
       if (node.peerID == BOOTSTRAP_PEER_ID) return;
 
       if (_localIp == null) {
-        if (!_pendingNodes.any((n) => n.key == node.key)) {
+        // Upsert: если узел уже в pending — ЗАМЕНИТЬ, не игнорировать.
+        // Иначе alive теряется, если сначала был unknown от _loadNodes.
+        final idx = _pendingNodes.indexWhere((n) => n.key == node.key);
+        if (idx >= 0) {
+          _pendingNodes[idx] = node;
+        } else {
           _pendingNodes.add(node);
         }
       } else {
