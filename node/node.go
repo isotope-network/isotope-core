@@ -66,6 +66,16 @@ const E2E_VERSION = 1
 // 2 — E2E-шифрованное (Text содержит base64(nonce||ciphertext)).
 const MESSAGE_VERSION_E2E = 2
 
+// MessageStatus — статус сообщения (для подтверждений доставки/прочтения).
+// 1 = отправлено, 2 = доставлено, 3 = прочитано.
+type MessageStatus int
+
+const (
+	StatusSent      MessageStatus = 1
+	StatusDelivered MessageStatus = 2
+	StatusRead      MessageStatus = 3
+)
+
 // announcedPeer — запись о пире: список его multiaddr + когда последний раз видели.
 type announcedPeer struct {
 	Multiaddrs []string  `json:"multiaddrs"`
@@ -95,44 +105,44 @@ type Config struct {
 
 // Node — основной узел сети
 type Node struct {
-	host                   host.Host
-	dhtNode                *DHTNode
-	ethHash                string
-	preHash                string
-	antiHash               string
-	lastSyncSent           time.Time
-	lastSyncedLayers       [][]float64
-	layersDirty            bool
-	memory                 Memory
-	assoc                  AssocMemory
-	layers                 [][]float64
-	msgCount               int
-	nodeID                 int
-	stateFile              string
-	configTransports       []string
-	configPort             int
-	configBootstrap        []string
-	configEnableMDNS       bool
-	configListenIP         string
+	host                    host.Host
+	dhtNode                 *DHTNode
+	ethHash                 string
+	preHash                 string
+	antiHash                string
+	lastSyncSent            time.Time
+	lastSyncedLayers        [][]float64
+	layersDirty             bool
+	memory                  Memory
+	assoc                   AssocMemory
+	layers                  [][]float64
+	msgCount                int
+	nodeID                  int
+	stateFile               string
+	configTransports        []string
+	configPort              int
+	configBootstrap         []string
+	configEnableMDNS        bool
+	configListenIP          string
 	configEnableRelayServer bool
-	isRelay                bool // true для relay-узла (VPS)
-	messageHook            func(string)
-	mu                     sync.Mutex
-	lastPing               map[string]time.Time
-	deadPeers              map[string]bool
-	adaptive               *AdaptiveParams
-	channels               *ChannelStore
+	isRelay                 bool // true для relay-узла (VPS)
+	messageHook             func(string)
+	mu                      sync.Mutex
+	lastPing                map[string]time.Time
+	deadPeers               map[string]bool
+	adaptive                *AdaptiveParams
+	channels                *ChannelStore
 
 	// ANNOUNCE — справочник (используется на VPS)
-	announcedPeers    map[string]announcedPeer
-	announcedMu       sync.Mutex
+	announcedPeers     map[string]announcedPeer
+	announcedMu        sync.Mutex
 	announceMultiaddrs []string
 
 	// RELAY — резервация слота на relay-сервере (VPS)
-	relayReservation  *client.Reservation
-	relayMu           sync.Mutex
-	relayPeerInfo     peer.AddrInfo
-	lastRelayRefresh  time.Time
+	relayReservation *client.Reservation
+	relayMu          sync.Mutex
+	relayPeerInfo    peer.AddrInfo
+	lastRelayRefresh time.Time
 
 	// OFFLINE QUEUE — сообщения, ожидающие отправки при восстановлении связи
 	pendingMessages []Message
@@ -152,6 +162,17 @@ type Node struct {
 	// Отдельный файл isotope_contacts.json.
 	contactsFile string
 	contacts     *ContactsStore
+
+	// REQUESTS — входящие запросы на контакт (контакт-протокол, этап 5).
+	// Отдельный файл isotope_requests.json. До accept/reject.
+	requestsFile string
+	requests     *RequestsStore
+
+	// MESSAGE STATUS — статусы своих сообщений (отправлено/доставлено/прочитано).
+	// Ключ — msg_id. Обновляется при получении [DELIVERED]/[READ].
+	// Используется в UI (этап 1.5). Сейчас — только накапливается.
+	messageStatus   map[string]MessageStatus
+	messageStatusMu sync.Mutex
 }
 
 // NewNode — создаёт новый узел
@@ -165,16 +186,16 @@ func NewNode(cfg Config) *Node {
 		listenIP = "0.0.0.0"
 	}
 	return &Node{
-		ethHash:                cfg.EthHash,
-		configTransports:       cfg.Transports,
-		configPort:             port,
-		configBootstrap:        cfg.Bootstrap,
-		configEnableMDNS:       cfg.EnableMDNS,
-		configListenIP:         listenIP,
+		ethHash:                 cfg.EthHash,
+		configTransports:        cfg.Transports,
+		configPort:              port,
+		configBootstrap:         cfg.Bootstrap,
+		configEnableMDNS:        cfg.EnableMDNS,
+		configListenIP:          listenIP,
 		configEnableRelayServer: cfg.EnableRelayServer,
-		isRelay:                cfg.IsRelay || cfg.EnableRelayServer,
-		memory:                 Memory{seen: make(map[string]bool)},
-		announcedPeers:         make(map[string]announcedPeer),
+		isRelay:                 cfg.IsRelay || cfg.EnableRelayServer,
+		memory:                  Memory{seen: make(map[string]bool)},
+		announcedPeers:          make(map[string]announcedPeer),
 	}
 }
 
@@ -1180,6 +1201,10 @@ func (n *Node) handleStream(stream network.Stream) {
 		payload := strings.TrimPrefix(msg, REPLICA_PREFIX)
 		var replicaMsg Message
 		if err := json.Unmarshal([]byte(payload), &replicaMsg); err == nil {
+			// Служебные типы обрабатываются отдельно (не идут в UI).
+			if n.handleServiceMessage(replicaMsg) {
+				return
+			}
 			// Деобфускация только для Version < 2 (история, broadcast).
 			if replicaMsg.Version < 2 {
 				if plaintext, ok := n.deobfuscate(replicaMsg.Text); ok {
@@ -1203,6 +1228,12 @@ func (n *Node) handleStream(stream network.Stream) {
 					replicaMsg.Text = plaintext
 					if n.memory.Add(replicaMsg) {
 						log.Printf("[REPLICA] decrypted message for us: %s", replicaMsg.ID)
+						// Подтверждаем доставку отправителю (напрямую или через relay).
+						go func(sender, msgID string) {
+							if err := n.SendDelivered(msgID, sender); err != nil {
+								log.Printf("[CONFIRM] delivered send failed: %v", err)
+							}
+						}(replicaMsg.Sender, replicaMsg.ID)
 						if n.messageHook != nil {
 							data, _ := json.Marshal(replicaMsg)
 							n.messageHook(string(data))
@@ -1343,6 +1374,99 @@ func (n *Node) handleStream(stream network.Stream) {
 	}
 
 	n.processMessage(msg, remoteID, false)
+}
+
+// handleServiceMessage — обрабатывает служебные сообщения (Type != 0).
+// Возвращает true, если сообщение обработано и его не нужно показывать в UI.
+func (n *Node) handleServiceMessage(m Message) bool {
+	switch m.Type {
+	case TypeDelivered:
+		n.setMessageStatus(m.Ref, StatusDelivered)
+		log.Printf("[SERVICE] delivered ack ref=%s from=%s", m.Ref, m.Sender)
+		return true
+
+	case TypeRead:
+		n.setMessageStatus(m.Ref, StatusRead)
+		log.Printf("[SERVICE] read ack ref=%s from=%s", m.Ref, m.Sender)
+		return true
+
+	case TypeContactRequest:
+		n.handleContactRequest(m)
+		return true
+
+	case TypeContactAccept:
+		n.handleContactAccept(m)
+		return true
+
+	case TypeContactReject:
+		n.handleContactReject(m)
+		return true
+
+	default:
+		return false
+	}
+}
+
+// handleContactRequest — обрабатывает входящий запрос на контакт.
+// Payload шифрован E2E. Расшифровываем, парсим, сохраняем в requests store.
+func (n *Node) handleContactRequest(m Message) {
+	if m.Version != MESSAGE_VERSION_E2E {
+		log.Printf("[SERVICE] contact_request without E2E, dropped")
+		return
+	}
+	plaintext, err := n.decryptFromSender(m.Sender, m.Text)
+	if err != nil {
+		log.Printf("[SERVICE] contact_request decrypt failed: %v", err)
+		return
+	}
+	var payload struct {
+		Name        string `json:"name"`
+		Ed25519Pub  string `json:"ed25519_pub"`
+		X25519Pub   string `json:"x25519_pub"`
+		Signature   string `json:"signature"`
+		ReadEnabled bool   `json:"read_enabled"`
+	}
+	if err := json.Unmarshal([]byte(plaintext), &payload); err != nil {
+		log.Printf("[SERVICE] contact_request parse failed: %v", err)
+		return
+	}
+	if n.requests == nil {
+		log.Printf("[SERVICE] requests store not initialized")
+		return
+	}
+	req := ContactRequest{
+		ID:          m.ID,
+		PeerID:      m.Sender,
+		Name:        payload.Name,
+		Ed25519Pub:  payload.Ed25519Pub,
+		X25519Pub:   payload.X25519Pub,
+		Signature:   payload.Signature,
+		ReadEnabled: payload.ReadEnabled,
+		Status:      RequestStatusPending,
+	}
+	if err := n.requests.Add(req); err != nil {
+		log.Printf("[SERVICE] contact_request add failed: %v", err)
+		return
+	}
+	log.Printf("[SERVICE] contact_request saved from %s", m.Sender)
+}
+
+// handleContactAccept — обрабатывает принятие нашего запроса.
+// Находим свой исходящий запрос (по Ref) — сохраняем контакт, шлём [DELIVERED].
+func (n *Node) handleContactAccept(m Message) {
+	// Ref = ID нашего исходящего [CONTACT_REQUEST].
+	// Мы уже отправили запрос ранее. Нужно — сохранить контакт, если ещё нет.
+	// Но у нас нет pending-исходящих в этом этапе. Упрощаем: логируем.
+	// TODO(этап 5+): отслеживать исходящие запросы.
+	log.Printf("[SERVICE] contact_accept ref=%s from=%s", m.Ref, m.Sender)
+
+	// Пытаемся получить контакт. Если нет — добавить нечего (ключи не в сообщении).
+	// В будущем: хранить исходящие запросы, чтобы принять их здесь.
+}
+
+// handleContactReject — обрабатывает отклонение нашего запроса.
+func (n *Node) handleContactReject(m Message) {
+	log.Printf("[SERVICE] contact_reject ref=%s from=%s", m.Ref, m.Sender)
 }
 
 func (n *Node) buildRelayAddrFor(targetID string) string {
@@ -1851,6 +1975,10 @@ func (n *Node) processMessageInternal(msg string, senderID string, isOwn bool, e
 		ExpiresAt: expiresAt,
 	}
 	if n.memory.Add(newMsg) {
+		// Если это наше E2E-сообщение — фиксируем статус StatusSent.
+		if isOwn && version == MESSAGE_VERSION_E2E && newMsg.Type == TypeMessage {
+			n.setMessageStatus(id, StatusSent)
+		}
 		n.replicateMessage(newMsg)
 		if n.messageHook != nil {
 			data, _ := json.Marshal(newMsg)
@@ -1987,6 +2115,18 @@ func (n *Node) InitP2P() error {
 		_ = os.MkdirAll(filepath.Dir(n.contactsFile), 0700)
 		n.contacts = NewContactsStore(n.contactsFile)
 	}
+
+	// Инициализация хранилища входящих запросов (отдельно от state).
+	if n.requestsFile == "" && n.stateFile != "" {
+		n.requestsFile = filepath.Join(filepath.Dir(n.stateFile), "isotope_requests.json")
+	}
+	if n.requestsFile != "" {
+		_ = os.MkdirAll(filepath.Dir(n.requestsFile), 0700)
+		n.requests = NewRequestsStore(n.requestsFile)
+	}
+
+	// Инициализация map статусов сообщений.
+	n.messageStatus = make(map[string]MessageStatus)
 
 	var priv crypto.PrivKey
 	keyBytes, err := n.loadPrivateKey()
@@ -2205,13 +2345,18 @@ func (n *Node) GetWeight() float64 {
 // GetStatus — возвращает JSON-статус
 func (n *Node) GetStatus() string {
 	if n.host == nil {
-		return `{"id":"","peers":0,"memory":0,"layers":0}`
+		return `{"id":"","peers":0,"memory":0,"layers":0,"requests":0}`
 	}
-	return fmt.Sprintf(`{"id":"%s","peers":%d,"memory":%d,"layers":%d}`,
+	reqCount := 0
+	if n.requests != nil {
+		reqCount = n.requests.CountPending()
+	}
+	return fmt.Sprintf(`{"id":"%s","peers":%d,"memory":%d,"layers":%d,"requests":%d}`,
 		n.host.ID().String(),
 		len(n.host.Network().Peers()),
 		n.memory.Count(),
 		len(n.layers),
+		reqCount,
 	)
 }
 
@@ -2449,6 +2594,265 @@ func (n *Node) SendToPeer(peerID string, text string, ttl int) (string, error) {
 	return id, nil
 }
 
+// SendDelivered — отправляет подтверждение доставки сообщения отправителю.
+// ref — msg_id. recipient — PeerID отправителя (кому подтверждаем).
+// Пытаемся напрямую — если peerstore знает рабочий адрес.
+// Fallback — через relay (bootstrap).
+// Version=0 — метаданные, не E2E.
+func (n *Node) SendDelivered(ref, recipient string) error {
+	return n.sendConfirmation(TypeDelivered, ref, recipient)
+}
+
+// SendRead — отправляет подтверждение прочтения сообщения отправителю.
+// См. SendDelivered.
+func (n *Node) SendRead(ref, recipient string) error {
+	return n.sendConfirmation(TypeRead, ref, recipient)
+}
+
+// sendConfirmation — общая логика отправки [DELIVERED]/[READ].
+// Version=0, Type=delivered|read, Ref=msg_id. Прямо или через relay.
+func (n *Node) sendConfirmation(msgType MessageType, ref, recipient string) error {
+	if n.host == nil {
+		return fmt.Errorf("node not started")
+	}
+	if ref == "" || recipient == "" {
+		return fmt.Errorf("ref and recipient are required")
+	}
+
+	id := generateMsgID(fmt.Sprintf("%s:%s", ref, msgTypeString(msgType)))
+	msg := Message{
+		ID:        id,
+		Text:      "",
+		Sender:    n.host.ID().String(),
+		Recipient: recipient,
+		Type:      msgType,
+		Ref:       ref,
+		Version:   0,
+		Time:      time.Now().UTC().Format("2006-01-02T15:04:05"),
+	}
+
+	data, err := json.Marshal(msg)
+	if err != nil {
+		return err
+	}
+
+	// Пытаемся напрямую — если peerstore знает рабочий адрес.
+	targetID, err := peer.Decode(recipient)
+	if err == nil {
+		for _, p := range n.host.Network().Peers() {
+			if p == targetID && !n.isPeerDead(p.String()) {
+				go n.sendReplicaToPeer(targetID, data)
+				log.Printf("[CONFIRM] direct %s ref=%s to %s", msgTypeString(msgType), ref, recipient)
+				return nil
+			}
+		}
+	}
+
+	// Fallback — через relay (bootstrap).
+	if n.sendToRecipient(msg, data) {
+		log.Printf("[CONFIRM] relay %s ref=%s to %s", msgTypeString(msgType), ref, recipient)
+		return nil
+	}
+	return fmt.Errorf("no route for confirmation")
+}
+
+// msgTypeString — строковое имя типа для логов.
+func msgTypeString(t MessageType) string {
+	switch t {
+	case TypeDelivered:
+		return "delivered"
+	case TypeRead:
+		return "read"
+	case TypeContactRequest:
+		return "contact_request"
+	case TypeContactAccept:
+		return "contact_accept"
+	case TypeContactReject:
+		return "contact_reject"
+	default:
+		return "message"
+	}
+}
+
+// SendContactRequest — отправляет запрос на добавление в контакты.
+// recipient — PeerID получателя (должен быть в контактах, чтобы был x25519_pub).
+// name — имя отправителя (может быть пусто).
+// Payload (имя, ключи, подпись, read_enabled) шифруется E2E.
+// Version=2.
+func (n *Node) SendContactRequest(recipient, name string) (string, error) {
+	if n.host == nil {
+		return "", fmt.Errorf("node not started")
+	}
+	if recipient == "" {
+		return "", fmt.Errorf("recipient is required")
+	}
+
+	payload := map[string]interface{}{
+		"name":         name,
+		"ed25519_pub":  base64.StdEncoding.EncodeToString(n.ed25519Pub),
+		"x25519_pub":   base64.StdEncoding.EncodeToString(n.x25519Pub[:]),
+		"signature":    n.signMyX25519(),
+		"read_enabled": true, // TODO(1.5): настройка приватности. Пока — true.
+	}
+	payloadJSON, err := json.Marshal(payload)
+	if err != nil {
+		return "", err
+	}
+
+	encrypted, err := n.encryptForRecipient(recipient, string(payloadJSON))
+	if err != nil {
+		return "", fmt.Errorf("encrypt failed: %w", err)
+	}
+
+	id := generateMsgID(fmt.Sprintf("req:%s:%d", recipient, time.Now().UnixNano()))
+	n.processMessageInternal(encrypted, n.host.ID().String(), true, time.Time{}, id, recipient, MESSAGE_VERSION_E2E, "")
+	// Проставим Type=ContactRequest через память (см. правку ниже).
+	n.updateMessageType(id, TypeContactRequest)
+
+	return id, nil
+}
+
+// SendContactAccept — отправляет принятие запроса на контакт.
+// requestID — ID исходного запроса (Ref). recipient — PeerID запросившего.
+// Version=2, E2E.
+func (n *Node) SendContactAccept(requestID, recipient string) error {
+	return n.sendContactControl(TypeContactAccept, requestID, recipient)
+}
+
+// SendContactReject — отправляет отклонение запроса на контакт.
+func (n *Node) SendContactReject(requestID, recipient string) error {
+	return n.sendContactControl(TypeContactReject, requestID, recipient)
+}
+
+// sendContactControl — общая логика accept/reject.
+// Шифруем E2E. Version=2.
+func (n *Node) sendContactControl(msgType MessageType, requestID, recipient string) error {
+	if n.host == nil {
+		return fmt.Errorf("node not started")
+	}
+	if requestID == "" || recipient == "" {
+		return fmt.Errorf("requestID and recipient are required")
+	}
+
+	payload := map[string]interface{}{
+		"request_id": requestID,
+	}
+	payloadJSON, err := json.Marshal(payload)
+	if err != nil {
+		return err
+	}
+
+	encrypted, err := n.encryptForRecipient(recipient, string(payloadJSON))
+	if err != nil {
+		return fmt.Errorf("encrypt failed: %w", err)
+	}
+
+	id := generateMsgID(fmt.Sprintf("%s:%s:%d", msgTypeString(msgType), requestID, time.Now().UnixNano()))
+	n.processMessageInternal(encrypted, n.host.ID().String(), true, time.Time{}, id, recipient, MESSAGE_VERSION_E2E, "")
+	n.updateMessageType(id, msgType)
+
+	return nil
+}
+
+// updateMessageType — проставляет Type у уже добавленного сообщения в памяти.
+// Нужно, потому что processMessageInternal не принимает Type.
+func (n *Node) updateMessageType(id string, msgType MessageType) {
+	all := n.memory.GetAll()
+	for _, m := range all {
+		if m.ID == id {
+			n.memory.Remove(id)
+			m.Type = msgType
+			n.memory.Add(m)
+			return
+		}
+	}
+}
+
+// setMessageStatus — устанавливает статус сообщения по ID.
+// Используется при отправке (StatusSent), получении [DELIVERED] (StatusDelivered),
+// получении [READ] (StatusRead).
+func (n *Node) setMessageStatus(id string, status MessageStatus) {
+	if id == "" {
+		return
+	}
+	n.messageStatusMu.Lock()
+	if n.messageStatus == nil {
+		n.messageStatus = make(map[string]MessageStatus)
+	}
+	// Не понижаем статус.
+	if cur, ok := n.messageStatus[id]; ok && cur >= status {
+		n.messageStatusMu.Unlock()
+		return
+	}
+	n.messageStatus[id] = status
+	n.messageStatusMu.Unlock()
+	log.Printf("[STATUS] %s → %d", id, status)
+}
+
+// getMessageStatus — возвращает статус сообщения по ID.
+// 0 — неизвестен.
+func (n *Node) getMessageStatus(id string) MessageStatus {
+	n.messageStatusMu.Lock()
+	defer n.messageStatusMu.Unlock()
+	return n.messageStatus[id]
+}
+
+// GetRequests — возвращает все pending-запросы на контакт.
+func (n *Node) GetRequests() []ContactRequest {
+	if n.requests == nil {
+		return []ContactRequest{}
+	}
+	return n.requests.GetPending()
+}
+
+// AcceptRequestByID — принимает входящий запрос по ID.
+// Добавляет контакт, отправляет [CONTACT_ACCEPT], удаляет запрос.
+func (n *Node) AcceptRequestByID(id string) error {
+	if n.requests == nil {
+		return fmt.Errorf("requests store not initialized")
+	}
+	req, ok := n.requests.Get(id)
+	if !ok {
+		return fmt.Errorf("request not found: %s", id)
+	}
+
+	if err := n.AddContact(req.PeerID, req.Ed25519Pub, req.X25519Pub, req.Signature, req.Name); err != nil {
+		return fmt.Errorf("add contact failed: %w", err)
+	}
+
+	if err := n.SendContactAccept(id, req.PeerID); err != nil {
+		log.Printf("[REQUESTS] accept send failed: %v", err)
+	}
+
+	if err := n.requests.Remove(id); err != nil {
+		log.Printf("[REQUESTS] remove failed: %v", err)
+	}
+	log.Printf("[REQUESTS] accepted %s (peer=%s)", id, req.PeerID)
+	return nil
+}
+
+// RejectRequestByID — отклоняет входящий запрос по ID.
+// Отправляет [CONTACT_REJECT], удаляет запрос.
+func (n *Node) RejectRequestByID(id string) error {
+	if n.requests == nil {
+		return fmt.Errorf("requests store not initialized")
+	}
+	req, ok := n.requests.Get(id)
+	if !ok {
+		return fmt.Errorf("request not found: %s", id)
+	}
+
+	if err := n.SendContactReject(id, req.PeerID); err != nil {
+		log.Printf("[REQUESTS] reject send failed: %v", err)
+	}
+
+	if err := n.requests.Remove(id); err != nil {
+		log.Printf("[REQUESTS] remove failed: %v", err)
+	}
+	log.Printf("[REQUESTS] rejected %s (peer=%s)", id, req.PeerID)
+	return nil
+}
+
 // GetKnownPeers — возвращает список известных multiaddr
 func (n *Node) GetKnownPeers() []string {
 	if n.host == nil {
@@ -2528,6 +2932,7 @@ func (n *Node) ExchangePeers(peerID string) error {
 //   - подписи нет           → Verified: false
 //   - подпись невалидна     → Verified: false + лог
 //   - Ed25519Pub пустой при непустой Signature → Verified: false + лог
+//
 // Отправка блокируется не здесь, а в encryptForRecipient (требует X25519Pub).
 func (n *Node) AddContact(peerID, ed25519Pub, x25519Pub, signature, name string) error {
 	if n.contacts == nil {
@@ -2593,4 +2998,5 @@ func (n *Node) SetDHT(d *DHTNode) {
 func (n *Node) GetDHT() *DHTNode {
 	return n.dhtNode
 }
+
 // node/node.go
