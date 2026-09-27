@@ -110,6 +110,10 @@ class ChatProvider extends ChangeNotifier {
       _unreadSnapshot = _unreadCount;
       _chatOpen = true;
       _unreadCount = 0;
+      // Отправить [READ] для всех непрочитанных входящих.
+      for (final msg in _messagesMap.values) {
+        _sendReadFor(msg);
+      }
     } else {
       _chatOpen = false;
     }
@@ -161,7 +165,7 @@ class ChatProvider extends ChangeNotifier {
       clean = clean.split('/p2p/').last;
     }
 
-    // На случай "QmX...:8081" — отрезаем порт, если есть ":".
+    // На случай "QmX...:8081" — отрезаем порт, если есть ":". 
     // PeerID (base58btc) содержит только буквы и цифры, без ":".
     if (clean.contains(':')) {
       clean = clean.split(':')[0];
@@ -429,25 +433,35 @@ class ChatProvider extends ChangeNotifier {
 
     LogService.log('ADD id=${msg.id} len=${msg.id.length} text="${msg.text}" sender=${msg.sender}');
 
-    // Отправляем [READ] для входящего обычного сообщения.
-    // Только если: не своё, не от Сети, sender непустой, ref ещё не отправлен.
-    if (!msg.isOwn
-        && msg.sender != 'Вы'
-        && msg.sender != '🌐 Сеть'
-        && msg.sender.isNotEmpty
-        && !_readSent.contains(msg.id)) {
-      _readSent.add(msg.id);
-      // Fire-and-forget: не блокируем UI.
-      LibP2PService.sendRead(ref: msg.id, recipient: msg.sender).then((r) {
-        if (r.containsKey('error')) {
-          LogService.log('P2P: sendRead failed for ${msg.id}: ${r['error']}');
-        }
-      }).catchError((e) {
-        LogService.log('P2P: sendRead exception for ${msg.id}: $e');
-      });
+    // [READ] отправляется не здесь, а при открытии чата (setChatOpen).
+    // Если чат уже открыт — отправим сразу (пользователь видит сообщение).
+    if (_chatOpen) {
+      _sendReadFor(msg);
     }
 
     _safeNotify();
+  }
+
+  /// Отправляет [READ] для одного сообщения (если ещё не отправляли).
+  /// Вызывается: при открытии чата (для всех непрочитанных) и при
+  /// получении нового сообщения, если чат открыт.
+  void _sendReadFor(Message msg) {
+    if (msg.isOwn
+        || msg.sender == 'Вы'
+        || msg.sender == '🌐 Сеть'
+        || msg.sender.isEmpty
+        || _readSent.contains(msg.id)) {
+      return;
+    }
+    _readSent.add(msg.id);
+    // Fire-and-forget: не блокируем UI.
+    LibP2PService.sendRead(ref: msg.id, recipient: msg.sender).then((r) {
+      if (r.containsKey('error')) {
+        LogService.log('P2P: sendRead failed for ${msg.id}: ${r['error']}');
+      }
+    }).catchError((e) {
+      LogService.log('P2P: sendRead exception for ${msg.id}: $e');
+    });
   }
 
   void deleteMessage(String id) {

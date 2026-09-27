@@ -180,8 +180,8 @@ class Message {
   /// Вес для бейджа
   String get weightLabel => '⚖${weight.toStringAsFixed(2)}';
 
-  /// Иконка статуса сообщения из Go-ядра (1/2/3).
-  /// 1=sent, 2=delivered, 3=read.
+  /// Иконка статуса сообщения из Go-ядра (1/2/3/4).
+  /// 1=sent, 2=delivered, 3=read, 4=hidden.
   String get messageStatusIcon {
     switch (messageStatus) {
       case 1:
@@ -189,6 +189,8 @@ class Message {
       case 2:
         return '✓✓';
       case 3:
+        return '✓✓';
+      case 4:
         return '✓✓🔒';
       default:
         return '';
@@ -196,12 +198,9 @@ class Message {
   }
 
   /// Цвет статуса сообщения.
+  /// 3 (read) — зелёный. Остальные — серый.
   int get messageStatusColor {
     switch (messageStatus) {
-      case 1:
-        return 0xFF999999;
-      case 2:
-        return 0xFF999999;
       case 3:
         return 0xFF4CAF50;
       default:
