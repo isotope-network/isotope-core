@@ -1396,7 +1396,6 @@ func (n *Node) handleStream(stream network.Stream) {
 // handleServiceMessage — обрабатывает служебные сообщения (Type != 0).
 // Возвращает true, если сообщение обработано и его не нужно показывать в UI.
 func (n *Node) handleServiceMessage(m Message) bool {
-	log.Printf("[SERVICE] got Type=%d Ref=%s Sender=%s", m.Type, m.Ref, m.Sender)
 	switch m.Type {
 	case TypeDelivered:
 		n.setMessageStatus(m.Ref, StatusDelivered)
@@ -2653,7 +2652,6 @@ func (n *Node) sendConfirmation(msgType MessageType, ref, recipient string) erro
 	if err != nil {
 		return err
 	}
-	log.Printf("[CONFIRM] marshaled: type=%d ref=%s json=%s", msg.Type, ref, string(data))
 
 	// Пытаемся напрямую — если peerstore знает рабочий адрес.
 	targetID, err := peer.Decode(recipient)
