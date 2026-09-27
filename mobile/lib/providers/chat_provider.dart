@@ -37,6 +37,11 @@ class ChatProvider extends ChangeNotifier {
   // Кэш: PeerID → последнее сообщение от этого пира
   final Map<String, Message> _lastMessageByPeer = {};
 
+  // ID входящих сообщений, для которых уже отправили [READ].
+  // Не сохраняется в prefs — при перезапуске сбрасывается.
+  // Повторный [READ] для того же ref — не ошибка (идемпотентно).
+  final Set<String> _readSent = {};
+
   List<Message> get allMessages {
     final list = _messagesMap.values
         .where((m) => m.sender != '🌐 Сеть')
@@ -383,6 +388,25 @@ class ChatProvider extends ChangeNotifier {
     }
 
     LogService.log('ADD id=${msg.id} len=${msg.id.length} text="${msg.text}" sender=${msg.sender}');
+
+    // Отправляем [READ] для входящего обычного сообщения.
+    // Только если: не своё, не от Сети, sender непустой, ref ещё не отправлен.
+    if (!msg.isOwn
+        && msg.sender != 'Вы'
+        && msg.sender != '🌐 Сеть'
+        && msg.sender.isNotEmpty
+        && !_readSent.contains(msg.id)) {
+      _readSent.add(msg.id);
+      // Fire-and-forget: не блокируем UI.
+      LibP2PService.sendRead(ref: msg.id, recipient: msg.sender).then((r) {
+        if (r.containsKey('error')) {
+          LogService.log('P2P: sendRead failed for ${msg.id}: ${r['error']}');
+        }
+      }).catchError((e) {
+        LogService.log('P2P: sendRead exception for ${msg.id}: $e');
+      });
+    }
+
     _safeNotify();
   }
 

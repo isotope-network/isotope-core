@@ -254,6 +254,42 @@ class MainActivity : FlutterActivity() {
                             runOnUiThread { result.success(response) }
                         }.start()
                     }
+                    "sendContactRequest" -> {
+                        val peerID = call.argument<String>("peerID") ?: ""
+                        val name = call.argument<String>("name") ?: ""
+                        Thread {
+                            val response = Mobile.sendContactRequest(peerID, name)
+                            runOnUiThread { result.success(response) }
+                        }.start()
+                    }
+                    "getRequests" -> {
+                        Thread {
+                            val response = Mobile.getRequests()
+                            runOnUiThread { result.success(response) }
+                        }.start()
+                    }
+                    "acceptRequestByID" -> {
+                        val id = call.argument<String>("id") ?: ""
+                        Thread {
+                            val response = Mobile.acceptRequestByID(id)
+                            runOnUiThread { result.success(response) }
+                        }.start()
+                    }
+                    "rejectRequestByID" -> {
+                        val id = call.argument<String>("id") ?: ""
+                        Thread {
+                            val response = Mobile.rejectRequestByID(id)
+                            runOnUiThread { result.success(response) }
+                        }.start()
+                    }
+                    "sendRead" -> {
+                        val ref = call.argument<String>("ref") ?: ""
+                        val recipient = call.argument<String>("recipient") ?: ""
+                        Thread {
+                            val response = Mobile.sendRead(ref, recipient)
+                            runOnUiThread { result.success(response) }
+                        }.start()
+                    }
                     "getContacts" -> {
                         Thread {
                             val response = Mobile.getContacts()

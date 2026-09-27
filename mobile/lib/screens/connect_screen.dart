@@ -16,6 +16,7 @@ import '../services/ethics_service.dart';
 import '../services/identity_service.dart';
 import '../services/network_service.dart';
 import '../providers/chat_provider.dart';
+import '../widgets/requests_section.dart';
 import 'chat_screen.dart';
 import 'log_screen.dart';
 import 'qr_scan_screen.dart';
@@ -70,6 +71,9 @@ class _ConnectScreenState extends State<ConnectScreen> {
 
   String _myPeerId = '';
   bool _announced = false;
+
+  /// Ключ для RequestsSection — чтобы перезагрузить список запросов.
+  final GlobalKey<RequestsSectionState> _requestsKey = GlobalKey<RequestsSectionState>();
 
   /// Флаг: initialAction уже обработан — не повторяем.
   bool _initialActionHandled = false;
@@ -1095,6 +1099,12 @@ class _ConnectScreenState extends State<ConnectScreen> {
     Navigator.push(context, MaterialPageRoute(builder: (_) => const LogScreen()));
   }
 
+  /// Перезагружает RequestsSection после accept/reject.
+  Future<void> _reloadRequests() async {
+    await _requestsKey.currentState?.loadRequests();
+    _syncDiscoveredNodesFromP2P();
+  }
+
   String _displayName(NodeInfo node, ChatProvider chatProvider) {
     try {
       if (node.peerID.isNotEmpty) {
@@ -1254,6 +1264,16 @@ class _ConnectScreenState extends State<ConnectScreen> {
                 child: Text(_error!, style: const TextStyle(color: Colors.orange)),
               ),
             const SizedBox(height: 16),
+            RequestsSection(
+              key: _requestsKey,
+              onAccepted: () {
+                _loadContactsFromCore();
+                _reloadRequests();
+              },
+              onRejected: () {
+                _reloadRequests();
+              },
+            ),
             const Text('Контакты:', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
             const SizedBox(height: 8),
             Expanded(

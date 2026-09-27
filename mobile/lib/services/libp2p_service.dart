@@ -303,6 +303,79 @@ class LibP2PService {
     }
   }
 
+  /// Отправляет запрос на добавление в контакты.
+  /// Возвращает {"status":"ok","id":"..."} или {"error":"..."}.
+  static Future<Map<String, dynamic>> sendContactRequest({
+    required String peerID,
+    String name = '',
+  }) async {
+    try {
+      final response = await _channel.invokeMethod<String>('sendContactRequest', {
+        'peerID': peerID,
+        'name': name,
+      });
+      return _safeDecode(response);
+    } on PlatformException catch (e) {
+      return {'error': e.message ?? 'platform_error', 'operation': 'send_contact_request'};
+    }
+  }
+
+  /// Возвращает список входящих запросов на контакт (JSON-массив).
+  static Future<List<dynamic>> getRequests() async {
+    try {
+      final response = await _channel.invokeMethod<String>('getRequests');
+      final raw = response ?? '[]';
+      try {
+        final decoded = jsonDecode(raw);
+        return decoded is List ? decoded : [];
+      } on FormatException {
+        return [];
+      }
+    } on PlatformException {
+      return [];
+    }
+  }
+
+  /// Принимает входящий запрос по ID.
+  static Future<Map<String, dynamic>> acceptRequestByID(String id) async {
+    try {
+      final response = await _channel.invokeMethod<String>('acceptRequestByID', {
+        'id': id,
+      });
+      return _safeDecode(response);
+    } on PlatformException catch (e) {
+      return {'error': e.message ?? 'platform_error', 'operation': 'accept_request'};
+    }
+  }
+
+  /// Отклоняет входящий запрос по ID.
+  static Future<Map<String, dynamic>> rejectRequestByID(String id) async {
+    try {
+      final response = await _channel.invokeMethod<String>('rejectRequestByID', {
+        'id': id,
+      });
+      return _safeDecode(response);
+    } on PlatformException catch (e) {
+      return {'error': e.message ?? 'platform_error', 'operation': 'reject_request'};
+    }
+  }
+
+  /// Отправляет подтверждение прочтения по msg_id.
+  static Future<Map<String, dynamic>> sendRead({
+    required String ref,
+    required String recipient,
+  }) async {
+    try {
+      final response = await _channel.invokeMethod<String>('sendRead', {
+        'ref': ref,
+        'recipient': recipient,
+      });
+      return _safeDecode(response);
+    } on PlatformException catch (e) {
+      return {'error': e.message ?? 'platform_error', 'operation': 'send_read'};
+    }
+  }
+
   static Future<Map<String, dynamic>> joinDHT(String bootstrapPeers) async {
     try {
       final response = await _channel.invokeMethod<String>('joinDHT', {

@@ -178,12 +178,14 @@ func GetStatus() string {
 	defer nodeMu.Unlock()
 
 	if node == nil {
-		return `{"id":"","peers":0,"memory":0,"layers":0}`
+		return `{"id":"","peers":0,"memory":0,"layers":0,"requests":0}`
 	}
 	return node.GetStatus()
 }
 
-// GetMessages — возвращает все сообщения
+// GetMessages — возвращает все ОБЫЧНЫЕ сообщения (Type == 0).
+// Служебные (TypeDelivered, TypeRead, TypeContact* ) не попадают в UI.
+// Для статусов — отдельный метод GetMessageStatuses (позже, 1.5).
 func GetMessages() string {
 	nodeMu.Lock()
 	defer nodeMu.Unlock()
@@ -192,8 +194,14 @@ func GetMessages() string {
 		return `[]`
 	}
 
-	messages := node.GetMessages()
-	data, _ := json.Marshal(messages)
+	all := node.GetMessages()
+	filtered := make([]sbimain.Message, 0, len(all))
+	for _, m := range all {
+		if m.Type == 0 {
+			filtered = append(filtered, m)
+		}
+	}
+	data, _ := json.Marshal(filtered)
 	return string(data)
 }
 
@@ -391,6 +399,93 @@ func AddContact(peerID, ed25519Pub, x25519Pub, signature, name string) string {
 		return `{"status":"ok","verified":true}`
 	}
 	return `{"status":"ok","verified":false}`
+}
+
+// SendContactRequest — отправляет запрос на контакт по PeerID.
+func SendContactRequest(peerID, name string) string {
+	nodeMu.Lock()
+	defer nodeMu.Unlock()
+
+	if node == nil {
+		return errorJSON("node not started")
+	}
+	if peerID == "" {
+		return errorJSON("peerID is required")
+	}
+
+	id, err := node.SendContactRequest(peerID, name)
+	if err != nil {
+		return errorJSON(err.Error())
+	}
+	addLog("[REQUESTS] sent to %s (id=%s)", peerID, id)
+	return fmt.Sprintf(`{"status":"ok","id":"%s"}`, id)
+}
+
+// GetRequests — возвращает JSON со всеми pending-запросами.
+func GetRequests() string {
+	nodeMu.Lock()
+	defer nodeMu.Unlock()
+
+	if node == nil {
+		return `[]`
+	}
+	requests := node.GetRequests()
+	data, _ := json.Marshal(requests)
+	return string(data)
+}
+
+// AcceptRequestByID — принимает входящий запрос по ID.
+func AcceptRequestByID(id string) string {
+	nodeMu.Lock()
+	defer nodeMu.Unlock()
+
+	if node == nil {
+		return errorJSON("node not started")
+	}
+	if id == "" {
+		return errorJSON("id is required")
+	}
+	if err := node.AcceptRequestByID(id); err != nil {
+		return errorJSON(err.Error())
+	}
+	addLog("[REQUESTS] accepted %s", id)
+	return `{"status":"ok"}`
+}
+
+// RejectRequestByID — отклоняет входящий запрос по ID.
+func RejectRequestByID(id string) string {
+	nodeMu.Lock()
+	defer nodeMu.Unlock()
+
+	if node == nil {
+		return errorJSON("node not started")
+	}
+	if id == "" {
+		return errorJSON("id is required")
+	}
+	if err := node.RejectRequestByID(id); err != nil {
+		return errorJSON(err.Error())
+	}
+	addLog("[REQUESTS] rejected %s", id)
+	return `{"status":"ok"}`
+}
+
+// SendRead — отправляет подтверждение прочтения по msg_id.
+// Вызывается из UI при открытии чата.
+func SendRead(ref, recipient string) string {
+	nodeMu.Lock()
+	defer nodeMu.Unlock()
+
+	if node == nil {
+		return errorJSON("node not started")
+	}
+	if ref == "" || recipient == "" {
+		return errorJSON("ref and recipient are required")
+	}
+	if err := node.SendRead(ref, recipient); err != nil {
+		return errorJSON(err.Error())
+	}
+	return `{"status":"ok"}`
 }
 
 // GetContacts — возвращает JSON со всеми контактами.
@@ -653,4 +748,5 @@ func parseBootstrapPeers(bootstrapPeers string) []string {
 	}
 	return peers
 }
+
 // node/mobile/mobile.go
