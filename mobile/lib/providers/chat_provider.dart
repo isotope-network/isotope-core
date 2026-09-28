@@ -50,6 +50,23 @@ class ChatProvider extends ChangeNotifier {
   final Map<String, int> _messageStatuses = {};
   Timer? _statusTimer;
 
+  // ==== PENDING (таймер отправки) ====
+  // Сообщения, ожидающие отправки через N секунд.
+  // ID → Message (с pendingState = 'pending').
+  final Map<String, Message> _pendingMessages = {};
+  // ID → Timer, который отправит.
+  final Map<String, Timer> _pendingTimers = {};
+  // ID → секунды до отправки (для UI).
+  final Map<String, int> _pendingSeconds = {};
+
+  // Задержка отправки (секунды). 0 — без задержки.
+  int _sendDelay = 0;
+  static const String _sendDelayKey = 'send_delay';
+
+  // Черновик (один на текущий чат). Текст + время.
+  String? _draftText;
+  static const String _draftKey = 'draft_text';
+
   List<Message> get allMessages {
     final list = _messagesMap.values
         .where((m) => m.sender != '🌐 Сеть')
@@ -94,6 +111,26 @@ class ChatProvider extends ChangeNotifier {
   int get unreadSnapshot => _unreadSnapshot;
   List<String> get logs => LogService.logs;
 
+  // ==== PENDING / DELAY / DRAFT ====
+
+  /// Сообщения, ожидающие отправки (pending).
+  List<Message> get pendingMessages => _pendingMessages.values.toList();
+
+  /// Есть ли pending сообщение (для блокировки ввода).
+  bool get hasPending => _pendingMessages.isNotEmpty;
+
+  /// Текущее значение задержки (сек).
+  int get sendDelay => _sendDelay;
+
+  /// Секунды до отправки для указанного ID.
+  int? pendingSecondsFor(String id) => _pendingSeconds[id];
+
+  /// Есть ли черновик.
+  bool get hasDraft => _draftText != null && _draftText!.isNotEmpty;
+
+  /// Текст черновика (или null).
+  String? get draftText => _draftText;
+
   /// Возвращает последнее сообщение от указанного пира (O(1))
   Message? getLastMessageForPeer(String peerID) => _lastMessageByPeer[peerID];
 
@@ -128,6 +165,8 @@ class ChatProvider extends ChangeNotifier {
     try {
       _loadOwnMessageIds();
       _loadReadSent();
+      _loadSendDelay();
+      _loadDraft();
       _startLibP2P(bootstrapPeers: bootstrapPeers);
     } catch (e) {
       LogService.log('ChatProvider: initialize() ERROR: $e');
@@ -224,6 +263,60 @@ class ChatProvider extends ChangeNotifier {
     } catch (e) {
       LogService.log('ChatProvider: _saveReadSent ERROR: $e');
     }
+  }
+
+  Future<void> _loadSendDelay() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      _sendDelay = prefs.getInt(_sendDelayKey) ?? 0;
+      LogService.log('ChatProvider: send_delay=$_sendDelay');
+    } catch (e) {
+      LogService.log('ChatProvider: _loadSendDelay ERROR: $e');
+    }
+  }
+
+  Future<void> setSendDelay(int seconds) async {
+    _sendDelay = seconds;
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setInt(_sendDelayKey, seconds);
+    } catch (e) {
+      LogService.log('ChatProvider: setSendDelay ERROR: $e');
+    }
+    _safeNotify();
+  }
+
+  Future<void> _loadDraft() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final txt = prefs.getString(_draftKey);
+      if (txt != null && txt.isNotEmpty) {
+        _draftText = txt;
+        LogService.log('ChatProvider: загружен черновик (${txt.length} симв.)');
+      }
+    } catch (e) {
+      LogService.log('ChatProvider: _loadDraft ERROR: $e');
+    }
+  }
+
+  Future<void> _saveDraft(String? text) async {
+    _draftText = text;
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      if (text == null || text.isEmpty) {
+        await prefs.remove(_draftKey);
+      } else {
+        await prefs.setString(_draftKey, text);
+      }
+    } catch (e) {
+      LogService.log('ChatProvider: _saveDraft ERROR: $e');
+    }
+    _safeNotify();
+  }
+
+  /// Очистить черновик.
+  Future<void> clearDraft() async {
+    await _saveDraft(null);
   }
 
   void _subscribeToMessages() {
@@ -560,6 +653,99 @@ class ChatProvider extends ChangeNotifier {
       return false;
     }
 
+    // Если задержка > 0 — ставим в pending, не отправляем сразу.
+    if (_sendDelay > 0) {
+      _enqueuePending(text, ethics.weight);
+      return true;
+    }
+
+    // Задержка = 0 — отправляем сразу.
+    return await _sendNow(text, ethics.weight);
+  }
+
+  /// Ставит сообщение в очередь на отправку через _sendDelay секунд.
+  void _enqueuePending(String text, double weight) {
+    // Локальный ID (не msg_id из Go — его ещё нет).
+    final pendingId = 'pending_${DateTime.now().microsecondsSinceEpoch}';
+    final now = DateTime.now().toUtc().toIso8601String();
+
+    final msg = Message(
+      id: pendingId,
+      text: text,
+      sender: 'Вы',
+      time: now,
+      isOwn: true,
+      score: 0,
+      weight: weight,
+      archived: false,
+      channel: _activeChannel,
+      ttl: _currentTtl,
+      expiresAt: null,
+      pendingState: 'pending',
+    );
+
+    _pendingMessages[pendingId] = msg;
+    _pendingSeconds[pendingId] = _sendDelay;
+
+    // Тикер каждую секунду: обновляет счётчик, по истечении — отправляет.
+    final timer = Timer.periodic(const Duration(seconds: 1), (t) {
+      final left = (_pendingSeconds[pendingId] ?? 0) - 1;
+      if (left > 0) {
+        _pendingSeconds[pendingId] = left;
+        _safeNotify();
+      } else {
+        t.cancel();
+        _pendingTimers.remove(pendingId);
+        _pendingSeconds.remove(pendingId);
+        _pendingMessages.remove(pendingId);
+        // Отправляем.
+        _sendNow(msg.text, msg.weight);
+        _safeNotify();
+      }
+    });
+
+    _pendingTimers[pendingId] = timer;
+    _safeNotify();
+    LogService.log('ChatProvider: pending $pendingId, delay=$_sendDelay сек');
+  }
+
+  /// Отменяет pending: возвращает текст для редактирования.
+  /// Возвращает текст (или null).
+  String? cancelPending(String pendingId) {
+    final msg = _pendingMessages.remove(pendingId);
+    _pendingTimers.remove(pendingId)?.cancel();
+    _pendingSeconds.remove(pendingId);
+    _safeNotify();
+    if (msg == null) return null;
+    LogService.log('ChatProvider: cancelPending $pendingId');
+    return msg.text;
+  }
+
+  /// Удаляет pending без возврата текста (свайп).
+  void deletePending(String pendingId) {
+    _pendingMessages.remove(pendingId);
+    _pendingTimers.remove(pendingId)?.cancel();
+    _pendingSeconds.remove(pendingId);
+    _safeNotify();
+    LogService.log('ChatProvider: deletePending $pendingId');
+  }
+
+  /// Превращает все pending в черновик (для back).
+  /// Берёт первое (единственное) pending.
+  Future<void> pendingToDraft() async {
+    if (_pendingMessages.isEmpty) return;
+    final first = _pendingMessages.values.first;
+    _pendingTimers[first.id]?.cancel();
+    _pendingTimers.remove(first.id);
+    _pendingSeconds.remove(first.id);
+    _pendingMessages.remove(first.id);
+    await _saveDraft(first.text);
+    LogService.log('ChatProvider: pending → draft (${first.text.length} симв.)');
+    _safeNotify();
+  }
+
+  /// Отправляет сообщение сейчас (сразу или после таймера).
+  Future<bool> _sendNow(String text, double weight) async {
     // Если есть PeerID получателя — адресная E2E-отправка.
     // Иначе — broadcast (обратная совместимость).
     Map<String, dynamic> response;
@@ -598,7 +784,7 @@ class ChatProvider extends ChangeNotifier {
       time: now,
       isOwn: true,
       score: 0,
-      weight: ethics.weight,
+      weight: weight,
       archived: false,
       channel: _activeChannel,
       ttl: _currentTtl,
@@ -608,7 +794,6 @@ class ChatProvider extends ChangeNotifier {
     _addMessage(msg);
 
     // Локально сразу ставим статус "отправлено" (1).
-    // Go-ядро подтвердит/обновит через refreshMessageStatuses.
     _messageStatuses[msg.id] = 1;
 
     p2p?.saveOwnMessage(_currentNodeIp, msg);
@@ -674,6 +859,10 @@ class ChatProvider extends ChangeNotifier {
   @override
   void dispose() {
     _statusTimer?.cancel();
+    for (final t in _pendingTimers.values) {
+      t.cancel();
+    }
+    _pendingTimers.clear();
     _messageSub?.cancel();
     stopLibP2P();
     super.dispose();

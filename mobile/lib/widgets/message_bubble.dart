@@ -79,14 +79,17 @@ class MessageBubble extends StatelessWidget {
                       const SizedBox(height: 4),
                       Align(
                         alignment: Alignment.centerRight,
-                        child: Text(
-                          message.messageStatusIcon,
-                          style: TextStyle(
-                            fontSize: 11,
-                            color: Color(message.messageStatusColor),
-                            fontWeight: message.messageStatus == 4
-                                ? FontWeight.w900
-                                : FontWeight.w600,
+                        child: Tooltip(
+                          message: _statusTooltip(message.messageStatus),
+                          child: Text(
+                            message.messageStatusIcon,
+                            style: TextStyle(
+                              fontSize: 11,
+                              color: Color(message.messageStatusColor),
+                              fontWeight: message.messageStatus == 4
+                                  ? FontWeight.w900
+                                  : FontWeight.w600,
+                            ),
                           ),
                         ),
                       ),
@@ -186,6 +189,22 @@ class MessageBubble extends StatelessWidget {
         return 'Частично';
       case 'filtered':
         return 'Тема вне интересов';
+      default:
+        return '';
+    }
+  }
+
+  /// Тултип для иконки статуса (1/2/3/4).
+  String _statusTooltip(int? status) {
+    switch (status) {
+      case 1:
+        return 'Отправлено';
+      case 2:
+        return 'Доставлено. Ждём прочтения';
+      case 3:
+        return 'Доставлено. Прочтение неизвестно';
+      case 4:
+        return 'Прочитано';
       default:
         return '';
     }

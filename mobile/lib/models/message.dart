@@ -12,6 +12,7 @@ class Message {
   final bool archived;
   final String? deliveryStatus;
   final int? messageStatus; // 1=sent, 2=delivered, 3=hidden, 4=read (из Go-ядра)
+  final String? pendingState; // null | 'pending' | 'draft' | 'error'
   final String? channel;
   final int ttl;
   final DateTime? expiresAt;
@@ -29,6 +30,7 @@ class Message {
     required this.archived,
     this.deliveryStatus,
     this.messageStatus,
+    this.pendingState,
     this.channel,
     this.ttl = 0,
     this.expiresAt,
@@ -49,6 +51,29 @@ class Message {
       archived: archived,
       deliveryStatus: deliveryStatus,
       messageStatus: status,
+      pendingState: pendingState,
+      channel: channel,
+      ttl: ttl,
+      expiresAt: expiresAt,
+    );
+  }
+
+  /// Копия с обновлённым pendingState.
+  Message withPendingState(String? state) {
+    return Message(
+      id: id,
+      text: text,
+      plainText: plainText,
+      version: version,
+      sender: sender,
+      time: time,
+      isOwn: isOwn,
+      score: score,
+      weight: weight,
+      archived: archived,
+      deliveryStatus: deliveryStatus,
+      messageStatus: messageStatus,
+      pendingState: state,
       channel: channel,
       ttl: ttl,
       expiresAt: expiresAt,
@@ -69,6 +94,7 @@ class Message {
       archived: json['archived'] ?? false,
       deliveryStatus: json['deliveryStatus'],
       messageStatus: json['messageStatus'],
+      pendingState: json['pendingState'],
       channel: json['channel'],
       ttl: json['ttl'] ?? 0,
       expiresAt: json['expiresAt'] != null
@@ -91,6 +117,7 @@ class Message {
       'archived': archived,
       'deliveryStatus': deliveryStatus,
       'messageStatus': messageStatus,
+      'pendingState': pendingState,
       'channel': channel,
       'ttl': ttl,
       'expiresAt': expiresAt?.toIso8601String(),
