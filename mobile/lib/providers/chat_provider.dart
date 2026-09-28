@@ -38,9 +38,12 @@ class ChatProvider extends ChangeNotifier {
   final Map<String, Message> _lastMessageByPeer = {};
 
   // ID входящих сообщений, для которых уже отправили [READ].
-  // Не сохраняется в prefs — при перезапуске сбрасывается.
-  // Повторный [READ] для того же ref — не ошибка (идемпотентно).
+  // Сохраняется в SharedPreferences (последние _readSentMax IDs).
+  // При перезапуске — загружается, не сбрасывается.
   final Set<String> _readSent = {};
+  static const String _readSentKey = 'read_sent_ids';
+  static const int _readSentMax = 1000;
+  bool _readSentLoaded = false;
 
   // Статусы своих сообщений: msg_id → 1/2/3.
   // 1=sent, 2=delivered, 3=read. Заполняется из Go-ядра (этап 1.5).
@@ -124,6 +127,7 @@ class ChatProvider extends ChangeNotifier {
     LogService.log('ChatProvider: initialize() CALLED');
     try {
       _loadOwnMessageIds();
+      _loadReadSent();
       _startLibP2P(bootstrapPeers: bootstrapPeers);
     } catch (e) {
       LogService.log('ChatProvider: initialize() ERROR: $e');
@@ -191,6 +195,34 @@ class ChatProvider extends ChangeNotifier {
       await prefs.setStringList('own_message_ids', _ownMessageIds.toList());
     } catch (e) {
       LogService.log('ChatProvider: _saveOwnMessageIds ERROR: $e');
+    }
+  }
+
+  Future<void> _loadReadSent() async {
+    if (_readSentLoaded) return;
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final ids = prefs.getStringList(_readSentKey) ?? [];
+      _readSent.addAll(ids);
+      _readSentLoaded = true;
+      LogService.log('ChatProvider: _readSent загружено: ${ids.length}');
+    } catch (e) {
+      LogService.log('ChatProvider: _loadReadSent ERROR: $e');
+    }
+  }
+
+  Future<void> _saveReadSent() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      // Ограничиваем — последние _readSentMax ID.
+      // Set не сохраняет порядок — берём .toList().sublist.
+      final list = _readSent.toList();
+      final trimmed = list.length > _readSentMax
+          ? list.sublist(list.length - _readSentMax)
+          : list;
+      await prefs.setStringList(_readSentKey, trimmed);
+    } catch (e) {
+      LogService.log('ChatProvider: _saveReadSent ERROR: $e');
     }
   }
 
@@ -462,6 +494,8 @@ class ChatProvider extends ChangeNotifier {
     }).catchError((e) {
       LogService.log('P2P: sendRead exception for ${msg.id}: $e');
     });
+    // Сохраняем _readSent (последние 1000).
+    _saveReadSent();
   }
 
   void deleteMessage(String id) {

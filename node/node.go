@@ -2863,8 +2863,9 @@ func (n *Node) updateMessageType(id string, msgType MessageType) {
 }
 
 // setMessageStatus — устанавливает статус сообщения по ID.
-// Используется при отправке (StatusSent), получении [DELIVERED] (StatusDelivered),
-// получении [READ] (StatusRead).
+// Правила приоритета:
+//   - hidden (3) — терминальное. Не повышается (даже до read).
+//   - остальные — не понижаются (только повышение).
 func (n *Node) setMessageStatus(id string, status MessageStatus) {
 	if id == "" {
 		return
@@ -2873,10 +2874,17 @@ func (n *Node) setMessageStatus(id string, status MessageStatus) {
 	if n.messageStatus == nil {
 		n.messageStatus = make(map[string]MessageStatus)
 	}
-	// Не понижаем статус.
-	if cur, ok := n.messageStatus[id]; ok && cur >= status {
-		n.messageStatusMu.Unlock()
-		return
+	if cur, ok := n.messageStatus[id]; ok {
+		// hidden — терминальное состояние. Не повышается.
+		if cur == StatusHidden {
+			n.messageStatusMu.Unlock()
+			return
+		}
+		// Не понижаем статус.
+		if cur >= status {
+			n.messageStatusMu.Unlock()
+			return
+		}
 	}
 	n.messageStatus[id] = status
 	n.messageStatusMu.Unlock()
