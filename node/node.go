@@ -3078,18 +3078,12 @@ func (n *Node) AddContact(peerID, ed25519Pub, x25519Pub, signature, name string,
 }
 
 // SetContactReadEnabled — устанавливает read_enabled для контакта.
-// Используется для UI-настройки (изменить после добавления).
-// MVP: read_enabled фиксируется при добавлении. Этот метод — для UI позже.
+// Использует UpdateReadEnabled — явное значение (не «не понижает»).
 func (n *Node) SetContactReadEnabled(peerID string, enabled bool) error {
 	if n.contacts == nil {
 		return fmt.Errorf("contacts store not initialized")
 	}
-	c, ok := n.contacts.Get(peerID)
-	if !ok {
-		return fmt.Errorf("contact not found: %s", peerID)
-	}
-	c.ReadEnabled = enabled
-	return n.contacts.Add(c)
+	return n.contacts.UpdateReadEnabled(peerID, enabled)
 }
 
 // getPeerReadEnabled — возвращает read_enabled контакта (из isotope_contacts.json).

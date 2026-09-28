@@ -228,4 +228,21 @@ func (cs *ContactsStore) Remove(peerID string) error {
 	return cs.saveLocked()
 }
 
+// UpdateReadEnabled — явно устанавливает read_enabled контакта.
+// В отличие от Add — не «не понижает». Устанавливает явное значение.
+// Используется: SetContactReadEnabled (из сообщения или из UI).
+func (cs *ContactsStore) UpdateReadEnabled(peerID string, enabled bool) error {
+	cs.mu.Lock()
+	defer cs.mu.Unlock()
+
+	for i := range cs.contacts {
+		if cs.contacts[i].PeerID == peerID {
+			cs.contacts[i].ReadEnabled = enabled
+			log.Printf("[CONTACTS] read_enabled updated %s → %v", peerID, enabled)
+			return cs.saveLocked()
+		}
+	}
+	return fmt.Errorf("contact not found: %s", peerID)
+}
+
 // node/contacts.go
