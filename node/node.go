@@ -68,14 +68,16 @@ const E2E_VERSION = 1
 const MESSAGE_VERSION_E2E = 2
 
 // MessageStatus — статус сообщения (для подтверждений доставки/прочтения).
-// 1 = отправлено, 2 = доставлено, 3 = прочитано.
+// 1 = отправлено, 2 = доставлено, 3 = скрыто, 4 = прочитано.
+// Приоритет: read (4) > hidden (3) > delivered (2) > sent (1).
+// setMessageStatus не понижает — только повышает.
 type MessageStatus int
 
 const (
 	StatusSent      MessageStatus = 1
 	StatusDelivered MessageStatus = 2
-	StatusRead      MessageStatus = 3
-	StatusHidden    MessageStatus = 4 // доставлено, но прочтение скрыто
+	StatusHidden    MessageStatus = 3 // скрыто (получатель не делится статусом)
+	StatusRead      MessageStatus = 4 // прочитано (высший приоритет)
 )
 
 // announcedPeer — запись о пире: список его multiaddr + когда последний раз видели.
@@ -180,8 +182,12 @@ type Node struct {
 	// myReadEnabled — настройка "делюсь ли я статусом прочтения".
 	// true (по умолчанию) — отправляю [READ] и вижу чужие [READ].
 	// false — не отправляю [READ], чужие не отображаю (✓✓🔒).
-	// TODO(1.5+): UI-настройка в Приватности.
+	// Кэш для быстрого чтения. Источник истины — settingsStore.
 	myReadEnabled bool
+
+	// SETTINGS — пользовательские настройки (isotope_settings.json).
+	// Отдельно от state: это предпочтения пользователя, не состояние сети.
+	settingsStore *SettingsStore
 }
 
 // NewNode — создаёт новый узел
@@ -1426,8 +1432,19 @@ func (n *Node) isServiceType(t MessageType) bool {
 func (n *Node) handleServiceMessage(m Message) {
 	switch m.Type {
 	case TypeDelivered:
-		n.setMessageStatus(m.Ref, StatusDelivered)
-		log.Printf("[SERVICE] delivered ack ref=%s from=%s", m.Ref, m.Sender)
+		// Обновляем read_enabled контакта, если пришло в сообщении.
+		if m.ReadEnabled != nil && n.contacts != nil {
+			_ = n.SetContactReadEnabled(m.Sender, *m.ReadEnabled)
+		}
+		// Определяем, будет ли прочтение.
+		peerReadEnabled := n.getPeerReadEnabled(m.Sender)
+		if !n.myReadEnabled || !peerReadEnabled {
+			n.setMessageStatus(m.Ref, StatusHidden)
+			log.Printf("[SERVICE] delivered ack (hidden) ref=%s from=%s (my=%v, peer=%v)", m.Ref, m.Sender, n.myReadEnabled, peerReadEnabled)
+		} else {
+			n.setMessageStatus(m.Ref, StatusDelivered)
+			log.Printf("[SERVICE] delivered ack ref=%s from=%s", m.Ref, m.Sender)
+		}
 
 	case TypeRead:
 		// Если я не делюсь статусом прочтения — не показываю чужой [READ].
@@ -2003,20 +2020,22 @@ func (n *Node) processMessageInternal(msg string, senderID string, isOwn bool, e
 		id = generateMsgID(msg)
 	}
 
+	readEnabled := n.myReadEnabled
 	newMsg := Message{
-		ID:        id,
-		Text:      msg,
-		PlainText: plainText, // открытый текст своих E2E; для входящих/broadcast — ""
-		Sender:    senderID,
-		Recipient: recipient,
-		Version:   version,
-		Time:      time.Now().UTC().Format("2006-01-02T15:04:05"),
-		IsOwn:     isOwn,
-		Score:     0,
-		Weight:    initialWeight,
-		Priority:  priority,
-		Mode:      0,
-		ExpiresAt: expiresAt,
+		ID:          id,
+		Text:        msg,
+		PlainText:   plainText,
+		Sender:      senderID,
+		Recipient:   recipient,
+		Version:     version,
+		Time:        time.Now().UTC().Format("2006-01-02T15:04:05"),
+		IsOwn:       isOwn,
+		Score:       0,
+		Weight:      initialWeight,
+		Priority:    priority,
+		Mode:        0,
+		ExpiresAt:   expiresAt,
+		ReadEnabled: &readEnabled,
 	}
 	if n.memory.Add(newMsg) {
 		// Если это наше E2E-сообщение — фиксируем статус StatusSent.
@@ -2088,12 +2107,13 @@ func (n *Node) loadState() error {
 		return err
 	}
 	var state struct {
-		Messages     []Message   `json:"messages"`
-		Layers       [][]float64 `json:"layers"`
-		MsgCount     int         `json:"msgCount"`
-		PreHash      string      `json:"preHash"`
-		AntiHash     string      `json:"antiHash"`
-		RoutingTable []string    `json:"routingTable"`
+		Messages      []Message                `json:"messages"`
+		Layers        [][]float64              `json:"layers"`
+		MsgCount      int                      `json:"msgCount"`
+		PreHash       string                   `json:"preHash"`
+		AntiHash      string                   `json:"antiHash"`
+		RoutingTable  []string                 `json:"routingTable"`
+		MessageStatus map[string]MessageStatus `json:"messageStatus"`
 	}
 	if err := json.Unmarshal(data, &state); err != nil {
 		return err
@@ -2110,6 +2130,17 @@ func (n *Node) loadState() error {
 	n.preHash = state.PreHash
 	n.antiHash = state.AntiHash
 	n.layersDirty = true
+
+	// Восстановление статусов сообщений.
+	n.messageStatusMu.Lock()
+	if n.messageStatus == nil {
+		n.messageStatus = make(map[string]MessageStatus)
+	}
+	for k, v := range state.MessageStatus {
+		n.messageStatus[k] = v
+	}
+	n.messageStatusMu.Unlock()
+
 	if len(state.RoutingTable) > 0 {
 		if n.dhtNode != nil {
 			data, _ := json.Marshal(state.RoutingTable)
@@ -2168,6 +2199,14 @@ func (n *Node) InitP2P() error {
 		_ = os.MkdirAll(filepath.Dir(n.requestsFile), 0700)
 		n.requests = NewRequestsStore(n.requestsFile)
 	}
+
+	// Инициализация пользовательских настроек (отдельно от state).
+	// isotope_settings.json — рядом со state.
+	settingsFile := filepath.Join(filepath.Dir(n.stateFile), "isotope_settings.json")
+	_ = os.MkdirAll(filepath.Dir(settingsFile), 0700)
+	n.settingsStore = NewSettingsStore(settingsFile)
+	// Синхронизация кэша с загруженным значением.
+	n.myReadEnabled = n.settingsStore.GetMyReadEnabled()
 
 	// Инициализация map статусов сообщений.
 	n.messageStatus = make(map[string]MessageStatus)
@@ -2673,15 +2712,17 @@ func (n *Node) sendConfirmation(msgType MessageType, ref, recipient string) erro
 	}
 
 	id := generateMsgID(fmt.Sprintf("%s:%s", ref, msgTypeString(msgType)))
+	readEnabled := n.myReadEnabled
 	msg := Message{
-		ID:        id,
-		Text:      "",
-		Sender:    n.host.ID().String(),
-		Recipient: recipient,
-		Type:      msgType,
-		Ref:       ref,
-		Version:   0,
-		Time:      time.Now().UTC().Format("2006-01-02T15:04:05"),
+		ID:          id,
+		Text:        "",
+		Sender:      n.host.ID().String(),
+		Recipient:   recipient,
+		Type:        msgType,
+		Ref:         ref,
+		Version:     0,
+		Time:        time.Now().UTC().Format("2006-01-02T15:04:05"),
+		ReadEnabled: &readEnabled,
 	}
 
 	data, err := json.Marshal(msg)
@@ -3051,13 +3092,32 @@ func (n *Node) SetContactReadEnabled(peerID string, enabled bool) error {
 	return n.contacts.Add(c)
 }
 
-// SetMyReadEnabled — устанавливает мою настройку "делюсь ли статусом прочтения".
-// Используется UI (Приватность). TODO(1.5+): сохранение в state.
-func (n *Node) SetMyReadEnabled(enabled bool) {
-	n.myReadEnabled = enabled
+// getPeerReadEnabled — возвращает read_enabled контакта (из isotope_contacts.json).
+// Если контакта нет или ошибка — дефолт true (обратная совместимость).
+func (n *Node) getPeerReadEnabled(peerID string) bool {
+	if n.contacts == nil {
+		return true
+	}
+	c, ok := n.contacts.Get(peerID)
+	if !ok {
+		return true
+	}
+	return c.ReadEnabled
 }
 
-// GetMyReadEnabled — возвращает текущую настройку.
+// SetMyReadEnabled — устанавливает мою настройку "делюсь ли статусом прочтения".
+// Сохраняет в isotope_settings.json. Обновляет кэш в Node.
+// Используется UI (Приватность).
+func (n *Node) SetMyReadEnabled(enabled bool) {
+	n.myReadEnabled = enabled
+	if n.settingsStore != nil {
+		if err := n.settingsStore.SetMyReadEnabled(enabled); err != nil {
+			log.Printf("[SETTINGS] save my_read_enabled failed: %v", err)
+		}
+	}
+}
+
+// GetMyReadEnabled — возвращает текущую настройку (из кэша).
 func (n *Node) GetMyReadEnabled() bool {
 	return n.myReadEnabled
 }

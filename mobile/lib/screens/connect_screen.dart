@@ -20,6 +20,7 @@ import '../widgets/requests_section.dart';
 import 'chat_screen.dart';
 import 'log_screen.dart';
 import 'qr_scan_screen.dart';
+import 'settings_screen.dart';
 
 const String DEFAULT_BOOTSTRAP_ADDR = '/ip4/186.246.31.176/tcp/9001/ws/p2p/QmR8u5YFdcKpM2onQvk7KV5qioai87aysi9JWLdV1LX1bi';
 const String BOOTSTRAP_PEER_ID = 'QmR8u5YFdcKpM2onQvk7KV5qioai87aysi9JWLdV1LX1bi';
@@ -621,9 +622,20 @@ class _ConnectScreenState extends State<ConnectScreen> {
     );
   }
 
-  /// Настройки — bottom sheet. Пока два пункта:
-  /// «Подключение» (адрес bootstrap) и «Ввести код контакта» (ручной ввод).
+  /// Настройки — открывает экран SettingsScreen.
+  /// Старый bottom sheet (_showSettingsDialogLegacy) — оставлен для системных
+  /// пунктов (Подключение, Ввести код контакта). Перенесём в SettingsScreen
+  /// на следующем шаге.
   void _showSettingsDialog() {
+    Navigator.push(
+      context,
+      MaterialPageRoute(builder: (_) => const SettingsScreen()),
+    );
+  }
+
+  /// Legacy — bottom sheet с системными пунктами.
+  /// TODO: перенести в SettingsScreen → Системные.
+  void _showSettingsDialogLegacy() {
     showModalBottomSheet(
       context: context,
       builder: (ctx) {

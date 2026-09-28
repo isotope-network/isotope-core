@@ -298,6 +298,30 @@ class LibP2PService {
     }
   }
 
+  /// Устанавливает мою настройку "делюсь ли статусом прочтения".
+  /// Сохраняется в isotope_settings.json (Go-ядро).
+  static Future<Map<String, dynamic>> setMyReadEnabled(bool enabled) async {
+    try {
+      final response = await _channel.invokeMethod<String>('setMyReadEnabled', {
+        'enabled': enabled,
+      });
+      return _safeDecode(response);
+    } on PlatformException catch (e) {
+      return {'error': e.message ?? 'platform_error', 'operation': 'set_my_read_enabled'};
+    }
+  }
+
+  /// Возвращает мою настройку "делюсь ли статусом прочтения".
+  static Future<bool> getMyReadEnabled() async {
+    try {
+      final response = await _channel.invokeMethod<String>('getMyReadEnabled');
+      final decoded = _safeDecode(response, fallback: '{"read_enabled":true}');
+      return decoded['read_enabled'] as bool? ?? true;
+    } on PlatformException {
+      return true;
+    }
+  }
+
   /// Возвращает список контактов (JSON-массив).
   static Future<List<dynamic>> getContacts() async {
     try {
@@ -492,3 +516,4 @@ class LibP2PService {
   static bool get isStarted => _started;
   static bool get isDHTStarted => _dhtStarted;
 }
+// mobile/lib/services/libp2p_service.dart

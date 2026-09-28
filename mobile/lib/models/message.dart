@@ -11,7 +11,7 @@ class Message {
   final double weight;
   final bool archived;
   final String? deliveryStatus;
-  final int? messageStatus; // 1=sent, 2=delivered, 3=read (из Go-ядра)
+  final int? messageStatus; // 1=sent, 2=delivered, 3=hidden, 4=read (из Go-ядра)
   final String? channel;
   final int ttl;
   final DateTime? expiresAt;
@@ -181,7 +181,7 @@ class Message {
   String get weightLabel => '⚖${weight.toStringAsFixed(2)}';
 
   /// Иконка статуса сообщения из Go-ядра (1/2/3/4).
-  /// 1=sent, 2=delivered, 3=read, 4=hidden.
+  /// 1=sent (✓), 2=delivered (✓✓), 3=hidden (✓🔒), 4=read (✓✓).
   String get messageStatusIcon {
     switch (messageStatus) {
       case 1:
@@ -189,19 +189,19 @@ class Message {
       case 2:
         return '✓✓';
       case 3:
-        return '✓✓';
+        return '✓🔒';
       case 4:
-        return '✓✓🔒';
+        return '✓✓';
       default:
         return '';
     }
   }
 
   /// Цвет статуса сообщения.
-  /// 3 (read) — зелёный. Остальные — серый.
+  /// 4 (read) — зелёный. Остальные — серый.
   int get messageStatusColor {
     switch (messageStatus) {
-      case 3:
+      case 4:
         return 0xFF4CAF50;
       default:
         return 0xFF999999;

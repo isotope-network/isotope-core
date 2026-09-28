@@ -310,6 +310,19 @@ class MainActivity : FlutterActivity() {
                             runOnUiThread { result.success(response) }
                         }.start()
                     }
+                    "setMyReadEnabled" -> {
+                        val enabled = call.argument<Boolean>("enabled") ?: true
+                        Thread {
+                            val response = Mobile.setMyReadEnabled(enabled)
+                            runOnUiThread { result.success(response) }
+                        }.start()
+                    }
+                    "getMyReadEnabled" -> {
+                        Thread {
+                            val response = Mobile.getMyReadEnabled()
+                            runOnUiThread { result.success(response) }
+                        }.start()
+                    }
                     "getFilesDir" -> {
                         result.success(filesDir.absolutePath)
                     }

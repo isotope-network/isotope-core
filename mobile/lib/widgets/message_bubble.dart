@@ -84,7 +84,9 @@ class MessageBubble extends StatelessWidget {
                           style: TextStyle(
                             fontSize: 11,
                             color: Color(message.messageStatusColor),
-                            fontWeight: FontWeight.w600,
+                            fontWeight: message.messageStatus == 4
+                                ? FontWeight.w900
+                                : FontWeight.w600,
                           ),
                         ),
                       ),

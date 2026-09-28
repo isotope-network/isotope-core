@@ -17,13 +17,14 @@ import (
 
 // State — структура, которая сохраняется на диск.
 type State struct {
-	Layers       [][]float64     `json:"layers"`
-	MsgCount     int             `json:"msgCount"`
-	Messages     []Message       `json:"messages"`
-	Seen         map[string]bool `json:"seen"`
-	PreHash      string          `json:"preHash"`
-	AntiHash     string          `json:"antiHash"`
-	RoutingTable []string        `json:"routingTable"`
+	Layers        [][]float64              `json:"layers"`
+	MsgCount      int                      `json:"msgCount"`
+	Messages      []Message                `json:"messages"`
+	Seen          map[string]bool          `json:"seen"`
+	PreHash       string                   `json:"preHash"`
+	AntiHash      string                   `json:"antiHash"`
+	RoutingTable  []string                 `json:"routingTable"`
+	MessageStatus map[string]MessageStatus `json:"messageStatus,omitempty"`
 }
 
 // getEncryptionKey — возвращает 32-байтный ключ из пароля
@@ -95,14 +96,22 @@ func (n *Node) saveState() error {
 		_ = json.Unmarshal(data, &routingTable)
 	}
 
+	n.messageStatusMu.Lock()
+	statusCopy := make(map[string]MessageStatus, len(n.messageStatus))
+	for k, v := range n.messageStatus {
+		statusCopy[k] = v
+	}
+	n.messageStatusMu.Unlock()
+
 	state := State{
-		Layers:       n.layers,
-		MsgCount:     n.msgCount,
-		Messages:     n.memory.GetAll(),
-		Seen:         seen,
-		PreHash:      n.preHash,
-		AntiHash:     n.antiHash,
-		RoutingTable: routingTable,
+		Layers:        n.layers,
+		MsgCount:      n.msgCount,
+		Messages:      n.memory.GetAll(),
+		Seen:          seen,
+		PreHash:       n.preHash,
+		AntiHash:      n.antiHash,
+		RoutingTable:  routingTable,
+		MessageStatus: statusCopy,
 	}
 
 	data, err := json.MarshalIndent(state, "", "  ")
@@ -157,3 +166,5 @@ func (n *Node) loadPrivateKey() ([]byte, error) {
 	keyFile := n.stateFile + ".key"
 	return os.ReadFile(keyFile)
 }
+
+// node/state.go
