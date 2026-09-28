@@ -188,6 +188,9 @@ type Node struct {
 	// SETTINGS — пользовательские настройки (isotope_settings.json).
 	// Отдельно от state: это предпочтения пользователя, не состояние сети.
 	settingsStore *SettingsStore
+
+	// saveStateScheduled — защита от частых saveState (throttle 5 сек).
+	saveStateScheduled bool
 }
 
 // NewNode — создаёт новый узел
@@ -2139,7 +2142,9 @@ func (n *Node) loadState() error {
 	for k, v := range state.MessageStatus {
 		n.messageStatus[k] = v
 	}
+	restoredCount := len(n.messageStatus)
 	n.messageStatusMu.Unlock()
+	log.Printf("[STATUS] restored %d message statuses from state", restoredCount)
 
 	if len(state.RoutingTable) > 0 {
 		if n.dhtNode != nil {
@@ -2889,6 +2894,31 @@ func (n *Node) setMessageStatus(id string, status MessageStatus) {
 	n.messageStatus[id] = status
 	n.messageStatusMu.Unlock()
 	log.Printf("[STATUS] %s → %d", id, status)
+
+	// Throttled save — статусы сохраняются раз в 5 сек.
+	n.scheduleSaveState()
+}
+
+// scheduleSaveState — отложенная запись state (throttle 5 сек).
+// Защита от лишних I/O при частых setMessageStatus.
+func (n *Node) scheduleSaveState() {
+	n.mu.Lock()
+	if n.saveStateScheduled {
+		n.mu.Unlock()
+		return
+	}
+	n.saveStateScheduled = true
+	n.mu.Unlock()
+
+	go func() {
+		time.Sleep(5 * time.Second)
+		n.mu.Lock()
+		n.saveStateScheduled = false
+		n.mu.Unlock()
+		if err := n.saveState(); err != nil {
+			log.Printf("[STATE] save failed: %v", err)
+		}
+	}()
 }
 
 // getMessageStatus — возвращает статус сообщения по ID.
