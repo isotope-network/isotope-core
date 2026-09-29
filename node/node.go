@@ -1518,14 +1518,36 @@ func (n *Node) handleContactRequest(m Message) {
 // handleContactAccept — обрабатывает принятие нашего запроса.
 // Находим свой исходящий запрос (по Ref) — сохраняем контакт, шлём [DELIVERED].
 func (n *Node) handleContactAccept(m Message) {
-	// Ref = ID нашего исходящего [CONTACT_REQUEST].
-	// Мы уже отправили запрос ранее. Нужно — сохранить контакт, если ещё нет.
-	// Но у нас нет pending-исходящих в этом этапе. Упрощаем: логируем.
-	// TODO(этап 5+): отслеживать исходящие запросы.
-	log.Printf("[SERVICE] contact_accept ref=%s from=%s", m.Ref, m.Sender)
-
-	// Пытаемся получить контакт. Если нет — добавить нечего (ключи не в сообщении).
-	// В будущем: хранить исходящие запросы, чтобы принять их здесь.
+	if m.Version != MESSAGE_VERSION_E2E {
+		log.Printf("[SERVICE] contact_accept without E2E, dropped")
+		return
+	}
+	plaintext, err := n.decryptFromSender(m.Sender, m.Text)
+	if err != nil {
+		log.Printf("[SERVICE] contact_accept decrypt failed: %v", err)
+		return
+	}
+	var payload struct {
+		RequestID   string `json:"request_id"`
+		Name        string `json:"name"`
+		Ed25519Pub  string `json:"ed25519_pub"`
+		X25519Pub   string `json:"x25519_pub"`
+		Signature   string `json:"signature"`
+		ReadEnabled bool   `json:"read_enabled"`
+	}
+	if err := json.Unmarshal([]byte(plaintext), &payload); err != nil {
+		log.Printf("[SERVICE] contact_accept parse failed: %v", err)
+		return
+	}
+	if n.contacts == nil {
+		log.Printf("[SERVICE] contacts store not initialized")
+		return
+	}
+	if err := n.AddContact(m.Sender, payload.Ed25519Pub, payload.X25519Pub, payload.Signature, payload.Name, payload.ReadEnabled); err != nil {
+		log.Printf("[SERVICE] contact_accept add_contact failed: %v", err)
+		return
+	}
+	log.Printf("[SERVICE] contact_accept saved contact %s (ref=%s)", m.Sender, m.Ref)
 }
 
 // handleContactReject — обрабатывает отклонение нашего запроса.
@@ -2838,8 +2860,14 @@ func (n *Node) sendContactControl(msgType MessageType, requestID, recipient stri
 		return fmt.Errorf("requestID and recipient are required")
 	}
 
+	readEnabled := n.myReadEnabled
 	payload := map[string]interface{}{
-		"request_id": requestID,
+		"request_id":   requestID,
+		"name":         "",
+		"ed25519_pub":  base64.StdEncoding.EncodeToString(n.ed25519Pub),
+		"x25519_pub":   base64.StdEncoding.EncodeToString(n.x25519Pub[:]),
+		"signature":    n.signMyX25519(),
+		"read_enabled": readEnabled,
 	}
 	payloadJSON, err := json.Marshal(payload)
 	if err != nil {
