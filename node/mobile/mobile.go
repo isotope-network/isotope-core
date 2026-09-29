@@ -263,7 +263,6 @@ func GetMultiaddrs() string {
 	}
 
 	addrs := node.GetMultiaddrs()
-	addLog("[MULTIADDR] Возвращаю %d адресов: %v", len(addrs), addrs)
 	data, _ := json.Marshal(addrs)
 	return string(data)
 }

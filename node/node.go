@@ -2294,10 +2294,6 @@ func (n *Node) InitP2P() error {
 
 	n.host.Network().Notify(&nodeNotifiee{node: n})
 
-	log.Printf("[DIAG] Listen addrs immediately: %v", host.Addrs())
-	log.Printf("[DIAG] PeerID: %s", host.ID().String())
-	log.Printf("[DIAG] Network addrs: %v", host.Network().ListenAddresses())
-
 	n.host.SetStreamHandler(protocolID, n.handleStream)
 	n.host.SetStreamHandler(syncProtocolID, n.handleSyncStream)
 	n.host.SetStreamHandler(pingProtocolID, n.handlePingStream)
@@ -2554,13 +2550,10 @@ func (n *Node) GetMultiaddrs() []string {
 
 	ifaceAddrs, err := n.host.Network().InterfaceListenAddresses()
 	if err != nil {
-		log.Printf("[MULTIADDR] InterfaceListenAddresses error: %v", err)
 		ifaceAddrs = nil
 	}
-	log.Printf("[MULTIADDR] InterfaceListenAddresses() = %v", ifaceAddrs)
 
 	fallbackAddrs := n.host.Addrs()
-	log.Printf("[MULTIADDR] host.Addrs() = %v", fallbackAddrs)
 
 	seen := make(map[string]bool)
 	var result []string
@@ -2589,7 +2582,6 @@ func (n *Node) GetMultiaddrs() []string {
 		addAddr(s)
 	}
 
-	log.Printf("[MULTIADDR] returning %d addrs: %v", len(result), result)
 	return result
 }
 

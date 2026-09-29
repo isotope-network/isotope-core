@@ -8,8 +8,8 @@ import (
 	"strings"
 	"time"
 
-	dht "github.com/libp2p/go-libp2p-kad-dht"
 	"github.com/ipfs/go-cid"
+	dht "github.com/libp2p/go-libp2p-kad-dht"
 	"github.com/libp2p/go-libp2p/core/host"
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/multiformats/go-multihash"
@@ -82,26 +82,13 @@ func (dn *DHTNode) JoinDHT(bootstrapPeers []string) error {
 		if err := dn.dht.Bootstrap(ctx); err != nil {
 			log.Printf("[DHT] Bootstrap warning: %v", err)
 		}
-		
+
 		// Обновить routing table после подключения
 		dn.RefreshOnDemand()
 	}
 
 	dn.started = true
 	log.Printf("[DHT] DHT started (peers=%d)", connected)
-
-	// Анонсируем себя (с задержкой и повторными попытками)
-	go func() {
-		for i := 0; i < 5; i++ {
-			time.Sleep(time.Duration(2+i*2) * time.Second)
-			if err := dn.Provide(); err != nil {
-				log.Printf("[DHT] Provide attempt %d failed: %v", i+1, err)
-			} else {
-				log.Printf("[DHT] Provided self to DHT (attempt %d)", i+1)
-				break
-			}
-		}
-	}()
 
 	return nil
 }
@@ -250,10 +237,10 @@ func (dn *DHTNode) GetDHTInfo() string {
 	}
 
 	info := map[string]interface{}{
-		"started":  dn.started,
-		"peer_id":  dn.host.ID().String(),
-		"rt_size":  len(peers),
-		"rt_peers": peersList,
+		"started":    dn.started,
+		"peer_id":    dn.host.ID().String(),
+		"rt_size":    len(peers),
+		"rt_peers":   peersList,
 		"dht_active": dn.IsDHTActive(),
 	}
 
