@@ -2213,8 +2213,13 @@ func (n *Node) InitP2P() error {
 	// Синхронизация кэша с загруженным значением.
 	n.myReadEnabled = n.settingsStore.GetMyReadEnabled()
 
-	// Инициализация map статусов сообщений.
-	n.messageStatus = make(map[string]MessageStatus)
+	// Инициализация map статусов сообщений — только если ещё нет.
+	// loadState() мог уже загрузить статусы из state.
+	n.messageStatusMu.Lock()
+	if n.messageStatus == nil {
+		n.messageStatus = make(map[string]MessageStatus)
+	}
+	n.messageStatusMu.Unlock()
 
 	var priv crypto.PrivKey
 	keyBytes, err := n.loadPrivateKey()

@@ -423,6 +423,7 @@ class ChatProvider extends ChangeNotifier {
     if (!_libp2pStarted) return;
     try {
       final statuses = await LibP2PService.getMessageStatuses();
+      LogService.log('STATUS POLL: got ${statuses.length} statuses from Go: $statuses');
       if (statuses.isEmpty) return;
 
       bool changed = false;
