@@ -623,58 +623,20 @@ class _ConnectScreenState extends State<ConnectScreen> {
   }
 
   /// Настройки — открывает экран SettingsScreen.
-  /// Старый bottom sheet (_showSettingsDialogLegacy) — оставлен для системных
-  /// пунктов (Подключение, Ввести код контакта). Перенесём в SettingsScreen
-  /// на следующем шаге.
+  /// Передаёт колбэки для системных пунктов (логика остаётся здесь).
   void _showSettingsDialog() {
     Navigator.push(
       context,
-      MaterialPageRoute(builder: (_) => const SettingsScreen()),
+      MaterialPageRoute(
+        builder: (_) => SettingsScreen(
+          onConnection: _showConnectionDialog,
+          onManualCode: _showManualCodeDialog,
+        ),
+      ),
     );
   }
 
-  /// Legacy — bottom sheet с системными пунктами.
-  /// TODO: перенести в SettingsScreen → Системные.
-  void _showSettingsDialogLegacy() {
-    showModalBottomSheet(
-      context: context,
-      builder: (ctx) {
-        return SafeArea(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const Padding(
-                padding: EdgeInsets.all(16),
-                child: Text(
-                  'Настройки',
-                  style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18),
-                ),
-              ),
-              ListTile(
-                leading: const Icon(Icons.link),
-                title: const Text('Подключение'),
-                subtitle: const Text('Адрес подключения'),
-                onTap: () {
-                  Navigator.pop(ctx);
-                  _showConnectionDialog();
-                },
-              ),
-              ListTile(
-                leading: const Icon(Icons.input),
-                title: const Text('Ввести код контакта'),
-                subtitle: const Text('Для продвинутых'),
-                onTap: () {
-                  Navigator.pop(ctx);
-                  _showManualCodeDialog();
-                },
-              ),
-              const SizedBox(height: 8),
-            ],
-          ),
-        );
-      },
-    );
-  }
+  
 
   /// Подключение — диалог с адресом подключения (bootstrap).
   void _showConnectionDialog() {

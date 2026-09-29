@@ -6,7 +6,18 @@ import 'messages_settings_screen.dart';
 /// Экран «Настройки» — список разделов.
 /// Личные — выше Системных (пользовательское важнее).
 class SettingsScreen extends StatelessWidget {
-  const SettingsScreen({super.key});
+  /// Колбэк «Подключение» — открывает диалог bootstrap.
+  /// Передаётся из ConnectScreen (там — контроллеры и логика).
+  final VoidCallback? onConnection;
+
+  /// Колбэк «Ввести код контакта» — открывает диалог ручного ввода.
+  final VoidCallback? onManualCode;
+
+  const SettingsScreen({
+    super.key,
+    this.onConnection,
+    this.onManualCode,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -47,20 +58,19 @@ class SettingsScreen extends StatelessWidget {
 
           // ==== СИСТЕМНЫЕ ====
           const _SectionHeader('Системные'),
-          // TODO: Подключение (bootstrap) — перенести из connect_screen.
-          // TODO: Ввести код контакта — перенести из connect_screen.
-          // Пока — заглушки. Реальная логика — в connect_screen (bottom sheet).
-          const ListTile(
-            leading: Icon(Icons.link),
-            title: Text('Подключение'),
-            subtitle: Text('Адрес подключения'),
-            enabled: false,
+          ListTile(
+            leading: const Icon(Icons.link),
+            title: const Text('Подключение'),
+            subtitle: const Text('Адрес подключения'),
+            enabled: onConnection != null,
+            onTap: onConnection,
           ),
-          const ListTile(
-            leading: Icon(Icons.input),
-            title: Text('Ввести код контакта'),
-            subtitle: Text('Для продвинутых'),
-            enabled: false,
+          ListTile(
+            leading: const Icon(Icons.input),
+            title: const Text('Ввести код контакта'),
+            subtitle: const Text('Для продвинутых'),
+            enabled: onManualCode != null,
+            onTap: onManualCode,
           ),
 
           const SizedBox(height: 16),
