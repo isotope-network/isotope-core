@@ -351,6 +351,23 @@ class LibP2PService {
     }
   }
 
+  /// Отправляет [CONTACT_HELLO] получателю.
+  /// Открытое (Version=0). Запускает bootstrap-handshake:
+  /// получатель ответит [CONTACT_HELLO_ACK] с публичными ключами,
+  /// после чего можно слать [CONTACT_REQUEST] (E2E).
+  static Future<Map<String, dynamic>> sendContactHello({
+    required String peerID,
+  }) async {
+    try {
+      final response = await _channel.invokeMethod<String>('sendContactHello', {
+        'peerID': peerID,
+      });
+      return _safeDecode(response);
+    } on PlatformException catch (e) {
+      return {'error': e.message ?? 'platform_error', 'operation': 'send_contact_hello'};
+    }
+  }
+
   /// Отправляет запрос на добавление в контакты.
   /// Возвращает {"status":"ok","id":"..."} или {"error":"..."}.
   static Future<Map<String, dynamic>> sendContactRequest({

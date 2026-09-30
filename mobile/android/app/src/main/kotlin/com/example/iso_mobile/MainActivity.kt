@@ -255,6 +255,13 @@ class MainActivity : FlutterActivity() {
                             runOnUiThread { result.success(response) }
                         }.start()
                     }
+                    "sendContactHello" -> {
+                        val peerID = call.argument<String>("peerID") ?: ""
+                        Thread {
+                            val response = Mobile.sendContactHello(peerID)
+                            runOnUiThread { result.success(response) }
+                        }.start()
+                    }
                     "sendContactRequest" -> {
                         val peerID = call.argument<String>("peerID") ?: ""
                         val name = call.argument<String>("name") ?: ""

@@ -61,6 +61,7 @@ class _ConnectScreenState extends State<ConnectScreen> {
   String _bootstrapPeers = DEFAULT_BOOTSTRAP_ADDR;
   StreamSubscription? _nodeSub;
   StreamSubscription? _ipSub;
+  StreamSubscription? _helloAckSub;
   VoidCallback? _chatListener;
   Timer? _coreLogsTimer;
   final Set<String> _coreLogsSeen = {};
@@ -69,6 +70,15 @@ class _ConnectScreenState extends State<ConnectScreen> {
   /// Кеш статуса верификации контактов по PeerID.
   /// Заполняется при сканировании QR и при загрузке контактов из ядра.
   final Map<String, bool> _verifiedContacts = {};
+
+  /// Кеш статуса подтверждения контактов по PeerID.
+  /// confirmed = true: обе стороны подтвердили ([CONTACT_ACCEPT] получен).
+  /// Заполняется при загрузке контактов из ядра.
+  final Map<String, bool> _confirmedContacts = {};
+
+  /// PeerID, которым уже отправили [CONTACT_REQUEST] в этой сессии.
+  /// Set в памяти (MVP). При перезапуске сбрасывается.
+  final Set<String> _requestSent = {};
 
   String _myPeerId = '';
   bool _announced = false;
@@ -95,6 +105,18 @@ class _ConnectScreenState extends State<ConnectScreen> {
       _pullCoreLogs();
     });
     Future.delayed(const Duration(seconds: 3), () => _pullCoreLogs());
+
+    // Слушаем [CONTACT_HELLO_ACK] — ChatProvider уже сделал AddContact +
+    // sendContactRequest. Здесь только UI-обновление.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      final chatProvider = context.read<ChatProvider>();
+      _helloAckSub = chatProvider.helloAckStream.listen((ack) {
+        if (!mounted) return;
+        LogService.log('ConnectScreen: helloAck для ${ack.peerID}');
+        setState(() {});
+      });
+    });
 
     // Обработка initialAction — после первого кадра,
     // когда UI готов к показу диалогов/snackbar.
@@ -157,8 +179,10 @@ class _ConnectScreenState extends State<ConnectScreen> {
           for (final c in contacts) {
             final peerID = c['peerID'] as String? ?? '';
             final verified = c['verified'] as bool? ?? false;
+            final confirmed = c['confirmed'] as bool? ?? false;
             if (peerID.isNotEmpty) {
               _verifiedContacts[peerID] = verified;
+              _confirmedContacts[peerID] = confirmed;
             }
           }
           setState(() {});
@@ -910,7 +934,8 @@ class _ConnectScreenState extends State<ConnectScreen> {
         } else {
           contactVerified = saveResult['verified'] == true;
           _verifiedContacts[peerId] = contactVerified;
-          LogService.log('QR: контакт сохранён peerID=$peerId, verified=$contactVerified');
+          _confirmedContacts[peerId] = false;
+          LogService.log('QR: контакт сохранён peerID=$peerId, verified=$contactVerified, confirmed=false');
           if (mounted) {
             ScaffoldMessenger.of(context).showSnackBar(
               SnackBar(
@@ -1176,6 +1201,94 @@ class _ConnectScreenState extends State<ConnectScreen> {
     return const Icon(Icons.warning_amber_rounded, size: 16, color: Colors.orange);
   }
 
+  /// Возвращает текст подзаголовка для контакта.
+  /// Если verified && !confirmed — предложение отправить запрос.
+  /// Иначе — стандартный preview последнего сообщения.
+  String? _contactStatusSubtitle(NodeInfo node, ChatProvider chatProvider) {
+    final peerID = node.peerID;
+    if (peerID.isEmpty) return _lastMessagePreview(node, chatProvider);
+
+    final verified = _verifiedContacts[peerID] ?? false;
+    final confirmed = _confirmedContacts[peerID] ?? false;
+
+    if (verified && !confirmed) {
+      if (_requestSent.contains(peerID)) {
+        return 'Запрос отправлен. Ожидание...';
+      }
+      return 'Не подтверждён. Отправить запрос?';
+    }
+
+    return _lastMessagePreview(node, chatProvider);
+  }
+
+  /// Тап на subtitle: если контакт не подтверждён — показать диалог отправки запроса.
+  /// Возвращает true, если обработано (тап не должен открывать чат).
+  Future<bool> _onSubtitleTap(NodeInfo node) async {
+    final peerID = node.peerID;
+    if (peerID.isEmpty) return false;
+
+    final verified = _verifiedContacts[peerID] ?? false;
+    final confirmed = _confirmedContacts[peerID] ?? false;
+    if (!verified || confirmed) return false;
+    if (_requestSent.contains(peerID)) return true;
+
+    final short = peerID.length > 12 ? peerID.substring(0, 12) : peerID;
+    final displayName = 'Контакт $short';
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text('Отправить запрос $displayName?'),
+        content: Text(
+          '$displayName получит уведомление:\n'
+          '«Пользователь хочет добавить вас в контакты».',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Отмена'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Отправить'),
+          ),
+        ],
+      ),
+    );
+
+    if (ok != true) return true;
+
+    // Bootstrap-handshake: сначала [CONTACT_HELLO] (открытый).
+    // После получения [CONTACT_HELLO_ACK] ChatProvider сам:
+    //   AddContact(B) → sendContactRequest(B) E2E.
+    final result = await LibP2PService.sendContactHello(peerID: peerID);
+    if (result.containsKey('error')) {
+      LogService.log('ContactHello: ошибка: ${result['error']}');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Не удалось отправить: ${result['error']}')),
+        );
+      }
+      return true;
+    }
+
+    setState(() {
+      _requestSent.add(peerID);
+    });
+
+    // Таймаут 30 сек: если ACK не пришёл — сбрасываем _requestSent.
+    Timer(const Duration(seconds: 30), () {
+      if (!mounted) return;
+      if (_confirmedContacts[peerID] == true) return; // уже подтверждён
+      setState(() {
+        _requestSent.remove(peerID);
+      });
+      LogService.log('ContactHello: timeout для $peerID');
+    });
+
+    LogService.log('ContactHello: отправлен $peerID');
+    return true;
+  }
+
   @override
   void dispose() {
     final chatProvider = context.read<ChatProvider>();
@@ -1184,6 +1297,7 @@ class _ConnectScreenState extends State<ConnectScreen> {
     }
     _nodeSub?.cancel();
     _ipSub?.cancel();
+    _helloAckSub?.cancel();
     _coreLogsTimer?.cancel();
     _networkService.dispose();
     super.dispose();
@@ -1296,9 +1410,10 @@ class _ConnectScreenState extends State<ConnectScreen> {
                       final node = _discoveredNodes[index];
                       final unread = chatProvider.unreadCount;
                       final displayName = _displayName(node, chatProvider);
-                      final lastMessage = _lastMessagePreview(node, chatProvider);
+                      final subtitleText = _contactStatusSubtitle(node, chatProvider) ?? '';
                       final lastTime = _lastMessageTime(node, chatProvider);
                       final badge = _verifiedBadge(node.peerID);
+                      final showRequestLink = subtitleText == 'Не подтверждён. Отправить запрос?';
 
                       return ListTile(
                         leading: Icon(
@@ -1320,12 +1435,26 @@ class _ConnectScreenState extends State<ConnectScreen> {
                             ],
                           ],
                         ),
-                        subtitle: Text(
-                          lastMessage,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(fontSize: 13),
-                        ),
+                        subtitle: showRequestLink
+                            ? GestureDetector(
+                                onTap: () => _onSubtitleTap(node),
+                                child: Text(
+                                  subtitleText,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(
+                                    fontSize: 13,
+                                    color: Colors.orange,
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
+                              )
+                            : Text(
+                                subtitleText,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(fontSize: 13),
+                              ),
                         trailing: Column(
                           mainAxisAlignment: MainAxisAlignment.center,
                           crossAxisAlignment: CrossAxisAlignment.end,

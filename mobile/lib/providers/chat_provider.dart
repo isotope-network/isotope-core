@@ -11,6 +11,22 @@ import '../services/ethics_service.dart';
 import '../services/libp2p_service.dart';
 import '../services/log_service.dart';
 
+/// Событие получения [CONTACT_HELLO_ACK] от B.
+/// Содержит публичные ключи B — после этого A может слать [CONTACT_REQUEST] (E2E).
+class HelloAck {
+  final String peerID;
+  final String ed25519Pub;
+  final String x25519Pub;
+  final String signature;
+
+  HelloAck({
+    required this.peerID,
+    required this.ed25519Pub,
+    required this.x25519Pub,
+    required this.signature,
+  });
+}
+
 class ChatProvider extends ChangeNotifier {
   late ApiService api;
   late WsService ws;
@@ -66,6 +82,13 @@ class ChatProvider extends ChangeNotifier {
   // Черновик (один на текущий чат). Текст + время.
   String? _draftText;
   static const String _draftKey = 'draft_text';
+
+  // Контакт-протокол: [CONTACT_HELLO_ACK] от B.
+  // При получении ChatProvider сам делает AddContact + sendContactRequest,
+  // а также эмитит событие в _helloAckController — для UI.
+  final StreamController<HelloAck> _helloAckController =
+      StreamController<HelloAck>.broadcast();
+  Stream<HelloAck> get helloAckStream => _helloAckController.stream;
 
   List<Message> get allMessages {
     final list = _messagesMap.values
@@ -341,6 +364,14 @@ class ChatProvider extends ChangeNotifier {
           p2p!.addDiscoveredPeer(sender);
         }
 
+        // [CONTACT_HELLO_ACK] (Type=7) — не UI-сообщение.
+        // Бизнес-логика: AddContact(B) → sendContactRequest(B) E2E.
+        final type = map['type'] as int? ?? 0;
+        if (type == 7) {
+          _handleContactHelloAck(sender, map['text'] as String? ?? '');
+          return;
+        }
+
         LogService.log('P2P: входящее от $sender: ${map['text']}');
         if (!_chatOpen) {
           _unreadCount++;
@@ -439,6 +470,67 @@ class ChatProvider extends ChangeNotifier {
     } catch (_) {
       // Тихий fail — статусы не критичны.
     }
+  }
+
+  /// Обрабатывает [CONTACT_HELLO_ACK] (Type=7) от B.
+  /// 1. Парсит payload (peerID B, ed25519_pub, x25519_pub, signature).
+  /// 2. AddContact(B) — теперь A может шифровать E2E к B.
+  /// 3. sendContactRequest(B) — E2E.
+  /// 4. Эмитит в helloAckStream — UI покажет «Запрос отправлен».
+  void _handleContactHelloAck(String sender, String payloadText) async {
+    if (sender.isEmpty || payloadText.isEmpty) {
+      LogService.log('HelloAck: пустой sender/payload');
+      return;
+    }
+    Map<String, dynamic> payload;
+    try {
+      payload = jsonDecode(payloadText) as Map<String, dynamic>;
+    } catch (e) {
+      LogService.log('HelloAck: ошибка парсинга payload: $e');
+      return;
+    }
+    final peerID = payload['peerID'] as String? ?? '';
+    final ed25519Pub = payload['ed25519_pub'] as String? ?? '';
+    final x25519Pub = payload['x25519_pub'] as String? ?? '';
+    final signature = payload['signature'] as String? ?? '';
+
+    if (peerID != sender) {
+      LogService.log('HelloAck: peerID mismatch ($peerID != $sender)');
+      return;
+    }
+    if (ed25519Pub.isEmpty || x25519Pub.isEmpty) {
+      LogService.log('HelloAck: пустые ключи от $sender');
+      return;
+    }
+
+    LogService.log('HelloAck: от $sender — добавление контакта + отправка запроса');
+
+    final addResult = await LibP2PService.addContact(
+      peerID: peerID,
+      ed25519Pub: ed25519Pub,
+      x25519Pub: x25519Pub,
+      signature: signature,
+      name: '',
+      readEnabled: true,
+    );
+    if (addResult.containsKey('error')) {
+      LogService.log('HelloAck: addContact failed: ${addResult['error']}');
+      return;
+    }
+
+    final reqResult = await LibP2PService.sendContactRequest(peerID: peerID, name: '');
+    if (reqResult.containsKey('error')) {
+      LogService.log('HelloAck: sendContactRequest failed: ${reqResult['error']}');
+      return;
+    }
+
+    _helloAckController.add(HelloAck(
+      peerID: peerID,
+      ed25519Pub: ed25519Pub,
+      x25519Pub: x25519Pub,
+      signature: signature,
+    ));
+    LogService.log('HelloAck: контакт $peerID добавлен, [CONTACT_REQUEST] отправлен');
   }
 
   void _safeNotify() {
@@ -864,6 +956,7 @@ class ChatProvider extends ChangeNotifier {
     }
     _pendingTimers.clear();
     _messageSub?.cancel();
+    _helloAckController.close();
     stopLibP2P();
     super.dispose();
   }

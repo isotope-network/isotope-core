@@ -1424,7 +1424,8 @@ func (n *Node) handleStream(stream network.Stream) {
 // Сервисные сообщения не идут в UI.
 func (n *Node) isServiceType(t MessageType) bool {
 	switch t {
-	case TypeDelivered, TypeRead, TypeContactRequest, TypeContactAccept, TypeContactReject:
+	case TypeDelivered, TypeRead, TypeContactRequest, TypeContactAccept, TypeContactReject,
+		TypeContactHello, TypeContactHelloAck:
 		return true
 	}
 	return false
@@ -1468,6 +1469,12 @@ func (n *Node) handleServiceMessage(m Message) {
 
 	case TypeContactReject:
 		n.handleContactReject(m)
+
+	case TypeContactHello:
+		n.handleContactHello(m)
+
+	case TypeContactHelloAck:
+		n.handleContactHelloAck(m)
 	}
 }
 
@@ -1547,12 +1554,81 @@ func (n *Node) handleContactAccept(m Message) {
 		log.Printf("[SERVICE] contact_accept add_contact failed: %v", err)
 		return
 	}
+	if n.contacts != nil {
+		_ = n.contacts.SetConfirmed(m.Sender)
+	}
 	log.Printf("[SERVICE] contact_accept saved contact %s (ref=%s)", m.Sender, m.Ref)
 }
 
 // handleContactReject — обрабатывает отклонение нашего запроса.
 func (n *Node) handleContactReject(m Message) {
 	log.Printf("[SERVICE] contact_reject ref=%s from=%s", m.Ref, m.Sender)
+}
+
+// handleContactHello — обрабатывает [CONTACT_HELLO] от A.
+// Открытое сообщение. A хочет добавить B. B отвечает [CONTACT_HELLO_ACK]
+// со своими публичными ключами, чтобы A мог зашифровать [CONTACT_REQUEST].
+func (n *Node) handleContactHello(m Message) {
+	if m.Sender == "" {
+		log.Printf("[SERVICE] contact_hello: empty sender, dropped")
+		return
+	}
+	if n.host == nil {
+		log.Printf("[SERVICE] contact_hello: host not started")
+		return
+	}
+	myID := n.host.ID().String()
+	if m.Sender == myID {
+		log.Printf("[SERVICE] contact_hello: self, dropped")
+		return
+	}
+	log.Printf("[SERVICE] contact_hello from %s — sending ack", m.Sender)
+	go func(sender string) {
+		if err := n.SendContactHelloAck(sender); err != nil {
+			log.Printf("[SERVICE] contact_hello_ack send failed to %s: %v", sender, err)
+		}
+	}(m.Sender)
+}
+
+// handleContactHelloAck — обрабатывает [CONTACT_HELLO_ACK] от B.
+// B прислал свои публичные ключи. Логируем. Дальнейшая логика — в Dart:
+// после получения ack UI шлёт [CONTACT_REQUEST] (E2E).
+func (n *Node) handleContactHelloAck(m Message) {
+	if m.Sender == "" {
+		log.Printf("[SERVICE] contact_hello_ack: empty sender, dropped")
+		return
+	}
+	if m.Version != 0 {
+		log.Printf("[SERVICE] contact_hello_ack: unexpected version %d, dropped", m.Version)
+		return
+	}
+	plaintext := m.Text
+	if plaintext == "" {
+		log.Printf("[SERVICE] contact_hello_ack: empty payload from %s", m.Sender)
+		return
+	}
+	var payload struct {
+		PeerID     string `json:"peerID"`
+		Ed25519Pub string `json:"ed25519_pub"`
+		X25519Pub  string `json:"x25519_pub"`
+		Signature  string `json:"signature"`
+	}
+	if err := json.Unmarshal([]byte(plaintext), &payload); err != nil {
+		log.Printf("[SERVICE] contact_hello_ack: parse failed from %s: %v", m.Sender, err)
+		return
+	}
+	if payload.PeerID != m.Sender {
+		log.Printf("[SERVICE] contact_hello_ack: peerID mismatch (%s != %s), dropped", payload.PeerID, m.Sender)
+		return
+	}
+	log.Printf("[SERVICE] contact_hello_ack from %s (keys: ed25519=%v, x25519=%v)",
+		m.Sender, payload.Ed25519Pub != "", payload.X25519Pub != "")
+
+	// Уведомляем UI через hook — чтобы Dart знал и мог отправить [CONTACT_REQUEST].
+	if n.messageHook != nil {
+		data, _ := json.Marshal(m)
+		n.messageHook(string(data))
+	}
 }
 
 func (n *Node) buildRelayAddrFor(targetID string) string {
@@ -2787,6 +2863,10 @@ func msgTypeString(t MessageType) string {
 		return "contact_accept"
 	case TypeContactReject:
 		return "contact_reject"
+	case TypeContactHello:
+		return "contact_hello"
+	case TypeContactHelloAck:
+		return "contact_hello_ack"
 	default:
 		return "message"
 	}
@@ -2828,6 +2908,80 @@ func (n *Node) SendContactRequest(recipient, name string) (string, error) {
 	n.updateMessageType(id, TypeContactRequest)
 
 	return id, nil
+}
+
+// SendContactHello — отправляет [CONTACT_HELLO] получателю.
+// Открытое (Version=0). Payload не нужен — только Sender (PeerID).
+// recipient — PeerID получателя.
+func (n *Node) SendContactHello(recipient string) error {
+	if n.host == nil {
+		return fmt.Errorf("node not started")
+	}
+	if recipient == "" {
+		return fmt.Errorf("recipient is required")
+	}
+
+	id := generateMsgID(fmt.Sprintf("hello:%s:%d", recipient, time.Now().UnixNano()))
+	msg := Message{
+		ID:        id,
+		Text:      "",
+		Sender:    n.host.ID().String(),
+		Recipient: recipient,
+		Type:      TypeContactHello,
+		Version:   0,
+		Time:      time.Now().UTC().Format("2006-01-02T15:04:05"),
+	}
+	data, err := json.Marshal(msg)
+	if err != nil {
+		return err
+	}
+	if !n.sendToRecipient(msg, data) {
+		return fmt.Errorf("no route to recipient")
+	}
+	log.Printf("[REQUESTS] contact_hello sent to %s (id=%s)", recipient, id)
+	return nil
+}
+
+// SendContactHelloAck — отправляет [CONTACT_HELLO_ACK] отправителю.
+// Открытое (Version=0). Payload: peerID + публичные ключи + подпись.
+func (n *Node) SendContactHelloAck(recipient string) error {
+	if n.host == nil {
+		return fmt.Errorf("node not started")
+	}
+	if recipient == "" {
+		return fmt.Errorf("recipient is required")
+	}
+
+	payload := map[string]interface{}{
+		"peerID":      n.host.ID().String(),
+		"ed25519_pub": base64.StdEncoding.EncodeToString(n.ed25519Pub),
+		"x25519_pub":  base64.StdEncoding.EncodeToString(n.x25519Pub[:]),
+		"signature":   n.signMyX25519(),
+	}
+	payloadJSON, err := json.Marshal(payload)
+	if err != nil {
+		return err
+	}
+
+	id := generateMsgID(fmt.Sprintf("hello_ack:%s:%d", recipient, time.Now().UnixNano()))
+	msg := Message{
+		ID:        id,
+		Text:      string(payloadJSON),
+		Sender:    n.host.ID().String(),
+		Recipient: recipient,
+		Type:      TypeContactHelloAck,
+		Version:   0,
+		Time:      time.Now().UTC().Format("2006-01-02T15:04:05"),
+	}
+	data, err := json.Marshal(msg)
+	if err != nil {
+		return err
+	}
+	if !n.sendToRecipient(msg, data) {
+		return fmt.Errorf("no route to recipient")
+	}
+	log.Printf("[REQUESTS] contact_hello_ack sent to %s (id=%s)", recipient, id)
+	return nil
 }
 
 // SendContactAccept — отправляет принятие запроса на контакт.
@@ -2989,6 +3143,10 @@ func (n *Node) AcceptRequestByID(id string) error {
 
 	if err := n.AddContact(req.PeerID, req.Ed25519Pub, req.X25519Pub, req.Signature, req.Name, req.ReadEnabled); err != nil {
 		return fmt.Errorf("add contact failed: %w", err)
+	}
+
+	if n.contacts != nil {
+		_ = n.contacts.SetConfirmed(req.PeerID)
 	}
 
 	if err := n.SendContactAccept(id, req.PeerID); err != nil {

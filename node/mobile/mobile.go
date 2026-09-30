@@ -445,6 +445,28 @@ func GetMyReadEnabled() string {
 	return `{"read_enabled":false}`
 }
 
+// SendContactHello — отправляет [CONTACT_HELLO] получателю.
+// Открытое (Version=0). Запускает bootstrap-handshake:
+// получатель ответит [CONTACT_HELLO_ACK] с публичными ключами,
+// после чего можно слать [CONTACT_REQUEST] (E2E).
+func SendContactHello(peerID string) string {
+	nodeMu.Lock()
+	defer nodeMu.Unlock()
+
+	if node == nil {
+		return errorJSON("node not started")
+	}
+	if peerID == "" {
+		return errorJSON("peerID is required")
+	}
+
+	if err := node.SendContactHello(peerID); err != nil {
+		return errorJSON(err.Error())
+	}
+	addLog("[REQUESTS] contact_hello sent to %s", peerID)
+	return `{"status":"ok"}`
+}
+
 // SendContactRequest — отправляет запрос на контакт по PeerID.
 func SendContactRequest(peerID, name string) string {
 	nodeMu.Lock()

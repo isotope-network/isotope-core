@@ -14,6 +14,7 @@ import (
 // Публичные ключи: Ed25519 (подпись) и X25519 (шифрование).
 // Signature — подпись peerID||x25519_pub от Ed25519-ключа владельца (4.4).
 // Verified — true после успешной проверки подписи (4.4). Сигнал UI, не пропуск.
+// Confirmed — true после взаимного подтверждения (accept отправлен или получен).
 // Name — локальное имя, пустое при добавлении.
 type Contact struct {
 	PeerID      string `json:"peerID"`
@@ -21,6 +22,7 @@ type Contact struct {
 	X25519Pub   string `json:"x25519_pub"`
 	Signature   string `json:"signature"`
 	Verified    bool   `json:"verified"`
+	Confirmed   bool   `json:"confirmed"`
 	Name        string `json:"name"`
 	AddedAt     string `json:"added_at"`
 	ReadEnabled bool   `json:"read_enabled"`
@@ -156,14 +158,19 @@ func (cs *ContactsStore) Add(c Contact) error {
 		if cs.contacts[i].PeerID == c.PeerID {
 			// Обновляем ключи, подпись и verified. Имя — сохраняем, если новое пустое.
 			// read_enabled — не понижаем: если было true, остаётся true.
+			// confirmed — не понижаем: если было true, остаётся true.
 			existingName := cs.contacts[i].Name
 			existingReadEnabled := cs.contacts[i].ReadEnabled
+			existingConfirmed := cs.contacts[i].Confirmed
 			cs.contacts[i] = c
 			if existingName != "" && c.Name == "" {
 				cs.contacts[i].Name = existingName
 			}
 			if existingReadEnabled {
 				cs.contacts[i].ReadEnabled = true
+			}
+			if existingConfirmed {
+				cs.contacts[i].Confirmed = true
 			}
 			if cs.contacts[i].AddedAt == "" {
 				cs.contacts[i].AddedAt = time.Now().UTC().Format(time.RFC3339)
@@ -239,6 +246,27 @@ func (cs *ContactsStore) UpdateReadEnabled(peerID string, enabled bool) error {
 		if cs.contacts[i].PeerID == peerID {
 			cs.contacts[i].ReadEnabled = enabled
 			log.Printf("[CONTACTS] read_enabled updated %s → %v", peerID, enabled)
+			return cs.saveLocked()
+		}
+	}
+	return fmt.Errorf("contact not found: %s", peerID)
+}
+
+// SetConfirmed — устанавливает confirmed контакта.
+// confirmed = true: вторая сторона приняла нас (получен [CONTACT_ACCEPT])
+// или мы приняли её ([CONTACT_ACCEPT] отправлен).
+// Только повышает: false → true. Обратно — не понижаем.
+func (cs *ContactsStore) SetConfirmed(peerID string) error {
+	cs.mu.Lock()
+	defer cs.mu.Unlock()
+
+	for i := range cs.contacts {
+		if cs.contacts[i].PeerID == peerID {
+			if cs.contacts[i].Confirmed {
+				return nil
+			}
+			cs.contacts[i].Confirmed = true
+			log.Printf("[CONTACTS] confirmed %s", peerID)
 			return cs.saveLocked()
 		}
 	}

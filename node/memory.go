@@ -12,7 +12,7 @@ import (
 
 // MessageType — тип сообщения.
 // 0 — обычное (пользовательское).
-// 1..5 — служебные (контакт-протокол).
+// 1..7 — служебные (контакт-протокол).
 type MessageType int
 
 const (
@@ -28,6 +28,12 @@ const (
 	TypeContactAccept MessageType = 4
 	// TypeContactReject — отклонение запроса. Ref = request_id.
 	TypeContactReject MessageType = 5
+	// TypeContactHello — приветствие для bootstrap-handshake.
+	// Открытое (Version=0). Payload: peerID отправителя. Ref — пусто.
+	TypeContactHello MessageType = 6
+	// TypeContactHelloAck — ответ на приветствие.
+	// Открытое (Version=0). Payload: peerID + публичные ключи отправителя (B).
+	TypeContactHelloAck MessageType = 7
 )
 
 // ============================================================
