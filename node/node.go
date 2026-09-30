@@ -892,6 +892,64 @@ func (n *Node) sendReplicaToPeer(targetID peer.ID, data []byte) {
 	log.Printf("[REPLICA] sent to %s", targetID)
 }
 
+// sendServiceViaBootstrap — отправка сервисного сообщения через bootstrap (relay).
+// Используется для [CONTACT_HELLO] / [CONTACT_HELLO_ACK].
+// Синхронный — возвращает ошибку, чтобы UI знал результат.
+// Без randomDelay — handshake важнее антидетекта.
+// Всегда через bootstrap — не зависит от circuit (может быть stale).
+func (n *Node) sendServiceViaBootstrap(msg Message) error {
+	if n.host == nil {
+		return fmt.Errorf("node not started")
+	}
+	if msg.Recipient == "" {
+		return fmt.Errorf("recipient is required")
+	}
+
+	data, err := json.Marshal(msg)
+	if err != nil {
+		return fmt.Errorf("marshal failed: %w", err)
+	}
+
+	bootstrapPeers := n.loadBootstrapPeers()
+	if len(bootstrapPeers) == 0 {
+		return fmt.Errorf("no bootstrap peer available")
+	}
+
+	myID := n.host.ID()
+	var lastErr error
+	for _, addr := range bootstrapPeers {
+		pi, err := peer.AddrInfoFromString(addr)
+		if err != nil {
+			lastErr = fmt.Errorf("invalid bootstrap addr %q: %w", addr, err)
+			continue
+		}
+		if pi.ID == myID {
+			continue
+		}
+
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		s, err := n.host.NewStream(ctx, pi.ID, protocolID)
+		if err != nil {
+			cancel()
+			lastErr = fmt.Errorf("NewStream to %s failed: %w", pi.ID, err)
+			continue
+		}
+		_, err = fmt.Fprintf(s, "%s%s\n", REPLICA_PREFIX, string(data))
+		s.Close()
+		cancel()
+		if err != nil {
+			lastErr = fmt.Errorf("write to %s failed: %w", pi.ID, err)
+			continue
+		}
+		return nil
+	}
+
+	if lastErr == nil {
+		lastErr = fmt.Errorf("no reachable bootstrap peer")
+	}
+	return lastErr
+}
+
 // ============================================================
 // NOTIFIEE
 // ============================================================
@@ -3010,12 +3068,8 @@ func (n *Node) SendContactHello(recipient string) error {
 		Version:   0,
 		Time:      time.Now().UTC().Format("2006-01-02T15:04:05"),
 	}
-	data, err := json.Marshal(msg)
-	if err != nil {
-		return err
-	}
-	if !n.sendToRecipient(msg, data) {
-		return fmt.Errorf("no route to recipient")
+	if err := n.sendServiceViaBootstrap(msg); err != nil {
+		return fmt.Errorf("send hello failed: %w", err)
 	}
 	log.Printf("[REQUESTS] contact_hello sent to %s (id=%s)", recipient, id)
 	return nil
@@ -3052,12 +3106,8 @@ func (n *Node) SendContactHelloAck(recipient string) error {
 		Version:   0,
 		Time:      time.Now().UTC().Format("2006-01-02T15:04:05"),
 	}
-	data, err := json.Marshal(msg)
-	if err != nil {
-		return err
-	}
-	if !n.sendToRecipient(msg, data) {
-		return fmt.Errorf("no route to recipient")
+	if err := n.sendServiceViaBootstrap(msg); err != nil {
+		return fmt.Errorf("send hello_ack failed: %w", err)
 	}
 	log.Printf("[REQUESTS] contact_hello_ack sent to %s (id=%s)", recipient, id)
 	return nil
