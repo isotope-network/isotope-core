@@ -507,12 +507,14 @@ func (n *Node) GetMyQRData() string {
 		return ""
 	}
 	readEnabled := n.myReadEnabled
+	displayName := n.GetMyDisplayName()
 	data, err := json.Marshal(qrDataV1{
 		V:           E2E_VERSION,
 		PeerID:      n.host.ID().String(),
 		Ed25519Pub:  base64.StdEncoding.EncodeToString(n.ed25519Pub),
 		X25519Pub:   base64.StdEncoding.EncodeToString(n.x25519Pub[:]),
 		Signature:   n.signMyX25519(),
+		DisplayName: displayName,
 		ReadEnabled: &readEnabled,
 	})
 	if err != nil {
@@ -3018,10 +3020,10 @@ func msgTypeString(t MessageType) string {
 
 // SendContactRequest — отправляет запрос на добавление в контакты.
 // recipient — PeerID получателя (должен быть в контактах, чтобы был x25519_pub).
-// name — имя отправителя (может быть пусто).
+// displayName — представление отправителя. Если пусто — берётся MyDisplayName.
 // Payload (имя, ключи, подпись, read_enabled) шифруется E2E.
 // Version=2.
-func (n *Node) SendContactRequest(recipient, name string) (string, error) {
+func (n *Node) SendContactRequest(recipient, displayName string) (string, error) {
 	if n.host == nil {
 		return "", fmt.Errorf("node not started")
 	}
@@ -3029,12 +3031,17 @@ func (n *Node) SendContactRequest(recipient, name string) (string, error) {
 		return "", fmt.Errorf("recipient is required")
 	}
 
+	if displayName == "" {
+		displayName = n.GetMyDisplayName()
+	}
+	readEnabled := n.myReadEnabled
+
 	payload := map[string]interface{}{
-		"name":         name,
+		"name":         displayName,
 		"ed25519_pub":  base64.StdEncoding.EncodeToString(n.ed25519Pub),
 		"x25519_pub":   base64.StdEncoding.EncodeToString(n.x25519Pub[:]),
 		"signature":    n.signMyX25519(),
-		"read_enabled": true, // TODO(1.5): настройка приватности. Пока — true.
+		"read_enabled": readEnabled,
 	}
 	payloadJSON, err := json.Marshal(payload)
 	if err != nil {
@@ -3143,6 +3150,9 @@ func (n *Node) SendContactReject(requestID, recipient string) error {
 
 // sendContactControl — общая логика accept/reject.
 // Шифруем E2E. Version=2.
+// Payload: request_id, display_name (моё представление), read_enabled.
+// Ключи (ed25519_pub, x25519_pub, signature) — для случая, если у A
+// ещё нет контакта B (например, при [CONTACT_REJECT] из ниоткуда).
 func (n *Node) sendContactControl(msgType MessageType, requestID, recipient string) error {
 	if n.host == nil {
 		return fmt.Errorf("node not started")
@@ -3154,7 +3164,7 @@ func (n *Node) sendContactControl(msgType MessageType, requestID, recipient stri
 	readEnabled := n.myReadEnabled
 	payload := map[string]interface{}{
 		"request_id":   requestID,
-		"name":         "",
+		"name":         n.GetMyDisplayName(),
 		"ed25519_pub":  base64.StdEncoding.EncodeToString(n.ed25519Pub),
 		"x25519_pub":   base64.StdEncoding.EncodeToString(n.x25519Pub[:]),
 		"signature":    n.signMyX25519(),
@@ -3164,7 +3174,6 @@ func (n *Node) sendContactControl(msgType MessageType, requestID, recipient stri
 	if err != nil {
 		return err
 	}
-
 	encrypted, err := n.encryptForRecipient(recipient, string(payloadJSON))
 	if err != nil {
 		return fmt.Errorf("encrypt failed: %w", err)
@@ -3440,6 +3449,15 @@ func (n *Node) SetContactReadEnabled(peerID string, enabled bool) error {
 	return n.contacts.UpdateReadEnabled(peerID, enabled)
 }
 
+// RenameContact — устанавливает локальное имя контакта (Name).
+// Локальное имя — как я называю контакт. Не передаётся в сеть.
+func (n *Node) RenameContact(peerID, localName string) error {
+	if n.contacts == nil {
+		return fmt.Errorf("contacts store not initialized")
+	}
+	return n.contacts.RenameContact(peerID, localName)
+}
+
 // getPeerReadEnabled — возвращает read_enabled контакта (из isotope_contacts.json).
 // Если контакта нет или ошибка — дефолт true (обратная совместимость).
 func (n *Node) getPeerReadEnabled(peerID string) bool {
@@ -3468,6 +3486,23 @@ func (n *Node) SetMyReadEnabled(enabled bool) {
 // GetMyReadEnabled — возвращает текущую настройку (из кэша).
 func (n *Node) GetMyReadEnabled() bool {
 	return n.myReadEnabled
+}
+
+// SetMyDisplayName — устанавливает представление по умолчанию.
+// Сохраняется в isotope_settings.json. Используется в QR и [CONTACT_REQUEST].
+func (n *Node) SetMyDisplayName(name string) error {
+	if n.settingsStore == nil {
+		return fmt.Errorf("settings store not initialized")
+	}
+	return n.settingsStore.SetMyDisplayName(name)
+}
+
+// GetMyDisplayName — возвращает представление по умолчанию.
+func (n *Node) GetMyDisplayName() string {
+	if n.settingsStore == nil {
+		return ""
+	}
+	return n.settingsStore.GetMyDisplayName()
 }
 
 // GetContacts — возвращает все контакты.

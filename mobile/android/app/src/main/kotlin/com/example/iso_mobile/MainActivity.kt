@@ -331,6 +331,27 @@ class MainActivity : FlutterActivity() {
                             runOnUiThread { result.success(response) }
                         }.start()
                     }
+                    "setMyDisplayName" -> {
+                        val name = call.argument<String>("name") ?: ""
+                        Thread {
+                            val response = Mobile.setMyDisplayName(name)
+                            runOnUiThread { result.success(response) }
+                        }.start()
+                    }
+                    "getMyDisplayName" -> {
+                        Thread {
+                            val response = Mobile.getMyDisplayName()
+                            runOnUiThread { result.success(response) }
+                        }.start()
+                    }
+                    "renameContact" -> {
+                        val peerID = call.argument<String>("peerID") ?: ""
+                        val localName = call.argument<String>("localName") ?: ""
+                        Thread {
+                            val response = Mobile.renameContact(peerID, localName)
+                            runOnUiThread { result.success(response) }
+                        }.start()
+                    }
                     "getFilesDir" -> {
                         result.success(filesDir.absolutePath)
                     }

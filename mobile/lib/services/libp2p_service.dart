@@ -326,6 +326,48 @@ class LibP2PService {
     }
   }
 
+  /// Устанавливает представление по умолчанию.
+  /// Используется в QR и [CONTACT_REQUEST], если не переопределено.
+  static Future<Map<String, dynamic>> setMyDisplayName(String name) async {
+    try {
+      final response = await _channel.invokeMethod<String>('setMyDisplayName', {
+        'name': name,
+      });
+      return _safeDecode(response);
+    } on PlatformException catch (e) {
+      return {'error': e.message ?? 'platform_error', 'operation': 'set_my_display_name'};
+    }
+  }
+
+  /// Возвращает представление по умолчанию.
+  static Future<String> getMyDisplayName() async {
+    try {
+      final response = await _channel.invokeMethod<String>('getMyDisplayName');
+      final decoded = _safeDecode(response, fallback: '{"my_display_name":""}');
+      return decoded['my_display_name'] as String? ?? '';
+    } on PlatformException {
+      return '';
+    }
+  }
+
+  /// Устанавливает локальное имя контакта.
+  /// Локальное имя — как я называю контакт. Не передаётся в сеть.
+  static Future<Map<String, dynamic>> renameContact({
+    required String peerID,
+    required String localName,
+  }) async {
+    try {
+      final response = await _channel.invokeMethod<String>('renameContact', {
+        'peerID': peerID,
+        'localName': localName,
+      });
+      return _safeDecode(response);
+    } on PlatformException catch (e) {
+      return {'error': e.message ?? 'platform_error', 'operation': 'rename_contact'};
+    }
+  }
+
+
   /// Возвращает список контактов (JSON-массив).
   static Future<List<dynamic>> getContacts() async {
     try {
