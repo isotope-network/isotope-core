@@ -15,6 +15,9 @@ import (
 type Settings struct {
 	V             int  `json:"v"`
 	MyReadEnabled bool `json:"my_read_enabled"`
+	// MyDisplayName — представление по умолчанию (как меня видеть другим).
+	// Используется в QR и [CONTACT_REQUEST], если не переопределено.
+	MyDisplayName string `json:"my_display_name,omitempty"`
 }
 
 // SETTINGS_VERSION — текущая версия формата.
@@ -85,7 +88,8 @@ func (s *SettingsStore) Load() error {
 	}
 
 	s.data = loaded
-	log.Printf("[SETTINGS] loaded (my_read_enabled=%v)", s.data.MyReadEnabled)
+	log.Printf("[SETTINGS] loaded (my_read_enabled=%v, my_display_name=%q)",
+		s.data.MyReadEnabled, s.data.MyDisplayName)
 	return nil
 }
 
@@ -126,6 +130,25 @@ func (s *SettingsStore) SetMyReadEnabled(enabled bool) error {
 		return nil // ничего не изменилось
 	}
 	s.data.MyReadEnabled = enabled
+	s.mu.Unlock()
+	return s.Save()
+}
+
+// GetMyDisplayName — возвращает представление по умолчанию.
+func (s *SettingsStore) GetMyDisplayName() string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.data.MyDisplayName
+}
+
+// SetMyDisplayName — устанавливает представление по умолчанию и сохраняет.
+func (s *SettingsStore) SetMyDisplayName(name string) error {
+	s.mu.Lock()
+	if s.data.MyDisplayName == name {
+		s.mu.Unlock()
+		return nil
+	}
+	s.data.MyDisplayName = name
 	s.mu.Unlock()
 	return s.Save()
 }

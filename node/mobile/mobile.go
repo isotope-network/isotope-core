@@ -371,9 +371,11 @@ func GetMyQRData() string {
 }
 
 // AddContact — добавляет или обновляет контакт.
+// localName — как я называю контакт (не передаётся в сеть).
+// remoteName — представление контакта о себе (пришло из QR или payload).
 // readEnabled — сообщил ли контакт, что делится статусом прочтения.
 // Возвращает {"status":"ok","verified":true|false} — verified читается после записи.
-func AddContact(peerID, ed25519Pub, x25519Pub, signature, name string, readEnabled bool) string {
+func AddContact(peerID, ed25519Pub, x25519Pub, signature, localName, remoteName string, readEnabled bool) string {
 	nodeMu.Lock()
 	defer nodeMu.Unlock()
 
@@ -385,7 +387,7 @@ func AddContact(peerID, ed25519Pub, x25519Pub, signature, name string, readEnabl
 		return errorJSON("peerID is required")
 	}
 
-	if err := node.AddContact(peerID, ed25519Pub, x25519Pub, signature, name, readEnabled); err != nil {
+	if err := node.AddContact(peerID, ed25519Pub, x25519Pub, signature, localName, remoteName, readEnabled); err != nil {
 		return errorJSON(err.Error())
 	}
 

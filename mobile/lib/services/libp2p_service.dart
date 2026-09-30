@@ -252,6 +252,8 @@ class LibP2PService {
   }
 
 /// Добавляет или обновляет контакт.
+  /// localName — как я называю контакт (не передаётся в сеть).
+  /// remoteName — представление контакта о себе (из QR или payload).
   /// readEnabled — сообщил ли контакт, что делится статусом прочтения.
   /// Возвращает {"status":"ok"} или {"error":"..."}.
   static Future<Map<String, dynamic>> addContact({
@@ -259,7 +261,8 @@ class LibP2PService {
     required String ed25519Pub,
     required String x25519Pub,
     String signature = '',
-    String name = '',
+    String localName = '',
+    String remoteName = '',
     bool readEnabled = true,
   }) async {
     try {
@@ -268,7 +271,8 @@ class LibP2PService {
         'ed25519Pub': ed25519Pub,
         'x25519Pub': x25519Pub,
         'signature': signature,
-        'name': name,
+        'localName': localName,
+        'remoteName': remoteName,
         'readEnabled': readEnabled,
       });
       return _safeDecode(response);

@@ -248,10 +248,11 @@ class MainActivity : FlutterActivity() {
                         val ed25519Pub = call.argument<String>("ed25519Pub") ?: ""
                         val x25519Pub = call.argument<String>("x25519Pub") ?: ""
                         val signature = call.argument<String>("signature") ?: ""
-                        val name = call.argument<String>("name") ?: ""
+                        val localName = call.argument<String>("localName") ?: ""
+                        val remoteName = call.argument<String>("remoteName") ?: ""
                         val readEnabled = call.argument<Boolean>("readEnabled") ?: true
                         Thread {
-                            val response = Mobile.addContact(peerID, ed25519Pub, x25519Pub, signature, name, readEnabled)
+                            val response = Mobile.addContact(peerID, ed25519Pub, x25519Pub, signature, localName, remoteName, readEnabled)
                             runOnUiThread { result.success(response) }
                         }.start()
                     }

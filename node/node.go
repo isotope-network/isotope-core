@@ -88,11 +88,13 @@ type announcedPeer struct {
 
 // qrDataV1 — формат QR-кода версии 1.
 type qrDataV1 struct {
-	V           int    `json:"v"`
-	PeerID      string `json:"peerID"`
-	Ed25519Pub  string `json:"ed25519_pub"`
-	X25519Pub   string `json:"x25519_pub"`
-	Signature   string `json:"signature"`
+	V          int    `json:"v"`
+	PeerID     string `json:"peerID"`
+	Ed25519Pub string `json:"ed25519_pub"`
+	X25519Pub  string `json:"x25519_pub"`
+	Signature  string `json:"signature"`
+	// DisplayName — представление владельца QR (как он хочет быть представлен).
+	DisplayName string `json:"display_name,omitempty"`
 	ReadEnabled *bool  `json:"read_enabled,omitempty"` // nil — не передан (дефолт true)
 }
 
@@ -1631,7 +1633,7 @@ func (n *Node) handleContactAccept(m Message) {
 		log.Printf("[SERVICE] contacts store not initialized")
 		return
 	}
-	if err := n.AddContact(m.Sender, payload.Ed25519Pub, payload.X25519Pub, payload.Signature, payload.Name, payload.ReadEnabled); err != nil {
+	if err := n.AddContact(m.Sender, payload.Ed25519Pub, payload.X25519Pub, payload.Signature, "", payload.Name, payload.ReadEnabled); err != nil {
 		log.Printf("[SERVICE] contact_accept add_contact failed: %v", err)
 		return
 	}
@@ -3269,7 +3271,7 @@ func (n *Node) AcceptRequestByID(id string) error {
 		return fmt.Errorf("request not found: %s", id)
 	}
 
-	if err := n.AddContact(req.PeerID, req.Ed25519Pub, req.X25519Pub, req.Signature, req.Name, req.ReadEnabled); err != nil {
+	if err := n.AddContact(req.PeerID, req.Ed25519Pub, req.X25519Pub, req.Signature, "", req.Name, req.ReadEnabled); err != nil {
 		return fmt.Errorf("add contact failed: %w", err)
 	}
 
@@ -3384,6 +3386,8 @@ func (n *Node) ExchangePeers(peerID string) error {
 
 // AddContact — добавляет или обновляет контакт.
 // 4.4: проверяет подпись над peerID || x25519_pub.
+// localName — как я называю контакт (не передаётся в сеть).
+// remoteName — представление контакта о себе (пришло в payload/QR).
 // Результат:
 //   - подпись валидна       → Verified: true
 //   - подписи нет           → Verified: false
@@ -3391,7 +3395,7 @@ func (n *Node) ExchangePeers(peerID string) error {
 //   - Ed25519Pub пустой при непустой Signature → Verified: false + лог
 //
 // Отправка блокируется не здесь, а в encryptForRecipient (требует X25519Pub).
-func (n *Node) AddContact(peerID, ed25519Pub, x25519Pub, signature, name string, readEnabled bool) error {
+func (n *Node) AddContact(peerID, ed25519Pub, x25519Pub, signature, localName, remoteName string, readEnabled bool) error {
 	if n.contacts == nil {
 		return fmt.Errorf("contacts store not initialized")
 	}
@@ -3421,7 +3425,8 @@ func (n *Node) AddContact(peerID, ed25519Pub, x25519Pub, signature, name string,
 		X25519Pub:   x25519Pub,
 		Signature:   signature,
 		Verified:    verified,
-		Name:        name,
+		Name:        localName,
+		RemoteName:  remoteName,
 		ReadEnabled: readEnabled,
 	})
 }

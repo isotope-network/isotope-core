@@ -17,13 +17,20 @@ import (
 // Confirmed — true после взаимного подтверждения (accept отправлен или получен).
 // Name — локальное имя, пустое при добавлении.
 type Contact struct {
-	PeerID      string `json:"peerID"`
-	Ed25519Pub  string `json:"ed25519_pub"`
-	X25519Pub   string `json:"x25519_pub"`
-	Signature   string `json:"signature"`
-	Verified    bool   `json:"verified"`
-	Confirmed   bool   `json:"confirmed"`
-	Name        string `json:"name"`
+	PeerID     string `json:"peerID"`
+	Ed25519Pub string `json:"ed25519_pub"`
+	X25519Pub  string `json:"x25519_pub"`
+	Signature  string `json:"signature"`
+	Verified   bool   `json:"verified"`
+	Confirmed  bool   `json:"confirmed"`
+	// Name — локальное имя контакта (как я его называю).
+	// Семантически совпадает с local_name из модели.
+	// Не переименовывать — миграция не нужна.
+	Name string `json:"name"`
+	// RemoteName — представление контакта о себе (что он сообщил).
+	// Приходит в [CONTACT_REQUEST] / [CONTACT_ACCEPT] / QR.
+	// Используется как fallback, если Name пусто.
+	RemoteName  string `json:"remote_name,omitempty"`
 	AddedAt     string `json:"added_at"`
 	ReadEnabled bool   `json:"read_enabled"`
 }
@@ -246,6 +253,22 @@ func (cs *ContactsStore) UpdateReadEnabled(peerID string, enabled bool) error {
 		if cs.contacts[i].PeerID == peerID {
 			cs.contacts[i].ReadEnabled = enabled
 			log.Printf("[CONTACTS] read_enabled updated %s → %v", peerID, enabled)
+			return cs.saveLocked()
+		}
+	}
+	return fmt.Errorf("contact not found: %s", peerID)
+}
+
+// RenameContact — устанавливает локальное имя контакта (Name).
+// Локальное имя — как я называю контакт. Не передаётся в сеть.
+func (cs *ContactsStore) RenameContact(peerID, localName string) error {
+	cs.mu.Lock()
+	defer cs.mu.Unlock()
+
+	for i := range cs.contacts {
+		if cs.contacts[i].PeerID == peerID {
+			cs.contacts[i].Name = localName
+			log.Printf("[CONTACTS] renamed %s → %q", peerID, localName)
 			return cs.saveLocked()
 		}
 	}

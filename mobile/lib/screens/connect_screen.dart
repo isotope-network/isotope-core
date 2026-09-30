@@ -885,6 +885,7 @@ class _ConnectScreenState extends State<ConnectScreen> {
       String x25519Pub = '';
       String signature = '';
       bool readEnabled = true;
+      String displayNameFromQR = '';
 
       // Этап 4.3: новый формат — JSON с версией.
       if (code.startsWith('{')) {
@@ -898,13 +899,14 @@ class _ConnectScreenState extends State<ConnectScreen> {
             signature = (json['signature'] as String?) ?? '';
             // read_enabled — опционально. Дефолт true (обратная совместимость).
             readEnabled = (json['read_enabled'] as bool?) ?? true;
-            LogService.log('QR: распознан формат v:$v, peerID=$peerId, ed25519=${ed25519Pub.isNotEmpty ? "есть" : "нет"}, x25519=${x25519Pub.isNotEmpty ? "есть" : "нет"}, signature=${signature.isNotEmpty ? "есть" : "нет"}, read_enabled=$readEnabled');
+            // display_name — представление владельца QR.
+            displayNameFromQR = (json['display_name'] as String?) ?? '';
+            LogService.log('QR: распознан формат v:$v, peerID=$peerId, ed25519=${ed25519Pub.isNotEmpty ? "есть" : "нет"}, x25519=${x25519Pub.isNotEmpty ? "есть" : "нет"}, signature=${signature.isNotEmpty ? "есть" : "нет"}, display_name=$displayNameFromQR, read_enabled=$readEnabled');
           }
         } catch (e) {
           LogService.log('QR: ошибка парсинга JSON: $e');
         }
       }
-
       // Обратная совместимость: старый формат — только PeerID.
       if (peerId.isEmpty) {
         if (code.contains('/p2p/')) {
@@ -954,7 +956,8 @@ class _ConnectScreenState extends State<ConnectScreen> {
           ed25519Pub: ed25519Pub,
           x25519Pub: x25519Pub,
           signature: signature,
-          name: '',
+          localName: '',
+          remoteName: displayNameFromQR,
           readEnabled: readEnabled,
         );
         if (saveResult.containsKey('error')) {
