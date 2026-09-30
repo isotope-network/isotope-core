@@ -1639,6 +1639,12 @@ func (n *Node) handleContactAccept(m Message) {
 		_ = n.contacts.SetConfirmed(m.Sender)
 	}
 	log.Printf("[SERVICE] contact_accept saved contact %s (ref=%s)", m.Sender, m.Ref)
+
+	// Уведомляем UI — перечитать контакты (confirmed обновился).
+	if n.messageHook != nil {
+		data, _ := json.Marshal(m)
+		n.messageHook(string(data))
+	}
 }
 
 // handleContactReject — обрабатывает отклонение нашего запроса.

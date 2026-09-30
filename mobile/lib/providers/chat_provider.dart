@@ -97,6 +97,17 @@ class ChatProvider extends ChangeNotifier {
       StreamController<String>.broadcast();
   Stream<String> get contactRequestStream => _contactRequestController.stream;
 
+  // Контакт-протокол: [CONTACT_ACCEPT] от B — наш запрос принят.
+  // Go обновил contact.confirmed = true. UI перечитывает контакты.
+  final StreamController<String> _contactAcceptController =
+      StreamController<String>.broadcast();
+  Stream<String> get contactAcceptStream => _contactAcceptController.stream;
+
+  // Контакт-протокол: [CONTACT_REJECT] от B — наш запрос отклонён.
+  final StreamController<String> _contactRejectController =
+      StreamController<String>.broadcast();
+  Stream<String> get contactRejectStream => _contactRejectController.stream;
+
   List<Message> get allMessages {
     final list = _messagesMap.values
         .where((m) => m.sender != '🌐 Сеть')
@@ -390,9 +401,21 @@ class ChatProvider extends ChangeNotifier {
           _contactRequestController.add(sender);
           return;
         }
-        // Type=1,2,4,5 — [DELIVERED]/[READ]/[ACCEPT]/[REJECT]:
-        // обрабатываются в Go, в UI не нужны. Отсекаем.
-        if (type >= 1 && type <= 5) {
+        // Type=4 — [CONTACT_ACCEPT]: наш запрос принят.
+        // Go обновил contact.confirmed = true. UI перечитывает контакты.
+        if (type == 4) {
+          LogService.log('P2P: [CONTACT_ACCEPT] от $sender');
+          _contactAcceptController.add(sender);
+          return;
+        }
+        // Type=5 — [CONTACT_REJECT]: наш запрос отклонён.
+        if (type == 5) {
+          LogService.log('P2P: [CONTACT_REJECT] от $sender');
+          _contactRejectController.add(sender);
+          return;
+        }
+        // Type=1,2 — [DELIVERED]/[READ]: обрабатываются в Go, в UI не нужны.
+        if (type >= 1 && type <= 2) {
           return;
         }
 
@@ -971,6 +994,8 @@ class ChatProvider extends ChangeNotifier {
     _messageSub?.cancel();
     _helloAckController.close();
     _contactRequestController.close();
+    _contactAcceptController.close();
+    _contactRejectController.close();
     stopLibP2P();
     super.dispose();
   }

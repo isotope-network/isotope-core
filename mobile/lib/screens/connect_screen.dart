@@ -136,6 +136,14 @@ class _ConnectScreenState extends State<ConnectScreen> {
           ),
         );
       });
+
+      // Слушаем [CONTACT_ACCEPT] — наш запрос принят.
+      // Go обновил contact.confirmed. Перечитываем контакты.
+      chatProvider.contactAcceptStream.listen((peerID) {
+        if (!mounted) return;
+        LogService.log('ConnectScreen: [CONTACT_ACCEPT] от $peerID — перечитать контакты');
+        _loadContactsFromCore();
+      });
     });
 
     // Обработка initialAction — после первого кадра,
