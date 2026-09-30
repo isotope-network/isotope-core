@@ -144,10 +144,11 @@ type Node struct {
 	announceMultiaddrs []string
 
 	// RELAY — резервация слота на relay-сервере (VPS)
-	relayReservation *client.Reservation
-	relayMu          sync.Mutex
-	relayPeerInfo    peer.AddrInfo
-	lastRelayRefresh time.Time
+	relayReservation   *client.Reservation
+	relayMu            sync.Mutex
+	relayPeerInfo      peer.AddrInfo
+	lastRelayRefresh   time.Time
+	lastReservationErr error // последняя ошибка резервации (nil = успех)
 
 	// OFFLINE QUEUE — сообщения, ожидающие отправки при восстановлении связи
 	pendingMessages []Message
@@ -614,12 +615,16 @@ func (n *Node) ReserveRelaySlot(ctx context.Context, relayAddrInfo peer.AddrInfo
 
 	resv, err := client.Reserve(ctx, n.host, relayAddrInfo)
 	if err != nil {
+		n.relayMu.Lock()
+		n.lastReservationErr = err
+		n.relayMu.Unlock()
 		return fmt.Errorf("relay reserve failed: %w", err)
 	}
 
 	n.relayMu.Lock()
 	n.relayReservation = resv
 	n.relayPeerInfo = relayAddrInfo
+	n.lastReservationErr = nil
 	n.relayMu.Unlock()
 
 	log.Printf("[RELAY] reserved slot, expires=%s", resv.Expiration)
@@ -945,7 +950,9 @@ func (n *Node) isRelayAddr(remotePeerID string) bool {
 func (n *Node) refreshRelayAndAnnounce() {
 	n.relayMu.Lock()
 	// Throttle: не чаще одного раза в 10 секунд.
-	if time.Since(n.lastRelayRefresh) < 10*time.Second {
+	// НО: если предыдущая резервация упала — throttle не блокирует.
+	// Иначе при быстром reconnect refresh пропускается, резервация не восстанавливается.
+	if time.Since(n.lastRelayRefresh) < 10*time.Second && n.lastReservationErr == nil {
 		n.relayMu.Unlock()
 		return
 	}
