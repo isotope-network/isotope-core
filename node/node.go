@@ -168,6 +168,13 @@ type Node struct {
 	contactsFile string
 	contacts     *ContactsStore
 
+	// TEMP CONTACTS — временные контакты (только в памяти).
+	// Создаются при получении [CONTACT_HELLO] от A. Нужны, чтобы
+	// расшифровать [CONTACT_REQUEST] (E2E). После requests.Add — удаляются.
+	// Не сохраняются на диск, не попадают в UI.
+	tempContacts   map[string]Contact
+	tempContactsMu sync.Mutex
+
 	// REQUESTS — входящие запросы на контакт (контакт-протокол, этап 5).
 	// Отдельный файл isotope_requests.json. До accept/reject.
 	requestsFile string
@@ -214,6 +221,7 @@ func NewNode(cfg Config) *Node {
 		isRelay:                 cfg.IsRelay || cfg.EnableRelayServer,
 		memory:                  Memory{seen: make(map[string]bool)},
 		announcedPeers:          make(map[string]announcedPeer),
+		tempContacts:            make(map[string]Contact),
 		myReadEnabled:           true,
 	}
 }
@@ -563,7 +571,7 @@ func (n *Node) decryptFromSender(sender, payload string) (string, error) {
 		return "", fmt.Errorf("contacts store not initialized")
 	}
 
-	contact, ok := n.contacts.Get(sender)
+	contact, ok := n.GetContactTemp(sender)
 	if !ok {
 		return "", fmt.Errorf("contact not found: %s", sender)
 	}
@@ -1519,6 +1527,8 @@ func (n *Node) handleContactRequest(m Message) {
 		log.Printf("[SERVICE] contact_request add failed: %v", err)
 		return
 	}
+	// A попал в requests store — временный контакт больше не нужен.
+	n.RemoveTempContact(m.Sender)
 	log.Printf("[SERVICE] contact_request saved from %s", m.Sender)
 }
 
@@ -1566,8 +1576,9 @@ func (n *Node) handleContactReject(m Message) {
 }
 
 // handleContactHello — обрабатывает [CONTACT_HELLO] от A.
-// Открытое сообщение. A хочет добавить B. B отвечает [CONTACT_HELLO_ACK]
-// со своими публичными ключами, чтобы A мог зашифровать [CONTACT_REQUEST].
+// Открытое. Payload: peerID + публичные ключи + подпись A.
+// B делает AddTempContact(A), чтобы потом расшифровать [CONTACT_REQUEST] (E2E).
+// Если A уже в постоянных контактах — temp не создаётся.
 func (n *Node) handleContactHello(m Message) {
 	if m.Sender == "" {
 		log.Printf("[SERVICE] contact_hello: empty sender, dropped")
@@ -1582,6 +1593,51 @@ func (n *Node) handleContactHello(m Message) {
 		log.Printf("[SERVICE] contact_hello: self, dropped")
 		return
 	}
+	if m.Text == "" {
+		log.Printf("[SERVICE] contact_hello: empty payload from %s", m.Sender)
+		return
+	}
+
+	var payload struct {
+		PeerID     string `json:"peerID"`
+		Ed25519Pub string `json:"ed25519_pub"`
+		X25519Pub  string `json:"x25519_pub"`
+		Signature  string `json:"signature"`
+	}
+	if err := json.Unmarshal([]byte(m.Text), &payload); err != nil {
+		log.Printf("[SERVICE] contact_hello: parse failed from %s: %v", m.Sender, err)
+		return
+	}
+	if payload.PeerID != m.Sender {
+		log.Printf("[SERVICE] contact_hello: peerID mismatch (%s != %s), dropped", payload.PeerID, m.Sender)
+		return
+	}
+	if payload.Ed25519Pub == "" || payload.X25519Pub == "" {
+		log.Printf("[SERVICE] contact_hello: missing keys from %s", m.Sender)
+		return
+	}
+
+	// Проверяем подпись — если валидна, verified=true.
+	verified := false
+	if payload.Signature != "" {
+		if verifyContactSignature(payload.PeerID, payload.Ed25519Pub, payload.X25519Pub, payload.Signature) {
+			verified = true
+		}
+	}
+
+	// Если A уже в постоянных контактах — не создаём temp.
+	if _, ok := n.GetContact(m.Sender); !ok {
+		n.AddTempContact(Contact{
+			PeerID:      payload.PeerID,
+			Ed25519Pub:  payload.Ed25519Pub,
+			X25519Pub:   payload.X25519Pub,
+			Signature:   payload.Signature,
+			Verified:    verified,
+			Confirmed:   false,
+			ReadEnabled: true,
+		})
+	}
+
 	log.Printf("[SERVICE] contact_hello from %s — sending ack", m.Sender)
 	go func(sender string) {
 		if err := n.SendContactHelloAck(sender); err != nil {
@@ -2911,8 +2967,8 @@ func (n *Node) SendContactRequest(recipient, name string) (string, error) {
 }
 
 // SendContactHello — отправляет [CONTACT_HELLO] получателю.
-// Открытое (Version=0). Payload не нужен — только Sender (PeerID).
-// recipient — PeerID получателя.
+// Открытое (Version=0). Payload: peerID + публичные ключи + подпись A.
+// Нужно, чтобы B мог AddTempContact(A) → расшифровать [CONTACT_REQUEST] (E2E).
 func (n *Node) SendContactHello(recipient string) error {
 	if n.host == nil {
 		return fmt.Errorf("node not started")
@@ -2921,10 +2977,21 @@ func (n *Node) SendContactHello(recipient string) error {
 		return fmt.Errorf("recipient is required")
 	}
 
+	payload := map[string]interface{}{
+		"peerID":      n.host.ID().String(),
+		"ed25519_pub": base64.StdEncoding.EncodeToString(n.ed25519Pub),
+		"x25519_pub":  base64.StdEncoding.EncodeToString(n.x25519Pub[:]),
+		"signature":   n.signMyX25519(),
+	}
+	payloadJSON, err := json.Marshal(payload)
+	if err != nil {
+		return err
+	}
+
 	id := generateMsgID(fmt.Sprintf("hello:%s:%d", recipient, time.Now().UnixNano()))
 	msg := Message{
 		ID:        id,
-		Text:      "",
+		Text:      string(payloadJSON),
 		Sender:    n.host.ID().String(),
 		Recipient: recipient,
 		Type:      TypeContactHello,
@@ -3351,6 +3418,45 @@ func (n *Node) GetContact(peerID string) (Contact, bool) {
 		return Contact{}, false
 	}
 	return n.contacts.Get(peerID)
+}
+
+// AddTempContact — добавляет временный контакт (только в памяти).
+// Используется при получении [CONTACT_HELLO] от A — чтобы B мог
+// расшифровать [CONTACT_REQUEST] от A (E2E). Не сохраняется на диск.
+func (n *Node) AddTempContact(c Contact) {
+	if c.PeerID == "" {
+		return
+	}
+	n.tempContactsMu.Lock()
+	defer n.tempContactsMu.Unlock()
+	if n.tempContacts == nil {
+		n.tempContacts = make(map[string]Contact)
+	}
+	n.tempContacts[c.PeerID] = c
+	log.Printf("[CONTACTS] temp added %s (verified=%v)", c.PeerID, c.Verified)
+}
+
+// GetContactTemp — возвращает контакт по PeerID: сначала постоянный,
+// потом временный. Используется в decryptFromSender — прозрачно.
+func (n *Node) GetContactTemp(peerID string) (Contact, bool) {
+	if c, ok := n.GetContact(peerID); ok {
+		return c, true
+	}
+	n.tempContactsMu.Lock()
+	defer n.tempContactsMu.Unlock()
+	c, ok := n.tempContacts[peerID]
+	return c, ok
+}
+
+// RemoveTempContact — удаляет временный контакт по PeerID.
+// Вызывается после requests.Add (A попал в requests store).
+func (n *Node) RemoveTempContact(peerID string) {
+	n.tempContactsMu.Lock()
+	defer n.tempContactsMu.Unlock()
+	if _, ok := n.tempContacts[peerID]; ok {
+		delete(n.tempContacts, peerID)
+		log.Printf("[CONTACTS] temp removed %s", peerID)
+	}
 }
 
 // GetHost — возвращает libp2p host

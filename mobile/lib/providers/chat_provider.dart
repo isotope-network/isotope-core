@@ -503,21 +503,10 @@ class ChatProvider extends ChangeNotifier {
       return;
     }
 
-    LogService.log('HelloAck: от $sender — добавление контакта + отправка запроса');
+    LogService.log('HelloAck: от $sender — отправка [CONTACT_REQUEST] E2E');
 
-    final addResult = await LibP2PService.addContact(
-      peerID: peerID,
-      ed25519Pub: ed25519Pub,
-      x25519Pub: x25519Pub,
-      signature: signature,
-      name: '',
-      readEnabled: true,
-    );
-    if (addResult.containsKey('error')) {
-      LogService.log('HelloAck: addContact failed: ${addResult['error']}');
-      return;
-    }
-
+    // У A уже есть B (из QR) — ключи B уже сохранены.
+    // AddContact не нужен. Сразу шлём [CONTACT_REQUEST] E2E.
     final reqResult = await LibP2PService.sendContactRequest(peerID: peerID, name: '');
     if (reqResult.containsKey('error')) {
       LogService.log('HelloAck: sendContactRequest failed: ${reqResult['error']}');
@@ -530,7 +519,7 @@ class ChatProvider extends ChangeNotifier {
       x25519Pub: x25519Pub,
       signature: signature,
     ));
-    LogService.log('HelloAck: контакт $peerID добавлен, [CONTACT_REQUEST] отправлен');
+    LogService.log('HelloAck: [CONTACT_REQUEST] отправлен $peerID');
   }
 
   void _safeNotify() {
