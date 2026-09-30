@@ -2077,22 +2077,22 @@ func (n *Node) requestRestore() {
 }
 
 func (n *Node) processMessageWithTTL(msg string, senderID string, isOwn bool, expiresAt time.Time) {
-	n.processMessageInternal(msg, senderID, isOwn, expiresAt, "", "", 0, "", TypeMessage)
+	n.processMessageInternal(msg, senderID, isOwn, expiresAt, "", "", 0, "", TypeMessage, false)
 }
 
 func (n *Node) processMessageWithID(msg string, senderID string, isOwn bool, expiresAt time.Time, id string) {
-	n.processMessageInternal(msg, senderID, isOwn, expiresAt, id, "", 0, "", TypeMessage)
+	n.processMessageInternal(msg, senderID, isOwn, expiresAt, id, "", 0, "", TypeMessage, false)
 }
 
 // processMessageWithRecipient — отправляет адресное сообщение конкретному получателю.
 // version — 2 для E2E-шифрованных.
 func (n *Node) processMessageWithRecipient(msg string, senderID string, isOwn bool, expiresAt time.Time, id string, recipient string, version int) {
-	n.processMessageInternal(msg, senderID, isOwn, expiresAt, id, recipient, version, "", TypeMessage)
+	n.processMessageInternal(msg, senderID, isOwn, expiresAt, id, recipient, version, "", TypeMessage, false)
 }
 
 func (n *Node) processMessageWithModeAndTTL(msg string, senderID string, isOwn bool, mode int, expiresAt time.Time) {
 	if mode == 0 || n.host == nil {
-		n.processMessageInternal(msg, senderID, isOwn, expiresAt, "", "", 0, "", TypeMessage)
+		n.processMessageInternal(msg, senderID, isOwn, expiresAt, "", "", 0, "", TypeMessage, false)
 		return
 	}
 	relayCount := 4
@@ -2102,7 +2102,7 @@ func (n *Node) processMessageWithModeAndTTL(msg string, senderID string, isOwn b
 	}
 	relays := n.selectRelays(relayCount)
 	if len(relays) < relayCount {
-		n.processMessageInternal(msg, senderID, isOwn, expiresAt, "", "", 0, "", TypeMessage)
+		n.processMessageInternal(msg, senderID, isOwn, expiresAt, "", "", 0, "", TypeMessage, false)
 		return
 	}
 	n.sendViaRelayChain(relays, msg)
@@ -2167,10 +2167,10 @@ func (n *Node) sendViaRelayChain(relays []string, msg string) {
 }
 
 func (n *Node) processMessage(msg string, senderID string, isOwn bool) {
-	n.processMessageInternal(msg, senderID, isOwn, time.Time{}, "", "", 0, "", TypeMessage)
+	n.processMessageInternal(msg, senderID, isOwn, time.Time{}, "", "", 0, "", TypeMessage, false)
 }
 
-func (n *Node) processMessageInternal(msg string, senderID string, isOwn bool, expiresAt time.Time, providedID string, recipient string, version int, plainText string, msgType MessageType) {
+func (n *Node) processMessageInternal(msg string, senderID string, isOwn bool, expiresAt time.Time, providedID string, recipient string, version int, plainText string, msgType MessageType, viaBootstrap bool) {
 	inputVector := textToVector(msg)
 	outputVector, _ := forward(inputVector, n.layers)
 	answer := vectorToText(outputVector)
@@ -2905,7 +2905,7 @@ func (n *Node) SendToPeer(peerID string, text string, ttl int) (string, error) {
 	id := generateMsgID(text)
 	// plainText = text (открытый) — сохраняется для UI.
 	// В сеть уходит encrypted (Text). PlainText — только для локального показа.
-	n.processMessageInternal(encrypted, n.host.ID().String(), true, expiresAt, id, peerID, MESSAGE_VERSION_E2E, text, TypeMessage)
+	n.processMessageInternal(encrypted, n.host.ID().String(), true, expiresAt, id, peerID, MESSAGE_VERSION_E2E, text, TypeMessage, false)
 	return id, nil
 }
 
@@ -3031,7 +3031,7 @@ func (n *Node) SendContactRequest(recipient, name string) (string, error) {
 	}
 
 	id := generateMsgID(fmt.Sprintf("req:%s:%d", recipient, time.Now().UnixNano()))
-	n.processMessageInternal(encrypted, n.host.ID().String(), true, time.Time{}, id, recipient, MESSAGE_VERSION_E2E, "", TypeContactRequest)
+	n.processMessageInternal(encrypted, n.host.ID().String(), true, time.Time{}, id, recipient, MESSAGE_VERSION_E2E, "", TypeContactRequest, false)
 
 	return id, nil
 }
@@ -3155,7 +3155,7 @@ func (n *Node) sendContactControl(msgType MessageType, requestID, recipient stri
 	}
 
 	id := generateMsgID(fmt.Sprintf("%s:%s:%d", msgTypeString(msgType), requestID, time.Now().UnixNano()))
-	n.processMessageInternal(encrypted, n.host.ID().String(), true, time.Time{}, id, recipient, MESSAGE_VERSION_E2E, "", msgType)
+	n.processMessageInternal(encrypted, n.host.ID().String(), true, time.Time{}, id, recipient, MESSAGE_VERSION_E2E, "", msgType, false)
 
 	return nil
 }
