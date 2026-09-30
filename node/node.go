@@ -2271,7 +2271,15 @@ func (n *Node) processMessageInternal(msg string, senderID string, isOwn bool, e
 		if isOwn && version == MESSAGE_VERSION_E2E && newMsg.Type == TypeMessage {
 			n.setMessageStatus(id, StatusSent)
 		}
-		n.replicateMessage(newMsg)
+		if viaBootstrap {
+			// Служебные контакт-протокола — всегда через bootstrap.
+			// Circuit может быть stale — direct таймаутит.
+			if err := n.sendServiceViaBootstrap(newMsg); err != nil {
+				log.Printf("[SERVICE] viaBootstrap failed for %s: %v", newMsg.ID, err)
+			}
+		} else {
+			n.replicateMessage(newMsg)
+		}
 		if n.messageHook != nil {
 			data, _ := json.Marshal(newMsg)
 			n.messageHook(string(data))
