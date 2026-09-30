@@ -111,10 +111,30 @@ class _ConnectScreenState extends State<ConnectScreen> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       final chatProvider = context.read<ChatProvider>();
-      _helloAckSub = chatProvider.helloAckStream.listen((ack) {
+      chatProvider.helloAckStream.listen((ack) {
         if (!mounted) return;
         LogService.log('ConnectScreen: helloAck для ${ack.peerID}');
         setState(() {});
+      });
+
+      // Слушаем [CONTACT_REQUEST] — push-событие.
+      // Go сохранил запрос, RequestsSection сам обновит список.
+      // Здесь — SnackBar с уведомлением.
+      chatProvider.contactRequestStream.listen((peerID) {
+        if (!mounted) return;
+        LogService.log('ConnectScreen: входящий запрос от $peerID');
+        final short = peerID.length > 12 ? peerID.substring(0, 12) : peerID;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Входящий запрос от $short'),
+            action: SnackBarAction(
+              label: 'Открыть',
+              onPressed: () {
+                if (mounted) setState(() {});
+              },
+            ),
+          ),
+        );
       });
     });
 

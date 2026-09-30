@@ -1530,6 +1530,12 @@ func (n *Node) handleContactRequest(m Message) {
 	// A попал в requests store — временный контакт больше не нужен.
 	n.RemoveTempContact(m.Sender)
 	log.Printf("[SERVICE] contact_request saved from %s", m.Sender)
+
+	// Уведомляем UI о новом запросе (push, не polling).
+	if n.messageHook != nil {
+		data, _ := json.Marshal(m)
+		n.messageHook(string(data))
+	}
 }
 
 // handleContactAccept — обрабатывает принятие нашего запроса.

@@ -1,5 +1,8 @@
 // mobile/lib/widgets/requests_section.dart
+import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+import '../providers/chat_provider.dart';
 import '../services/libp2p_service.dart';
 import '../services/log_service.dart';
 
@@ -24,11 +27,30 @@ class RequestsSection extends StatefulWidget {
 class RequestsSectionState extends State<RequestsSection> {
   List<Map<String, dynamic>> _requests = [];
   bool _loading = false;
+  StreamSubscription<String>? _requestSub;
 
   @override
   void initState() {
     super.initState();
     loadRequests();
+
+    // Push-событие от ChatProvider: [CONTACT_REQUEST] пришёл от A.
+    // Go уже сохранил запрос. Читаем список (не polling — по событию).
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      final chatProvider = context.read<ChatProvider>();
+      _requestSub = chatProvider.contactRequestStream.listen((peerID) {
+        if (!mounted) return;
+        LogService.log('RequestsSection: событие contactRequest от $peerID');
+        loadRequests();
+      });
+    });
+  }
+
+  @override
+  void dispose() {
+    _requestSub?.cancel();
+    super.dispose();
   }
 
   /// Загружает запросы из ядра.

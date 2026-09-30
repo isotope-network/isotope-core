@@ -90,6 +90,13 @@ class ChatProvider extends ChangeNotifier {
       StreamController<HelloAck>.broadcast();
   Stream<HelloAck> get helloAckStream => _helloAckController.stream;
 
+  // Контакт-протокол: [CONTACT_REQUEST] от A.
+  // Go уже сохранил запрос в requests store. Dart читает при событии.
+  // Не polling — push. Событие-триггер с peerID отправителя.
+  final StreamController<String> _contactRequestController =
+      StreamController<String>.broadcast();
+  Stream<String> get contactRequestStream => _contactRequestController.stream;
+
   List<Message> get allMessages {
     final list = _messagesMap.values
         .where((m) => m.sender != '🌐 Сеть')
@@ -376,8 +383,15 @@ class ChatProvider extends ChangeNotifier {
           _handleContactHelloAck(sender, map['text'] as String? ?? '');
           return;
         }
-        // Type=1..5 — [DELIVERED]/[READ]/[CONTACT_REQUEST]/[ACCEPT]/[REJECT]:
-        // обрабатываются в Go, сюда не должны попадать. На всякий — отсекаем.
+        // Type=3 — [CONTACT_REQUEST]: push-событие для UI.
+        // Go уже сохранил запрос. UI читает при событии (не polling).
+        if (type == 3) {
+          LogService.log('P2P: [CONTACT_REQUEST] от $sender');
+          _contactRequestController.add(sender);
+          return;
+        }
+        // Type=1,2,4,5 — [DELIVERED]/[READ]/[ACCEPT]/[REJECT]:
+        // обрабатываются в Go, в UI не нужны. Отсекаем.
         if (type >= 1 && type <= 5) {
           return;
         }
@@ -956,6 +970,7 @@ class ChatProvider extends ChangeNotifier {
     _pendingTimers.clear();
     _messageSub?.cancel();
     _helloAckController.close();
+    _contactRequestController.close();
     stopLibP2P();
     super.dispose();
   }
