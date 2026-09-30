@@ -364,11 +364,21 @@ class ChatProvider extends ChangeNotifier {
           p2p!.addDiscoveredPeer(sender);
         }
 
-        // [CONTACT_HELLO_ACK] (Type=7) — не UI-сообщение.
-        // Бизнес-логика: AddContact(B) → sendContactRequest(B) E2E.
+        // Сервисные (контакт-протокол) — не UI-сообщения.
         final type = map['type'] as int? ?? 0;
+        // Type=6 — [CONTACT_HELLO]: техническое, не показываем.
+        if (type == 6) {
+          LogService.log('P2P: [CONTACT_HELLO] от $sender (не UI)');
+          return;
+        }
+        // Type=7 — [CONTACT_HELLO_ACK]: бизнес-логика (sendContactRequest E2E).
         if (type == 7) {
           _handleContactHelloAck(sender, map['text'] as String? ?? '');
+          return;
+        }
+        // Type=1..5 — [DELIVERED]/[READ]/[CONTACT_REQUEST]/[ACCEPT]/[REJECT]:
+        // обрабатываются в Go, сюда не должны попадать. На всякий — отсекаем.
+        if (type >= 1 && type <= 5) {
           return;
         }
 

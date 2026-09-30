@@ -2006,22 +2006,22 @@ func (n *Node) requestRestore() {
 }
 
 func (n *Node) processMessageWithTTL(msg string, senderID string, isOwn bool, expiresAt time.Time) {
-	n.processMessageInternal(msg, senderID, isOwn, expiresAt, "", "", 0, "")
+	n.processMessageInternal(msg, senderID, isOwn, expiresAt, "", "", 0, "", TypeMessage)
 }
 
 func (n *Node) processMessageWithID(msg string, senderID string, isOwn bool, expiresAt time.Time, id string) {
-	n.processMessageInternal(msg, senderID, isOwn, expiresAt, id, "", 0, "")
+	n.processMessageInternal(msg, senderID, isOwn, expiresAt, id, "", 0, "", TypeMessage)
 }
 
 // processMessageWithRecipient — отправляет адресное сообщение конкретному получателю.
 // version — 2 для E2E-шифрованных.
 func (n *Node) processMessageWithRecipient(msg string, senderID string, isOwn bool, expiresAt time.Time, id string, recipient string, version int) {
-	n.processMessageInternal(msg, senderID, isOwn, expiresAt, id, recipient, version, "")
+	n.processMessageInternal(msg, senderID, isOwn, expiresAt, id, recipient, version, "", TypeMessage)
 }
 
 func (n *Node) processMessageWithModeAndTTL(msg string, senderID string, isOwn bool, mode int, expiresAt time.Time) {
 	if mode == 0 || n.host == nil {
-		n.processMessageInternal(msg, senderID, isOwn, expiresAt, "", "", 0, "")
+		n.processMessageInternal(msg, senderID, isOwn, expiresAt, "", "", 0, "", TypeMessage)
 		return
 	}
 	relayCount := 4
@@ -2031,7 +2031,7 @@ func (n *Node) processMessageWithModeAndTTL(msg string, senderID string, isOwn b
 	}
 	relays := n.selectRelays(relayCount)
 	if len(relays) < relayCount {
-		n.processMessageInternal(msg, senderID, isOwn, expiresAt, "", "", 0, "")
+		n.processMessageInternal(msg, senderID, isOwn, expiresAt, "", "", 0, "", TypeMessage)
 		return
 	}
 	n.sendViaRelayChain(relays, msg)
@@ -2096,10 +2096,10 @@ func (n *Node) sendViaRelayChain(relays []string, msg string) {
 }
 
 func (n *Node) processMessage(msg string, senderID string, isOwn bool) {
-	n.processMessageInternal(msg, senderID, isOwn, time.Time{}, "", "", 0, "")
+	n.processMessageInternal(msg, senderID, isOwn, time.Time{}, "", "", 0, "", TypeMessage)
 }
 
-func (n *Node) processMessageInternal(msg string, senderID string, isOwn bool, expiresAt time.Time, providedID string, recipient string, version int, plainText string) {
+func (n *Node) processMessageInternal(msg string, senderID string, isOwn bool, expiresAt time.Time, providedID string, recipient string, version int, plainText string, msgType MessageType) {
 	inputVector := textToVector(msg)
 	outputVector, _ := forward(inputVector, n.layers)
 	answer := vectorToText(outputVector)
@@ -2185,6 +2185,7 @@ func (n *Node) processMessageInternal(msg string, senderID string, isOwn bool, e
 		Sender:      senderID,
 		Recipient:   recipient,
 		Version:     version,
+		Type:        msgType,
 		Time:        time.Now().UTC().Format("2006-01-02T15:04:05"),
 		IsOwn:       isOwn,
 		Score:       0,
@@ -2833,7 +2834,7 @@ func (n *Node) SendToPeer(peerID string, text string, ttl int) (string, error) {
 	id := generateMsgID(text)
 	// plainText = text (открытый) — сохраняется для UI.
 	// В сеть уходит encrypted (Text). PlainText — только для локального показа.
-	n.processMessageInternal(encrypted, n.host.ID().String(), true, expiresAt, id, peerID, MESSAGE_VERSION_E2E, text)
+	n.processMessageInternal(encrypted, n.host.ID().String(), true, expiresAt, id, peerID, MESSAGE_VERSION_E2E, text, TypeMessage)
 	return id, nil
 }
 
@@ -2959,9 +2960,7 @@ func (n *Node) SendContactRequest(recipient, name string) (string, error) {
 	}
 
 	id := generateMsgID(fmt.Sprintf("req:%s:%d", recipient, time.Now().UnixNano()))
-	n.processMessageInternal(encrypted, n.host.ID().String(), true, time.Time{}, id, recipient, MESSAGE_VERSION_E2E, "")
-	// Проставим Type=ContactRequest через память (см. правку ниже).
-	n.updateMessageType(id, TypeContactRequest)
+	n.processMessageInternal(encrypted, n.host.ID().String(), true, time.Time{}, id, recipient, MESSAGE_VERSION_E2E, "", TypeContactRequest)
 
 	return id, nil
 }
@@ -3093,24 +3092,9 @@ func (n *Node) sendContactControl(msgType MessageType, requestID, recipient stri
 	}
 
 	id := generateMsgID(fmt.Sprintf("%s:%s:%d", msgTypeString(msgType), requestID, time.Now().UnixNano()))
-	n.processMessageInternal(encrypted, n.host.ID().String(), true, time.Time{}, id, recipient, MESSAGE_VERSION_E2E, "")
-	n.updateMessageType(id, msgType)
+	n.processMessageInternal(encrypted, n.host.ID().String(), true, time.Time{}, id, recipient, MESSAGE_VERSION_E2E, "", msgType)
 
 	return nil
-}
-
-// updateMessageType — проставляет Type у уже добавленного сообщения в памяти.
-// Нужно, потому что processMessageInternal не принимает Type.
-func (n *Node) updateMessageType(id string, msgType MessageType) {
-	all := n.memory.GetAll()
-	for _, m := range all {
-		if m.ID == id {
-			n.memory.Remove(id)
-			m.Type = msgType
-			n.memory.Add(m)
-			return
-		}
-	}
 }
 
 // setMessageStatus — устанавливает статус сообщения по ID.
