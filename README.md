@@ -191,33 +191,32 @@ Once a day — a single notification:
 
 ## Status
 
-**v1.26.0 — stable (E2E, signatures, UI).**
+**v1.27.0 — stable (contacts and identity).**
 
 Implemented:
 - P2P network: libp2p + mDNS + DHT + Gossip
-- Priority Gossip: urgent messages propagate faster
-- Associative memory: nodes remember who asks whom
-- WebSocket + TLS: traffic indistinguishable from HTTPS
+- Priority Gossip
+- Associative memory
+- WebSocket + TLS
 - Obfuscation: AES-GCM + random delays
 - Voice steganography: LSB in WAV
-- Onion Routing v2: 4-5 relay, weight-based selection
+- Onion Routing v2
 - Neural network: 100-dimensional vectors, bigrams, ethical filter
 - Weighted memory with archive and auto-cleanup
 - Expiring messages (TTL)
 - Local encryption (AES-256-GCM)
 - Self-healing: heartbeat, auto-restart
-- Replication: restore from neighbors
-- Self-adaptation: automatic threshold adjustment
+- Replication
+- Self-adaptation
 - Channels with weight levels
 - REST API + WebSocket
 - Mobile app (Flutter + gomobile FFI)
-- libp2p on mobile via .aar
 - Stable PeerID on mobile
-- Network change handling (connectivity_plus)
+- Network change handling
 - NodeInfo model with heartbeat
 - Log transfer from Go core to Flutter
 - Dynamic port search
-- NSD discovery with PeerID and multiaddr
+- NSD discovery
 - Network health monitoring
 - 67 autotests
 - 5 nodes in docker-compose
@@ -232,36 +231,46 @@ Implemented:
 - Contact verification via Ed25519 signature over peerID || x25519_pub
 - Verified flag: signal in UI, not a pass
 
-**Stability (v1.25–v1.26):**
-- PlainText for own E2E messages (UI shows plaintext, network keeps ciphertext)
-- Auto-cleanup of old E2E messages without PlainText
-- Self-QR blocked (three levels: UI, core, auto-cleanup)
-- Relay reservation refresh on reconnect
-- Relay exponential backoff for reservation retry
-- Retry loading contacts (race with Go startup)
-- Upsert nodes on alive-event (status unknown → alive)
+**Contact protocol (v1.27):**
+- Bootstrap-handshake: [CONTACT_HELLO] → [CONTACT_HELLO_ACK] → [CONTACT_REQUEST] → [CONTACT_ACCEPT]
+- Open service messages (HELLO, ACK) always via bootstrap
+- E2E messages (REQUEST, ACCEPT) via circuit → bootstrap fallback
+- tempContacts: temporary in-memory contacts for decryption
+- Push events to UI via messageHook (not polling)
+- Symmetry: both sides confirmed: true
 
-**UI (v1.25):**
-- Terminology: technical terms removed from UI
-- Single add-contact entry (QR scan, show QR, nearby)
-- Settings in bottom sheet
-- Empty state with action button
+**Identity and names (v1.27):**
+- Name (local) / RemoteName (contact's representation) / PeerID (fallback)
+- UI: Name → RemoteName → PeerID
+- MyDisplayName in Settings — default representation
+- QR contains display_name
+- Dialog «How should we introduce you?» when sending request
+- Profile in settings → «Your name»
+- Long tap on contact → bottom sheet: Open / Rename / Delete
+- Security warning on request
+
+**Statuses (v1.26):**
+- ✓ / ✓✓ / ✓🔒 / ✓✓ (colored)
+- Hidden is terminal
+- read_enabled — symmetric
+
+**Send timer (v1.26):**
+- 0/3/5/10 sec delay
+- Draft on back
+- Cancel button
 
 **Deferred:**
 - BLE — unstable, disabled
 - Samsung Android 10 — crash
 - DHT Provide — falls with few peers
-- TTL circular dial — UI improvement
+- messageStatus growth — cleanup needed
+- TTL for tempContacts (5 min)
+- [PROFILE_UPDATE]
 
 In development:
-- Stage 1.4: First launch (3 screens)
-- Contact protocol (stages 4–8)
-- Single source of truth for contacts
+- Circuit direct when 15+ peers
+- Batch [READ]
 - Metadata protection — Onion (v2.0+)
-- Traffic patterns — Padding, mixing
-- PWA + F-Droid
-- Offline communication (Bluetooth mesh, Wi-Fi Direct)
-- Image steganography
 - ISOTOPE Enterprise (B2B data exchange)
 - ISOTOPE AI Mesh (distributed AI inference)
 

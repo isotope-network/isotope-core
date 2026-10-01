@@ -2,9 +2,9 @@
 
 ## Текущий статус
 
-**Версия:** v1.26.0 (E2E, подписи, UI)
+**Версия:** v1.27.0 (контакты и идентификация)
 
-Ядро — библиотека (package core). E2E-шифрование работает. Подпись контактов. Relay-стабильность. UI этап 1.1–1.3 закрыт.
+Ядро — библиотека (package core). Контакт-протокол работает. Система имён. Статусы. Таймер. Relay-стабильность.
 
 ---
 
@@ -14,7 +14,7 @@
 - P2P: libp2p + mDNS + DHT + Gossip
 - Priority Gossip
 - Ассоциативная память
-- WebSocket + TLS (маскировка)
+- WebSocket + TLS
 - Обфускация AES-GCM
 - Голосовая стеганография (LSB в WAV)
 - Onion Routing v2
@@ -68,8 +68,6 @@
 - Backoff reconnect 1 → 30 сек
 - Параллельный dial
 - TTL 5 → 8 мин
-- Обрезка логов 4KB
-- Fix configure (PeerID из multiaddr)
 
 ### UI 1.1–1.3 (v1.25.0)
 - UI 1.1: терминология (технические термины убраны)
@@ -85,26 +83,42 @@
 - Retry loading contacts
 - Upsert nodes on alive-event
 
+### Контакт-протокол и имена (v1.27.0)
+- Bootstrap-handshake: [HELLO] → [ACK] → [REQUEST] → [ACCEPT]
+- Открытые сервисные (HELLO, ACK) — всегда через bootstrap
+- E2E (REQUEST, ACCEPT) — circuit → bootstrap fallback
+- tempContacts — временные в памяти для расшифровки
+- Push через messageHook (не polling)
+- Симметрия: обе стороны confirmed: true
+- Система имён: Name / RemoteName / PeerID
+- MyDisplayName в Settings
+- QR содержит display_name
+- Диалог «Как вас представить?» (предзаполнено + выделено)
+- Профиль → «Ваше имя»
+- Долгий тап → Открыть / Переименовать / Удалить
+- Предупреждение о безопасности
+- Статусы: ✓ / ✓✓ / ✓🔒 / ✓✓ (цвет)
+- Таймер отправки: 0/3/5/10 сек
+
 ---
 
 ## В работе / Ближайшие задачи
 
 ### Приоритет 1 (сейчас)
-- 🔜 **Этап 1.4 UI** — первый запуск (3 экрана)
-- 🔜 **Единый источник истины для контактов** — сейчас 4 хранилища (NodeStore, _discoveredNodes, _nodesMap, _pendingNodes)
+- 🔜 **[PROFILE_UPDATE]** — для смены MyDisplayName
+- 🔜 **Батч [READ]** — сейчас по одному
+- 🔜 **TTL для tempContacts** (5 минут)
+- 🔜 **Чистка messageStatus** при удалении
 
 ### Приоритет 2
-- 🔜 **Контакт-протокол (этапы 4–8):**
-  4. NSD-подтверждение (обоюдное)
-  5. Запрос на контакт (как в Signal)
-  6. Seed-фраза для восстановления PeerID
-  7. DHT активация при 15+ узлах
-  8. Локальный вес
-- 🔜 **Periodic FIND** для активных контактов (закрывает второе окно ANNOUNCE)
+- 🔜 **Circuit direct при 15+ узлах**
+- 🔜 Foreground service — разное поведение на Xiaomi/Huawei
+- 🔜 VPS reconnectLoop — шумит вхолостую
+- 🔜 Полупрозрачность pending-сообщения
+- 🔜 TTL в настройках — перенести из chat_screen.dart
+- 🔜 Черновик UI — тап по 📝 → возврат в поле
 
 ### Приоритет 3
-- 🔜 Foreground service — разное поведение на Xiaomi/Huawei
-- 🔜 VPS reconnectLoop — шумит вхолостую, отключить на relay-сервере
 - 🔜 DHT Provide — падает при малом числе пиров
 - 🔜 Samsung Android 10 — краш
 - 🔜 ANNOUNCE TTL expired — эпизодически
@@ -133,7 +147,7 @@
 
 ### v3.0 — ISOTOPE AI Mesh
 - Распределённый инференс ИИ
-- Swarm Inference: PeerRankedConsensus (Bradley–Terry, репутационные веса)
+- Swarm Inference: PeerRankedConsensus (Bradley–Terry)
 - Семантическая маршрутизация (Latent Semantic Router)
 - Облегчённые модели на узлах
 - Этический паспорт моделей
@@ -183,6 +197,10 @@
 - Порты: 9000 (TCP), 9001 (WS), 8081 (HTTP API)
 - Роль: временная инфраструктура (relay для узлов за NAT)
 
+### Телефоны (тестовые)
+- Xiaomi: QmT5sgdagJnN3imUAn2NW2vaQ1jJNJhkh67ThUwLqWaL4P
+- Huawei: QmSFnPtYPeh1xEeh5ZMyaCApqP3fQcTYoenYsgD8Q3opAq
+
 ### Обновление VPS
 cd /root/isotope-core && git pull && cd node && go build -o isotope-node ./main
 # Ctrl+C в окне VPS, затем:
@@ -208,10 +226,11 @@ flutter build apk --debug
 
 1. **E2E и подписи** — v1.24 (закрыто)
 2. **UI и стабильность** — v1.25–v1.26 (закрыто)
-3. **Контакт-протокол** — сейчас
-4. **Onion, padding, mixing** — v2.0+
-5. **AI Mesh** — v3.0
-6. **Полная автономия** — v4.0
+3. **Контакты и идентификация** — v1.27 (закрыто)
+4. **Мелкие UX + инфраструктура** — сейчас
+5. **Onion, padding, mixing** — v2.0+
+6. **AI Mesh** — v3.0
+7. **Полная автономия** — v4.0
 
 Каждый этап — новый уровень децентрализации.
 VPS отключается, когда DHT и hole punching закроют его роль.

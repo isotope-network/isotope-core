@@ -1,5 +1,55 @@
 # История изменений ISOTOPE
 
+## v1.27.0 (2026-10-01)
+
+«Контакты и идентификация»
+
+### Добавлено
+- Контакт-протокол (bootstrap-handshake):
+  - [CONTACT_HELLO] → [CONTACT_HELLO_ACK] → [CONTACT_REQUEST] → [CONTACT_ACCEPT]
+  - Все шаги через bootstrap (открытые — всегда через bootstrap)
+  - tempContacts: временные контакты в памяти для расшифровки [CONTACT_REQUEST]
+  - Push-события в UI через messageHook (не polling)
+  - Симметрия: обе стороны confirmed: true
+- Система имён:
+  - Name (локальное) / RemoteName (представление) / PeerID (fallback)
+  - UI: Name → RemoteName → PeerID
+  - MyDisplayName в Settings — представление по умолчанию
+  - QR содержит display_name
+  - Диалог «Как вас представить?» при отправке запроса (предзаполнено + выделено)
+  - Профиль в настройках → «Ваше имя»
+  - Долгий тап на контакте → bottom sheet: Открыть / Переименовать / Удалить
+  - Предупреждение о безопасности при запросе
+
+### Изменено
+- Разделение транспортов по назначению:
+  - Открытые сервисные (HELLO, ACK) → bootstrap
+  - E2E (REQUEST, ACCEPT, сообщения) → circuit → bootstrap fallback
+- Type в processMessageInternal — с рождения, не пост-правка
+- Логи: убраны STATUS POLL, [MULTIADDR], [DIAG], [DHT] Provide
+
+### Коммиты
+- 6896800 — [CONTACT_ACCEPT] payload (ключи B, read_enabled)
+- bead650 — bootstrap-handshake
+- 692418d — [CONTACT_HELLO] с ключами A, tempContact
+- 67778cd — Type в processMessageInternal, фильтр Type=6
+- a2004db — push [CONTACT_REQUEST] через hook
+- d083997 — relay throttle fix
+- 849c388 — [CONTACT_HELLO] / ACK через bootstrap
+- 36a6af6, 0cb9de2, 2a9083a — viaBootstrap параметр
+- 196af37 — [CONTACT_ACCEPT] push → UI
+- 156fe0a — чистка логов
+- 8e6280c — HEAD (имена, диалоги, переименование, безопасность)
+
+### Следующий шаг
+- [PROFILE_UPDATE] — для смены MyDisplayName
+- Батч [READ]
+- Circuit direct при 15+ узлах
+- TTL для tempContacts (5 минут)
+- Чистка messageStatus при удалении
+
+---
+
 ## v1.26.0 (2026-09-27)
 
 ### Добавлено
@@ -24,11 +74,6 @@
 - 6e1d1b9 — UI: retry loading contacts from core
 - 2f35fb1 — UI: upsert nodes on alive-event
 
-### Следующий шаг
-- Этап 1.4 UI — первый запуск (3 экрана)
-- Контакт-протокол (этапы 4–8)
-- Единый источник истины для контактов
-
 ---
 
 ## v1.25.0 (2026-09-25)
@@ -42,10 +87,6 @@
 - 5ebe222 — UI 1.1: remove technical terms from UI
 - 4940998 — UI 1.2: single add-contact entry, settings bottom sheet
 - 988fe17 — UI 1.3: empty state with action button
-
-### Следующий шаг
-- Этап 1.4 — первый запуск
-- Продолжение контакт-протокола
 
 ---
 
@@ -67,56 +108,24 @@
 - Извлечение PeerID из multiaddr в configure
 
 ### Коммиты
-- e54d056 — E2E 4.1: keypair generation, QR v:1
-- 9c2fc8b — E2E 4.2: Recipient field, address-based routing
-- dc82e81 — E2E 4.3.1: Ed25519+X25519 keypairs, QR v:1
-- f3aaeab — E2E 4.3.2: isotope_contacts.json
-- 3a3b859 — E2E 4.3.3: encrypt Text via box.Seal, Version=2
-- 39c97c5 — E2E 4.4: Ed25519 signature, verified flag
-- 1d2e3d3 — reconnect: exponential backoff
-- 57cfeaf — connect: parallel dial
-- 87524bd — announce: TTL 5→8 min
-- 1a44715 — logs: truncate long lines
-- b225a22 — fix: extract PeerID from multiaddr in configure
-
-### Уровни защиты (после v1.24.0)
-- Содержимое от перехвата — E2E
-- Содержимое от relay — E2E
-- Подлинность отправителя — подпись
-
-### Следующий шаг
-- Метаданные — Onion (v2.0+)
-- Контакт-протокол
+- e54d056, 9c2fc8b, dc82e81, f3aaeab, 3a3b859, 39c97c5
+- 1d2e3d3, 57cfeaf, 87524bd, 1a44715, b225a22
 
 ---
 
 ## v1.23.0 (2026-09-17)
 
 ### Добавлено
-- Multi-address ANNOUNCE (Слой A):
-  - announcedPeer — список []string
-  - Формат ANNOUNCE: [ANNOUNCE]\n<addr1>\n<addr2>\n[END]
-  - FIND отдаёт массив адресов
-  - ConnectToPeerWithFallback — перебор адресов
-- Relay-circuit (Слой B):
-  - Резервация relay-слота через client.Reserve
-  - GetRelayAddrs — relay-адрес из bootstrap
-  - ANNOUNCE автоматически добавляет relay-адрес
-  - FIND fallback — relay-адрес
-  - VPS handleStream форвардит реплики
-- Flush on reconnect (три уровня):
-  - Notifiee ConnectedF
-  - markPeerAlive → dead → alive
-  - reconnectLoop
-  - Результат: flush за 1 сек вместо 3-4 мин
+- Multi-address ANNOUNCE (Слой A)
+- Relay-circuit (Слой B)
+- Flush on reconnect (три уровня)
 
 ### Изменено
 - VPS PeerID: QmNmr3Yq... → QmR8u5YF...
-- Условие отключения VPS: DHT 15+ узлов + hole punching + 2-3 relay-узла
+- Условие отключения VPS
 
 ### Коммиты
-- 9b5c6c2 — multi-address ANNOUNCE + relay-circuit
-- 6b223c0 — flush on libp2p ConnectedF
+- 9b5c6c2, 6b223c0
 
 ---
 
@@ -128,9 +137,7 @@
 - Отображение пиров через libp2p
 
 ### Коммиты
-- b706f97 — Foreground Service (Android)
-- 716a48f — Battery Optimization Whitelist
-- ccec4be — Отображение пиров через libp2p
+- b706f97, 716a48f, ccec4be
 
 ---
 
@@ -139,13 +146,11 @@
 ### Исправлено
 - Дубликаты сообщений (единый ID из Go)
 - Бейдж непрочитанных + линия «Непрочитанные»
-- ANR на медленных телефонах (non-blocking Mobile calls)
-- Reconnect loop + keepalive (15 сек ping)
+- ANR на медленных телефонах
+- Reconnect loop + keepalive
 
 ### Коммиты
-- ec0c59e — pass message ID from SendMessage
-- 919967d — do not replicate back to sender
-- c06d8a8 — non-blocking Mobile calls + reconnect loop
+- ec0c59e, 919967d, c06d8a8
 
 ---
 
@@ -153,32 +158,29 @@
 
 ### Добавлено
 - Рефакторинг ядра: package main → package core
-- main/main.go — точка входа для десктопа
-- mobile/mobile.go — обёртка gomobile
-- libp2p через FFI (.aar 67 МБ, MethodChannel)
-- Стабильный PeerID (isotope_state.json.key)
-- Обработка смены сети (connectivity_plus)
+- main/main.go, mobile/mobile.go
+- libp2p через FFI (.aar 67 МБ)
+- Стабильный PeerID
+- Обработка смены сети
 - NodeInfo, heartbeat, dead-статус
 - Логирование Go → Flutter
-- Динамический поиск порта (8081+)
-- NSD-обнаружение с PeerID и multiaddr
+- NSD-обнаружение
 
 ---
 
 ## v1.18.1 (2026-08-28)
 
 ### Добавлено
-- Рефакторинг ядра: package main → package core
+- Рефакторинг: package main → package core
 - Точка входа: node/main/main.go
-- Экспорт публичного API: Config, NewNode, InitP2P, StartHTTP, StartMobile, Stop
-- HashText — экспортирован
+- Экспорт API: Config, NewNode, InitP2P, StartHTTP, StartMobile, Stop
 
 ---
 
 ## v1.18 (2026-08-16)
 
 ### Добавлено
-- Каналы с весовыми уровнями (G4): Channel, ChannelStore
+- Каналы с весовыми уровнями (G4)
 - Пороги доступа: full=0.3, comment=0.5, vote=0.7
 - Эндпоинты: POST/GET /channels
 
@@ -207,7 +209,7 @@
 ### Добавлено
 - Репликация на 2 случайных живых узла
 - Поля ReplicatedFrom, ReplicatedAt
-- Стабильный PeerID: приватный ключ в state/
+- Стабильный PeerID
 
 ---
 
@@ -225,7 +227,7 @@
 ### Добавлено
 - Обфускация: AES-GCM с префиксом [SHUF]
 - Случайные задержки 5-50 мс
-- Дедупликация: форвардинг только из handleSend
+- Дедупликация
 
 ---
 
@@ -251,7 +253,6 @@
 
 ### Добавлено
 - Onion Routing v1: три режима анонимности
-- mode=0 обычный, mode=1 анонимный, mode=2 скрытый
 
 ---
 
@@ -260,7 +261,7 @@
 ### Добавлено
 - 5 узлов в docker-compose
 - Документация: три столпа ISOTOPE
-- README (EN + RU) под новую концепцию
+- README (EN + RU)
 - docs/FAQ.md: 20 вопросов
 
 ---
