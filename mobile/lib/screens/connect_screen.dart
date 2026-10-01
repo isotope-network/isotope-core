@@ -832,20 +832,28 @@ class _ConnectScreenState extends State<ConnectScreen> {
 
     final result = await LibP2PService.removeContact(peerID: peerID);
     if (result.containsKey('error')) {
-      LogService.log('RemoveContact: ошибка: ${result['error']}');
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Не удалось удалить: ${result['error']}')),
-        );
+      final err = result['error']?.toString() ?? '';
+      // "contact not found" — контакт уже нет в Go-хранилище.
+      // Это не ошибка для UI — просто удаляем из локального списка.
+      if (!err.contains('not found')) {
+        LogService.log('RemoveContact: ошибка: $err');
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Не удалось удалить: $err')),
+          );
+        }
+        return;
       }
-      return;
+      LogService.log('RemoveContact: $peerID отсутствует в Go — удаляю локально');
+    } else {
+      LogService.log('RemoveContact: $peerID удалён в Go');
     }
-    LogService.log('RemoveContact: $peerID удалён');
     if (mounted) {
       setState(() {
         _discoveredNodes.removeWhere((n) => n.peerID == peerID);
         _verifiedContacts.remove(peerID);
         _confirmedContacts.remove(peerID);
+        _contactNames.remove(peerID);
         _requestSent.remove(peerID);
       });
     }
