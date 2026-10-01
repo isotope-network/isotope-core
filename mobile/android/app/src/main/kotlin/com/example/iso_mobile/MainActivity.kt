@@ -352,6 +352,13 @@ class MainActivity : FlutterActivity() {
                             runOnUiThread { result.success(response) }
                         }.start()
                     }
+                    "removeContact" -> {
+                        val peerID = call.argument<String>("peerID") ?: ""
+                        Thread {
+                            val response = Mobile.removeContact(peerID)
+                            runOnUiThread { result.success(response) }
+                        }.start()
+                    }
                     "getFilesDir" -> {
                         result.success(filesDir.absolutePath)
                     }

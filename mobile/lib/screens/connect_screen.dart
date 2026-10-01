@@ -674,6 +674,172 @@ class _ConnectScreenState extends State<ConnectScreen> {
     );
   }
 
+  /// Долгий тап на контакте — bottom sheet: Открыть чат, Переименовать, Удалить.
+  Future<void> _showContactActions(NodeInfo node) async {
+    final peerID = node.peerID;
+    if (peerID.isEmpty) return;
+
+    final displayName = _displayName(node, null as dynamic);
+
+    final action = await showModalBottomSheet<String>(
+      context: context,
+      builder: (ctx) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Padding(
+              padding: const EdgeInsets.all(16),
+              child: Text(
+                displayName,
+                style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+            const Divider(height: 1),
+            ListTile(
+              leading: const Icon(Icons.chat_bubble_outline),
+              title: const Text('Открыть чат'),
+              onTap: () => Navigator.pop(ctx, 'chat'),
+            ),
+            ListTile(
+              leading: const Icon(Icons.edit_outlined),
+              title: const Text('Переименовать'),
+              onTap: () => Navigator.pop(ctx, 'rename'),
+            ),
+            ListTile(
+              leading: const Icon(Icons.delete_outline, color: Colors.red),
+              title: const Text('Удалить', style: TextStyle(color: Colors.red)),
+              onTap: () => Navigator.pop(ctx, 'delete'),
+            ),
+            const SizedBox(height: 8),
+          ],
+        ),
+      ),
+    );
+
+    if (!mounted || action == null) return;
+
+    switch (action) {
+      case 'chat':
+        await _connectToNode(node);
+        break;
+      case 'rename':
+        await _renameContact(node);
+        break;
+      case 'delete':
+        await _deleteContact(node);
+        break;
+    }
+  }
+
+  /// Диалог «Переименовать контакт». Предзаполнено, текст выделен.
+  Future<void> _renameContact(NodeInfo node) async {
+    final peerID = node.peerID;
+    if (peerID.isEmpty) return;
+
+    final current = _displayName(node, null as dynamic);
+    final controller = TextEditingController(text: current);
+    controller.selection = TextSelection(
+      baseOffset: 0,
+      extentOffset: current.length,
+    );
+
+    final newName = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Переименовать контакт'),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          maxLength: 100,
+          decoration: const InputDecoration(
+            hintText: 'Имя контакта',
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, null),
+            child: const Text('Отмена'),
+          ),
+          TextButton(
+            onPressed: () {
+              Navigator.pop(ctx, controller.text.trim());
+            },
+            child: const Text('Сохранить'),
+          ),
+        ],
+      ),
+    );
+
+    if (!mounted || newName == null || newName == current) return;
+
+    final result = await LibP2PService.renameContact(
+      peerID: peerID,
+      localName: newName,
+    );
+    if (result.containsKey('error')) {
+      LogService.log('RenameContact: ошибка: ${result['error']}');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Не удалось переименовать: ${result['error']}')),
+        );
+      }
+      return;
+    }
+    LogService.log('RenameContact: $peerID → "$newName"');
+    await _loadContactsFromCore();
+    if (mounted) setState(() {});
+  }
+
+  /// Диалог «Удалить контакт?». У собеседника остаётся.
+  Future<void> _deleteContact(NodeInfo node) async {
+    final peerID = node.peerID;
+    if (peerID.isEmpty) return;
+
+    final displayName = _displayName(node, null as dynamic);
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text('Удалить «$displayName»?'),
+        content: const Text(
+          'Контакт будет удалён только у вас. У собеседника он останется.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Отмена'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Удалить', style: TextStyle(color: Colors.red)),
+          ),
+        ],
+      ),
+    );
+
+    if (!mounted || ok != true) return;
+
+    final result = await LibP2PService.removeContact(peerID: peerID);
+    if (result.containsKey('error')) {
+      LogService.log('RemoveContact: ошибка: ${result['error']}');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Не удалось удалить: ${result['error']}')),
+        );
+      }
+      return;
+    }
+    LogService.log('RemoveContact: $peerID удалён');
+    if (mounted) {
+      setState(() {
+        _discoveredNodes.removeWhere((n) => n.peerID == peerID);
+        _verifiedContacts.remove(peerID);
+        _confirmedContacts.remove(peerID);
+        _requestSent.remove(peerID);
+      });
+    }
+  }
+
   /// Настройки — открывает экран SettingsScreen.
   /// Передаёт колбэки для системных пунктов (логика остаётся здесь).
   void _showSettingsDialog() {
@@ -1543,6 +1709,7 @@ class _ConnectScreenState extends State<ConnectScreen> {
                         onTap: node.status == NodeStatus.dead || _connecting
                             ? null
                             : () => _connectToNode(node),
+                        onLongPress: () => _showContactActions(node),
                       );
                     },
                   );

@@ -367,6 +367,20 @@ class LibP2PService {
     }
   }
 
+  /// Удаляет контакт у меня. У собеседника остаётся.
+  static Future<Map<String, dynamic>> removeContact({
+    required String peerID,
+  }) async {
+    try {
+      final response = await _channel.invokeMethod<String>('removeContact', {
+        'peerID': peerID,
+      });
+      return _safeDecode(response);
+    } on PlatformException catch (e) {
+      return {'error': e.message ?? 'platform_error', 'operation': 'remove_contact'};
+    }
+  }
+
 
   /// Возвращает список контактов (JSON-массив).
   static Future<List<dynamic>> getContacts() async {

@@ -495,6 +495,24 @@ func RenameContact(peerID, localName string) string {
 	return `{"status":"ok"}`
 }
 
+// RemoveContact — удаляет контакт у меня. У собеседника остаётся.
+func RemoveContact(peerID string) string {
+	nodeMu.Lock()
+	defer nodeMu.Unlock()
+
+	if node == nil {
+		return errorJSON("node not started")
+	}
+	if peerID == "" {
+		return errorJSON("peerID is required")
+	}
+	if err := node.RemoveContact(peerID); err != nil {
+		return errorJSON(err.Error())
+	}
+	addLog("[CONTACTS] removed %s", peerID)
+	return `{"status":"ok"}`
+}
+
 // SendContactHello — отправляет [CONTACT_HELLO] получателю.
 // Открытое (Version=0). Запускает bootstrap-handshake:
 // получатель ответит [CONTACT_HELLO_ACK] с публичными ключами,
