@@ -76,6 +76,11 @@ class _ConnectScreenState extends State<ConnectScreen> {
   /// Заполняется при загрузке контактов из ядра.
   final Map<String, bool> _confirmedContacts = {};
 
+  /// Кеш имён контактов по PeerID.
+  /// name — локальное (как я называю). remoteName — представление контакта.
+  /// Приоритет отображения: name → remoteName → PeerID коротко.
+  final Map<String, ({String name, String remoteName})> _contactNames = {};
+
   /// PeerID, которым уже отправили [CONTACT_REQUEST] в этой сессии.
   /// Set в памяти (MVP). При перезапуске сбрасывается.
   final Set<String> _requestSent = {};
@@ -208,9 +213,12 @@ class _ConnectScreenState extends State<ConnectScreen> {
             final peerID = c['peerID'] as String? ?? '';
             final verified = c['verified'] as bool? ?? false;
             final confirmed = c['confirmed'] as bool? ?? false;
+            final name = c['name'] as String? ?? '';
+            final remoteName = c['remote_name'] as String? ?? '';
             if (peerID.isNotEmpty) {
               _verifiedContacts[peerID] = verified;
               _confirmedContacts[peerID] = confirmed;
+              _contactNames[peerID] = (name: name, remoteName: remoteName);
             }
           }
           setState(() {});
@@ -676,11 +684,11 @@ class _ConnectScreenState extends State<ConnectScreen> {
 
   /// Долгий тап на контакте — bottom sheet: Открыть чат, Переименовать, Удалить.
   Future<void> _showContactActions(NodeInfo node) async {
+    try {
     final peerID = node.peerID;
     if (peerID.isEmpty) return;
 
-    final displayName = _displayName(node, null as dynamic);
-
+    final displayName = _displayName(node);
     final action = await showModalBottomSheet<String>(
       context: context,
       builder: (ctx) => SafeArea(
@@ -730,6 +738,9 @@ class _ConnectScreenState extends State<ConnectScreen> {
         await _deleteContact(node);
         break;
     }
+    } catch (e) {
+      LogService.log('ContactActions: EXCEPTION: $e');
+    }
   }
 
   /// Диалог «Переименовать контакт». Предзаполнено, текст выделен.
@@ -737,7 +748,7 @@ class _ConnectScreenState extends State<ConnectScreen> {
     final peerID = node.peerID;
     if (peerID.isEmpty) return;
 
-    final current = _displayName(node, null as dynamic);
+    final current = _displayName(node);
     final controller = TextEditingController(text: current);
     controller.selection = TextSelection(
       baseOffset: 0,
@@ -796,7 +807,7 @@ class _ConnectScreenState extends State<ConnectScreen> {
     final peerID = node.peerID;
     if (peerID.isEmpty) return;
 
-    final displayName = _displayName(node, null as dynamic);
+    final displayName = _displayName(node);
     final ok = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
@@ -1305,13 +1316,19 @@ class _ConnectScreenState extends State<ConnectScreen> {
     _syncDiscoveredNodesFromP2P();
   }
 
-  String _displayName(NodeInfo node, ChatProvider chatProvider) {
+  String _displayName(NodeInfo node) {
     try {
-      if (node.peerID.isNotEmpty) {
-        final short = node.peerID.length > 12 ? node.peerID.substring(0, 12) : node.peerID;
-        return 'Контакт $short';
+      final peerID = node.peerID;
+      if (peerID.isEmpty) {
+        return node.currentAddress;
       }
-      return node.currentAddress;
+      final names = _contactNames[peerID];
+      if (names != null) {
+        if (names.name.isNotEmpty) return names.name;
+        if (names.remoteName.isNotEmpty) return names.remoteName;
+      }
+      final short = peerID.length > 12 ? peerID.substring(0, 12) : peerID;
+      return 'Контакт $short';
     } catch (_) {
       return 'Контакт';
     }
@@ -1642,74 +1659,76 @@ class _ConnectScreenState extends State<ConnectScreen> {
                     itemBuilder: (context, index) {
                       final node = _discoveredNodes[index];
                       final unread = chatProvider.unreadCount;
-                      final displayName = _displayName(node, chatProvider);
+                      final displayName = _displayName(node);
                       final subtitleText = _contactStatusSubtitle(node, chatProvider) ?? '';
                       final lastTime = _lastMessageTime(node, chatProvider);
                       final badge = _verifiedBadge(node.peerID);
                       final showRequestLink = subtitleText == 'Не подтверждён. Отправить запрос?';
 
-                      return ListTile(
-                        leading: Icon(
-                          _getNodeIcon(node.status),
-                          color: _getNodeIconColor(node.status),
-                        ),
-                        title: Row(
-                          children: [
-                            Flexible(
-                              child: Text(
-                                displayName,
-                                style: TextStyle(color: _getNodeTextColor(node.status)),
-                                overflow: TextOverflow.ellipsis,
-                              ),
-                            ),
-                            if (badge != null) ...[
-                              const SizedBox(width: 4),
-                              badge,
-                            ],
-                          ],
-                        ),
-                        subtitle: showRequestLink
-                            ? GestureDetector(
-                                onTap: () => _onSubtitleTap(node),
-                                child: Text(
-                                  subtitleText,
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: const TextStyle(
-                                    fontSize: 13,
-                                    color: Colors.orange,
-                                    fontWeight: FontWeight.w600,
-                                  ),
-                                ),
-                              )
-                            : Text(
-                                subtitleText,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: const TextStyle(fontSize: 13),
-                              ),
-                        trailing: Column(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          crossAxisAlignment: CrossAxisAlignment.end,
-                          children: [
-                            if (lastTime.isNotEmpty)
-                              Text(
-                                lastTime,
-                                style: const TextStyle(fontSize: 11, color: Colors.grey),
-                              ),
-                            if (unread > 0)
-                              Container(
-                                margin: const EdgeInsets.only(top: 4),
-                                padding: const EdgeInsets.all(6),
-                                decoration: BoxDecoration(color: Colors.red, borderRadius: BorderRadius.circular(12)),
-                                child: Text('$unread', style: const TextStyle(color: Colors.white, fontSize: 12)),
-                              ),
-                          ],
-                        ),
+                      return InkWell(
+                        onLongPress: () => _showContactActions(node),
                         onTap: node.status == NodeStatus.dead || _connecting
                             ? null
                             : () => _connectToNode(node),
-                        onLongPress: () => _showContactActions(node),
+                        child: ListTile(
+                          leading: Icon(
+                            _getNodeIcon(node.status),
+                            color: _getNodeIconColor(node.status),
+                          ),
+                          title: Row(
+                            children: [
+                              Flexible(
+                                child: Text(
+                                  displayName,
+                                  style: TextStyle(color: _getNodeTextColor(node.status)),
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                              ),
+                              if (badge != null) ...[
+                                const SizedBox(width: 4),
+                                badge,
+                              ],
+                            ],
+                          ),
+                          subtitle: showRequestLink
+                              ? GestureDetector(
+                                  onTap: () => _onSubtitleTap(node),
+                                  child: Text(
+                                    subtitleText,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: const TextStyle(
+                                      fontSize: 13,
+                                      color: Colors.orange,
+                                      fontWeight: FontWeight.w600,
+                                    ),
+                                  ),
+                                )
+                              : Text(
+                                  subtitleText,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(fontSize: 13),
+                                ),
+                          trailing: Column(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            crossAxisAlignment: CrossAxisAlignment.end,
+                            children: [
+                              if (lastTime.isNotEmpty)
+                                Text(
+                                  lastTime,
+                                  style: const TextStyle(fontSize: 11, color: Colors.grey),
+                                ),
+                              if (unread > 0)
+                                Container(
+                                  margin: const EdgeInsets.only(top: 4),
+                                  padding: const EdgeInsets.all(6),
+                                  decoration: BoxDecoration(color: Colors.red, borderRadius: BorderRadius.circular(12)),
+                                  child: Text('$unread', style: const TextStyle(color: Colors.white, fontSize: 12)),
+                                ),
+                            ],
+                          ),
+                        ),
                       );
                     },
                   );
