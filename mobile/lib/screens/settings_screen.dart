@@ -2,6 +2,7 @@
 import 'package:flutter/material.dart';
 import 'privacy_settings_screen.dart';
 import 'messages_settings_screen.dart';
+import 'profile_screen.dart';
 
 /// Экран «Настройки» — список разделов.
 /// Личные — выше Системных (пользовательское важнее).
@@ -29,6 +30,18 @@ class SettingsScreen extends StatelessWidget {
         children: [
           // ==== ЛИЧНЫЕ ====
           const _SectionHeader('Личные'),
+          ListTile(
+            leading: const Icon(Icons.person_outline),
+            title: const Text('Профиль'),
+            subtitle: const Text('Ваше имя'),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => const ProfileScreen()),
+              );
+            },
+          ),
           ListTile(
             leading: const Icon(Icons.lock_outline),
             title: const Text('Приватность'),
