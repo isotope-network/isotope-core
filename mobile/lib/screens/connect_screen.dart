@@ -1263,35 +1263,22 @@ class _ConnectScreenState extends State<ConnectScreen> {
     if (!verified || confirmed) return false;
     if (_requestSent.contains(peerID)) return true;
 
-    final short = peerID.length > 12 ? peerID.substring(0, 12) : peerID;
-    final displayName = 'Контакт $short';
-    final ok = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: Text('Отправить запрос $displayName?'),
-        content: Text(
-          '$displayName получит уведомление:\n'
-          '«Пользователь хочет добавить вас в контакты».',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('Отмена'),
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('Отправить'),
-          ),
-        ],
-      ),
-    );
+    // Диалог «Как вас представить?» — разовое представление для этого контакта.
+    // Предзаполнено: MyDisplayName (если задано) или PeerID. Текст выделен.
+    final myDisplayName = await LibP2PService.getMyDisplayName();
+    final shortPeerID = peerID.length > 12 ? peerID.substring(0, 12) : peerID;
+    final preset = myDisplayName.isNotEmpty ? myDisplayName : shortPeerID;
 
-    if (ok != true) return true;
-
-    // Bootstrap-handshake: сначала [CONTACT_HELLO] (открытый).
-    // После получения [CONTACT_HELLO_ACK] ChatProvider сам:
-    //   AddContact(B) → sendContactRequest(B) E2E.
-    final result = await LibP2PService.sendContactHello(peerID: peerID);
+    if (!mounted) return true;
+    final displayName = await _showDisplayNameDialog(preset);
+    if (displayName == null) {
+      // Отмена — не отправляем.
+      return true;
+    }
+    // Bootstrap-handshake: ChatProvider сохранит displayName и шлёт [CONTACT_HELLO].
+    // После [CONTACT_HELLO_ACK] ChatProvider отправит [CONTACT_REQUEST] с этим именем.
+    final chatProvider = context.read<ChatProvider>();
+    final result = await chatProvider.startContactHandshake(peerID, displayName);
     if (result.containsKey('error')) {
       LogService.log('ContactHello: ошибка: ${result['error']}');
       if (mounted) {
@@ -1316,10 +1303,59 @@ class _ConnectScreenState extends State<ConnectScreen> {
       LogService.log('ContactHello: timeout для $peerID');
     });
 
-    LogService.log('ContactHello: отправлен $peerID');
+    LogService.log('ContactHello: отправлен $peerID (name="$displayName")');
     return true;
   }
 
+  /// Диалог «Как вас представить?». Предзаполнено, текст выделен.
+  /// Возвращает введённое имя или null (отмена).
+  Future<String?> _showDisplayNameDialog(String preset) async {
+    final controller = TextEditingController(text: preset);
+    controller.selection = TextSelection(
+      baseOffset: 0,
+      extentOffset: preset.length,
+    );
+
+    return showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Как вас представить?'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            TextField(
+              controller: controller,
+              autofocus: true,
+              maxLength: 100,
+              decoration: const InputDecoration(
+                hintText: 'Например: Иван, коллега по работе',
+              ),
+            ),
+            const SizedBox(height: 8),
+            const Text(
+              'Например: Иван, коллега по работе,\n'
+              'Пётр, мы договаривались на ремонт',
+              style: TextStyle(fontSize: 11, color: Colors.grey),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, null),
+            child: const Text('Отмена'),
+          ),
+          TextButton(
+            onPressed: () {
+              final text = controller.text.trim();
+              Navigator.pop(ctx, text.isEmpty ? preset : text);
+            },
+            child: const Text('Отправить'),
+          ),
+        ],
+      ),
+    );
+  }
   @override
   void dispose() {
     final chatProvider = context.read<ChatProvider>();

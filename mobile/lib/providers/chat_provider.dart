@@ -108,6 +108,11 @@ class ChatProvider extends ChangeNotifier {
       StreamController<String>.broadcast();
   Stream<String> get contactRejectStream => _contactRejectController.stream;
 
+  // Разовое представление для [CONTACT_REQUEST].
+  // Пользователь вводит в диалоге — сохраняем до получения ACK,
+  // потом передаём в sendContactRequest. Не меняет MyDisplayName.
+  final Map<String, String> _pendingContactNames = {};
+
   List<Message> get allMessages {
     final list = _messagesMap.values
         .where((m) => m.sender != '🌐 Сеть')
@@ -519,6 +524,28 @@ class ChatProvider extends ChangeNotifier {
     }
   }
 
+  /// Запускает bootstrap-handshake с разовым представлением.
+  /// 1. Сохраняет displayName для peerID (передадим после ACK).
+  /// 2. Шлёт [CONTACT_HELLO].
+  /// Публичный — вызывается из UI после диалога.
+  Future<Map<String, dynamic>> startContactHandshake(
+    String peerID,
+    String displayName,
+  ) async {
+    if (peerID.isEmpty) {
+      return {'error': 'peerID is required'};
+    }
+    _pendingContactNames[peerID] = displayName;
+    LogService.log('ContactHandshake: $peerID, displayName="$displayName"');
+    final result = await LibP2PService.sendContactHello(peerID: peerID);
+    if (result.containsKey('error')) {
+      // Не удалось отправить — сбрасываем имя.
+      _pendingContactNames.remove(peerID);
+      LogService.log('ContactHandshake: sendContactHello failed: ${result['error']}');
+    }
+    return result;
+  }
+
   /// Обрабатывает [CONTACT_HELLO_ACK] (Type=7) от B.
   /// 1. Парсит payload (peerID B, ed25519_pub, x25519_pub, signature).
   /// 2. AddContact(B) — теперь A может шифровать E2E к B.
@@ -550,11 +577,17 @@ class ChatProvider extends ChangeNotifier {
       return;
     }
 
-    LogService.log('HelloAck: от $sender — отправка [CONTACT_REQUEST] E2E');
+    // Разовое представление из диалога (или пусто — Go возьмёт MyDisplayName).
+    final displayName = _pendingContactNames.remove(peerID) ?? '';
+
+    LogService.log('HelloAck: от $sender — отправка [CONTACT_REQUEST] E2E, name="$displayName"');
 
     // У A уже есть B (из QR) — ключи B уже сохранены.
     // AddContact не нужен. Сразу шлём [CONTACT_REQUEST] E2E.
-    final reqResult = await LibP2PService.sendContactRequest(peerID: peerID, name: '');
+    final reqResult = await LibP2PService.sendContactRequest(
+      peerID: peerID,
+      name: displayName,
+    );
     if (reqResult.containsKey('error')) {
       LogService.log('HelloAck: sendContactRequest failed: ${reqResult['error']}');
       return;
