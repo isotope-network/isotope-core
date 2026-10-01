@@ -281,6 +281,29 @@ class _RequestDetailsSheetState extends State<_RequestDetailsSheet> {
                 ),
               ],
             ),
+            const SizedBox(height: 16),
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Icon(
+                  Icons.warning_amber_rounded,
+                  size: 14,
+                  color: Colors.grey.shade600,
+                ),
+                const SizedBox(width: 6),
+                Expanded(
+                  child: Text(
+                    'Незнакомые контакты могут представиться кем угодно.\n'
+                    'Если не уверены — позвоните, напишите в другом мессенджере '
+                    'или попросите QR.',
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: Colors.grey.shade600,
+                    ),
+                  ),
+                ),
+              ],
+            ),
             const SizedBox(height: 24),
             FilledButton.icon(
               onPressed: _processing ? null : _accept,
