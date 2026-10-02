@@ -183,6 +183,12 @@ type Node struct {
 	requestsFile string
 	requests     *RequestsStore
 
+	// DELETED — удалённые контакты (список peerID).
+	// Отдельный файл isotope_deleted.json. Фильтр для UI — удалённые
+	// не показываются, даже если есть в сети / пишут.
+	deletedFile string
+	deleted     *DeletedStore
+
 	// MESSAGE STATUS — статусы своих сообщений (отправлено/доставлено/прочитано).
 	// Ключ — msg_id. Обновляется при получении [DELIVERED]/[READ].
 	// Используется в UI (этап 1.5). Сейчас — только накапливается.
@@ -2449,6 +2455,15 @@ func (n *Node) InitP2P() error {
 		n.requests = NewRequestsStore(n.requestsFile)
 	}
 
+	// Инициализация списка удалённых (отдельно от state).
+	if n.deletedFile == "" && n.stateFile != "" {
+		n.deletedFile = filepath.Join(filepath.Dir(n.stateFile), "isotope_deleted.json")
+	}
+	if n.deletedFile != "" {
+		_ = os.MkdirAll(filepath.Dir(n.deletedFile), 0700)
+		n.deleted = NewDeletedStore(n.deletedFile)
+	}
+
 	// Инициализация пользовательских настроек (отдельно от state).
 	// isotope_settings.json — рядом со state.
 	settingsFile := filepath.Join(filepath.Dir(n.stateFile), "isotope_settings.json")
@@ -3414,6 +3429,13 @@ func (n *Node) AddContact(peerID, ed25519Pub, x25519Pub, signature, localName, r
 		return fmt.Errorf("cannot add self as contact")
 	}
 
+	// Если пользователь явно добавляет контакт (QR) — убрать из удалённых.
+	if n.deleted != nil {
+		if err := n.deleted.RemoveFromDeleted(peerID); err != nil {
+			log.Printf("[DELETED] removeFromDeleted failed for %s: %v", peerID, err)
+		}
+	}
+
 	verified := false
 
 	if signature != "" {
@@ -3461,34 +3483,41 @@ func (n *Node) RenameContact(peerID, localName string) error {
 // RemoveContact — удаляет контакт у меня. У собеседника остаётся.
 // Отправка сообщений контакту после удаления невозможна (encryptForRecipient
 // не найдёт x25519_pub). Также удаляет всю переписку с этим контактом —
-// сообщения в памяти и их статусы.
+// сообщения в памяти и их статусы. И добавляет peerID в список удалённых —
+// чтобы он не вернулся после перезапуска (из P2PService history / UI).
 func (n *Node) RemoveContact(peerID string) error {
 	if n.contacts == nil {
 		return fmt.Errorf("contacts store not initialized")
 	}
 
-	// 1. Удаляем контакт из isotope_contacts.json.
-	if err := n.contacts.Remove(peerID); err != nil {
-		return err
+	// 1. Удаляем контакт из isotope_contacts.json (если есть).
+	// Если контакта нет — не ошибка (удаляем «старый узел»).
+	_ = n.contacts.Remove(peerID)
+
+	// 2. Добавляем в список удалённых.
+	if n.deleted != nil {
+		if err := n.deleted.Add(peerID); err != nil {
+			log.Printf("[DELETED] add failed for %s: %v", peerID, err)
+		}
 	}
 
-	// 2. Удаляем все сообщения с этим peerID (sender или recipient).
+	// 3. Удаляем все сообщения с этим peerID (sender или recipient).
 	all := n.memory.GetAll()
 	for _, m := range all {
 		if m.Sender == peerID || m.Recipient == peerID {
 			n.memory.Remove(m.ID)
 
-			// 3. Удаляем статус сообщения.
+			// 4. Удаляем статус сообщения.
 			n.messageStatusMu.Lock()
 			delete(n.messageStatus, m.ID)
 			n.messageStatusMu.Unlock()
 		}
 	}
 
-	// 4. Сохраняем state (messageStatus изменился).
+	// 5. Сохраняем state (messageStatus изменился).
 	n.scheduleSaveState()
 
-	log.Printf("[CONTACTS] removed %s + messages purged", peerID)
+	log.Printf("[CONTACTS] removed %s + messages purged + added to deleted", peerID)
 	return nil
 }
 
@@ -3529,6 +3558,32 @@ func (n *Node) SetMyDisplayName(name string) error {
 		return fmt.Errorf("settings store not initialized")
 	}
 	return n.settingsStore.SetMyDisplayName(name)
+}
+
+// GetDeletedPeers — возвращает список удалённых peerID (для Dart).
+// Dart фильтрует _discoveredNodes по этому списку — удалённые не показываются.
+func (n *Node) GetDeletedPeers() []string {
+	if n.deleted == nil {
+		return []string{}
+	}
+	return n.deleted.GetAll()
+}
+
+// RemoveFromDeleted — убирает peerID из списка удалённых.
+// Вызывается при QR-возврате контакта.
+func (n *Node) RemoveFromDeleted(peerID string) error {
+	if n.deleted == nil {
+		return fmt.Errorf("deleted store not initialized")
+	}
+	return n.deleted.RemoveFromDeleted(peerID)
+}
+
+// IsDeleted — true, если peerID в списке удалённых.
+func (n *Node) IsDeleted(peerID string) bool {
+	if n.deleted == nil {
+		return false
+	}
+	return n.deleted.IsDeleted(peerID)
 }
 
 // GetMyDisplayName — возвращает представление по умолчанию.

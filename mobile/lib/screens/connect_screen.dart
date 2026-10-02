@@ -91,6 +91,10 @@ class _ConnectScreenState extends State<ConnectScreen> {
   /// Set в памяти (MVP). При перезапуске сбрасывается.
   final Set<String> _requestSent = {};
 
+  /// PeerID удалённых контактов. Фильтр — не показывать в UI.
+  /// Загружается из Go при старте. Обновляется при удалении / QR-возврате.
+  final Set<String> _deletedPeers = {};
+
   String _myPeerId = '';
   bool _announced = false;
 
@@ -209,6 +213,15 @@ class _ConnectScreenState extends State<ConnectScreen> {
 
   /// Загружает контакты из ядра и кеширует их verified-статус.
   Future<void> _loadContactsFromCore() async {
+    // Загружаем список удалённых (для фильтра).
+    try {
+      final deleted = await LibP2PService.getDeletedPeers();
+      if (mounted && deleted.isNotEmpty) {
+        _deletedPeers.clear();
+        _deletedPeers.addAll(deleted);
+      }
+    } catch (_) {}
+
     // Retry: Go-ядро может стартовать позже Flutter-экрана.
     // До 5 попыток с интервалом 2 сек.
     for (int attempt = 0; attempt < 5; attempt++) {
@@ -312,6 +325,7 @@ class _ConnectScreenState extends State<ConnectScreen> {
       int changed = 0;
       for (final node in p2p.discoveredNodes) {
         if (node.peerID == BOOTSTRAP_PEER_ID) continue;
+        if (node.peerID.isNotEmpty && _deletedPeers.contains(node.peerID)) continue; // удалён
         // Upsert: если уже есть — ЗАМЕНИТЬ (обновить статус), не игнорировать.
         final idx = _discoveredNodes.indexWhere((n) => n.key == node.key);
         if (idx >= 0) {
@@ -569,6 +583,7 @@ class _ConnectScreenState extends State<ConnectScreen> {
   void _addNode(NodeInfo node) {
     if (_localIp == null) return;
     if (node.peerID == BOOTSTRAP_PEER_ID) return;
+    if (node.peerID.isNotEmpty && _deletedPeers.contains(node.peerID)) return; // удалён — не показываем
     if (node.currentAddress.startsWith('BLE:')) return;
     if (node.currentAddress.contains(_localIp!)) return;
     if (node.currentAddress.startsWith('127.') || node.currentAddress.startsWith('localhost')) return;
@@ -871,6 +886,7 @@ class _ConnectScreenState extends State<ConnectScreen> {
         _confirmedContacts.remove(peerID);
         _contactNames.remove(peerID);
         _requestSent.remove(peerID);
+        _deletedPeers.add(peerID); // фильтр — не показывать после перезапуска
       });
     }
   }
@@ -1146,6 +1162,14 @@ class _ConnectScreenState extends State<ConnectScreen> {
           );
         }
         return;
+      }
+
+      // Пользователь явно добавляет контакт — снять с «удалённых».
+      if (_deletedPeers.contains(peerId)) {
+        try {
+          await LibP2PService.removeFromDeleted(peerID: peerId);
+          _deletedPeers.remove(peerId);
+        } catch (_) {}
       }
 
       // Сохраняем контакт (если есть ключи).

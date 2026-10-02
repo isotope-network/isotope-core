@@ -495,6 +495,39 @@ func RenameContact(peerID, localName string) string {
 	return `{"status":"ok"}`
 }
 
+// GetDeletedPeers — возвращает JSON-массив удалённых peerID.
+// Dart фильтрует _discoveredNodes по этому списку.
+func GetDeletedPeers() string {
+	nodeMu.Lock()
+	defer nodeMu.Unlock()
+
+	if node == nil {
+		return `[]`
+	}
+	list := node.GetDeletedPeers()
+	data, _ := json.Marshal(list)
+	return string(data)
+}
+
+// RemoveFromDeleted — убирает peerID из списка удалённых.
+// Вызывается при QR-возврате контакта (явное действие пользователя).
+func RemoveFromDeleted(peerID string) string {
+	nodeMu.Lock()
+	defer nodeMu.Unlock()
+
+	if node == nil {
+		return errorJSON("node not started")
+	}
+	if peerID == "" {
+		return errorJSON("peerID is required")
+	}
+	if err := node.RemoveFromDeleted(peerID); err != nil {
+		return errorJSON(err.Error())
+	}
+	addLog("[DELETED] removed %s", peerID)
+	return `{"status":"ok"}`
+}
+
 // RemoveContact — удаляет контакт у меня. У собеседника остаётся.
 func RemoveContact(peerID string) string {
 	nodeMu.Lock()

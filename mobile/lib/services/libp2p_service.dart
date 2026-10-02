@@ -381,6 +381,41 @@ class LibP2PService {
     }
   }
 
+  /// Возвращает список удалённых peerID.
+  /// Используется для фильтра _discoveredNodes — удалённые не показываются.
+  static Future<List<String>> getDeletedPeers() async {
+    try {
+      final response = await _channel.invokeMethod<String>('getDeletedPeers');
+      final raw = response ?? '[]';
+      try {
+        final decoded = jsonDecode(raw);
+        if (decoded is List) {
+          return decoded.map((e) => e.toString()).toList();
+        }
+        return [];
+      } on FormatException {
+        return [];
+      }
+    } on PlatformException {
+      return [];
+    }
+  }
+
+  /// Убирает peerID из списка удалённых.
+  /// Вызывается при QR-возврате контакта.
+  static Future<Map<String, dynamic>> removeFromDeleted({
+    required String peerID,
+  }) async {
+    try {
+      final response = await _channel.invokeMethod<String>('removeFromDeleted', {
+        'peerID': peerID,
+      });
+      return _safeDecode(response);
+    } on PlatformException catch (e) {
+      return {'error': e.message ?? 'platform_error', 'operation': 'remove_from_deleted'};
+    }
+  }
+
 
   /// Возвращает список контактов (JSON-массив).
   static Future<List<dynamic>> getContacts() async {

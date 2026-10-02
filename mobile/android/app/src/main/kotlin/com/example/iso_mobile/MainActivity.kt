@@ -359,6 +359,19 @@ class MainActivity : FlutterActivity() {
                             runOnUiThread { result.success(response) }
                         }.start()
                     }
+                    "getDeletedPeers" -> {
+                        Thread {
+                            val response = Mobile.getDeletedPeers()
+                            runOnUiThread { result.success(response) }
+                        }.start()
+                    }
+                    "removeFromDeleted" -> {
+                        val peerID = call.argument<String>("peerID") ?: ""
+                        Thread {
+                            val response = Mobile.removeFromDeleted(peerID)
+                            runOnUiThread { result.success(response) }
+                        }.start()
+                    }
                     "getFilesDir" -> {
                         result.success(filesDir.absolutePath)
                     }
