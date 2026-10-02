@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../models/message.dart';
 import '../providers/chat_provider.dart';
+import '../utils/time_format.dart';
 import '../services/api_service.dart';
 import '../services/ws_service.dart';
 import '../services/p2p_service.dart';
@@ -367,8 +368,40 @@ class _ChatScreenState extends State<ChatScreen> {
                     final unreadStart = messages.length - unreadCount;
                     final showDivider = !isOwn && unreadCount > 0 && index == unreadStart;
 
+                    // Разделитель дат: показываем, если это первое сообщение
+                    // или день отличается от предыдущего.
+                    bool showDateDivider = false;
+                    if (index == 0) {
+                      showDateDivider = true;
+                    } else {
+                      final prev = parseIsoLocal(messages[index - 1].time);
+                      final cur = parseIsoLocal(msg.time);
+                      if (prev == null || cur == null) {
+                        showDateDivider = true;
+                      } else {
+                        final pDay = DateTime(prev.year, prev.month, prev.day);
+                        final cDay = DateTime(cur.year, cur.month, cur.day);
+                        showDateDivider = pDay != cDay;
+                      }
+                    }
+
                     return Column(
                       children: [
+                        if (showDateDivider)
+                          Container(
+                            padding: const EdgeInsets.symmetric(vertical: 8),
+                            alignment: Alignment.center,
+                            child: Text(
+                              formatDateSeparator(
+                                parseIsoLocal(msg.time) ?? DateTime.now(),
+                              ),
+                              style: TextStyle(
+                                fontSize: 12,
+                                color: Colors.grey.shade600,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ),
                         if (showDivider)
                           Container(
                             padding: const EdgeInsets.symmetric(vertical: 4),

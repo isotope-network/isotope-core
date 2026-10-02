@@ -16,6 +16,7 @@ import '../services/ethics_service.dart';
 import '../services/identity_service.dart';
 import '../services/network_service.dart';
 import '../providers/chat_provider.dart';
+import '../utils/time_format.dart';
 import '../widgets/requests_section.dart';
 import 'chat_screen.dart';
 import 'log_screen.dart';
@@ -1429,7 +1430,7 @@ class _ConnectScreenState extends State<ConnectScreen> {
       final last = chatProvider.getLastMessageForPeer(peerID);
       if (last == null) return '';
 
-      return last.formattedTime;
+      return formatShortTime(last.time);
     } catch (_) {
       return '';
     }

@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../models/message.dart';
+import '../utils/time_format.dart';
 
 class MessageBubble extends StatelessWidget {
   final Message message;
@@ -65,7 +66,7 @@ class MessageBubble extends StatelessWidget {
                         _weightBadge(message.weight),
                         const SizedBox(width: 6),
                         Text(
-                          message.formattedTime,
+                          formatMessageTime(message.time),
                           style: const TextStyle(fontSize: 11, color: Colors.black45),
                         ),
                       ],
