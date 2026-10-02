@@ -819,8 +819,10 @@ class _ConnectScreenState extends State<ConnectScreen> {
       context: context,
       builder: (ctx) => AlertDialog(
         title: Text('Удалить «$displayName»?'),
-        content: const Text(
-          'Контакт будет удалён только у вас. У собеседника он останется.',
+        content: Text(
+          'Контакт и вся переписка будут удалены.\n'
+          'Если $displayName напишет снова — вы не увидите его сообщения.\n'
+          'Чтобы вернуть — попросите новый QR.',
         ),
         actions: [
           TextButton(
@@ -855,6 +857,13 @@ class _ConnectScreenState extends State<ConnectScreen> {
     } else {
       LogService.log('RemoveContact: $peerID удалён в Go');
     }
+
+    // Удаляем переписку из ChatProvider.
+    if (mounted) {
+      final chatProvider = context.read<ChatProvider>();
+      await chatProvider.removePeerMessages(peerID);
+    }
+
     if (mounted) {
       setState(() {
         _discoveredNodes.removeWhere((n) => n.peerID == peerID);
@@ -865,7 +874,6 @@ class _ConnectScreenState extends State<ConnectScreen> {
       });
     }
   }
-
   /// Настройки — открывает экран SettingsScreen.
   /// Передаёт колбэки для системных пунктов (логика остаётся здесь).
   void _showSettingsDialog() {

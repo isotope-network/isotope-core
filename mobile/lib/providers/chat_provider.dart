@@ -829,6 +829,52 @@ class ChatProvider extends ChangeNotifier {
     _safeNotify();
   }
 
+  /// Полное удаление переписки с контактом.
+  /// Удаляет сообщения, статусы, кэш последнего сообщения,
+  /// черновик, непрочитанные. Вызывается при удалении контакта.
+  Future<void> removePeerMessages(String peerID) async {
+    if (peerID.isEmpty) return;
+
+    // 1. Сообщения: sender == peerID (входящие) или recipient == peerID (свои).
+    final toRemove = <String>[];
+    for (final entry in _messagesMap.entries) {
+      final m = entry.value;
+      if (m.sender == peerID || m.recipient == peerID) {
+        toRemove.add(entry.key);
+      }
+    }
+    for (final id in toRemove) {
+      _messagesMap.remove(id);
+      _messageStatuses.remove(id);
+    }
+
+    // 2. Кэш последнего сообщения.
+    _lastMessageByPeer.remove(peerID);
+
+    // 3. Черновик чата.
+    _drafts.remove(peerID);
+
+    // 4. Непрочитанные.
+    _unreadByPeer.remove(peerID);
+    _unreadSnapshotByPeer.remove(peerID);
+
+    // 5. Если этот чат открыт — закрыть.
+    if (_currentOpenPeerID == peerID) {
+      _currentOpenPeerID = null;
+    }
+
+    // 6. Сохранить изменения.
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(_draftsKey, jsonEncode(_drafts));
+    } catch (e) {
+      LogService.log('ChatProvider: removePeerMessages saveDrafts ERROR: $e');
+    }
+
+    LogService.log('ChatProvider: removePeerMessages $peerID — удалено сообщений: ${toRemove.length}');
+    _safeNotify();
+  }
+
   void clearAllMessages() {
     _messagesMap.clear();
     _lastMessageByPeer.clear();

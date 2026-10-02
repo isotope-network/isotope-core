@@ -3460,12 +3460,36 @@ func (n *Node) RenameContact(peerID, localName string) error {
 
 // RemoveContact — удаляет контакт у меня. У собеседника остаётся.
 // Отправка сообщений контакту после удаления невозможна (encryptForRecipient
-// не найдёт x25519_pub).
+// не найдёт x25519_pub). Также удаляет всю переписку с этим контактом —
+// сообщения в памяти и их статусы.
 func (n *Node) RemoveContact(peerID string) error {
 	if n.contacts == nil {
 		return fmt.Errorf("contacts store not initialized")
 	}
-	return n.contacts.Remove(peerID)
+
+	// 1. Удаляем контакт из isotope_contacts.json.
+	if err := n.contacts.Remove(peerID); err != nil {
+		return err
+	}
+
+	// 2. Удаляем все сообщения с этим peerID (sender или recipient).
+	all := n.memory.GetAll()
+	for _, m := range all {
+		if m.Sender == peerID || m.Recipient == peerID {
+			n.memory.Remove(m.ID)
+
+			// 3. Удаляем статус сообщения.
+			n.messageStatusMu.Lock()
+			delete(n.messageStatus, m.ID)
+			n.messageStatusMu.Unlock()
+		}
+	}
+
+	// 4. Сохраняем state (messageStatus изменился).
+	n.scheduleSaveState()
+
+	log.Printf("[CONTACTS] removed %s + messages purged", peerID)
+	return nil
 }
 
 // getPeerReadEnabled — возвращает read_enabled контакта (из isotope_contacts.json).
