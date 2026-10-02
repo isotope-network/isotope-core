@@ -160,6 +160,23 @@ class _ConnectScreenState extends State<ConnectScreen> {
         LogService.log('ConnectScreen: [CONTACT_ACCEPT] от $peerID — перечитать контакты');
         _loadContactsFromCore();
       });
+
+      // Слушаем peerSeen — при отправке сообщения обновляем status → alive.
+      // Устраняет асимметрию: входящие обновляли статус, исходящие — нет.
+      chatProvider.peerSeenStream.listen((peerID) {
+        if (!mounted || peerID.isEmpty) return;
+        final index = _discoveredNodes.indexWhere((n) => n.peerID == peerID);
+        if (index < 0) return;
+        final node = _discoveredNodes[index];
+        if (node.status == NodeStatus.alive) return;
+        setState(() {
+          _discoveredNodes[index] = node.copyWith(
+            status: NodeStatus.alive,
+            lastSeen: DateTime.now(),
+          );
+        });
+        LogService.log('ConnectScreen: peerSeen $peerID → alive');
+      });
     });
 
     // Обработка initialAction — после первого кадра,

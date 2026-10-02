@@ -113,6 +113,13 @@ class ChatProvider extends ChangeNotifier {
       StreamController<String>.broadcast();
   Stream<String> get contactRejectStream => _contactRejectController.stream;
 
+  // Событие: пир был замечен в сети (при отправке ему сообщения).
+  // UI обновляет status узла на alive — устраняет асимметрию,
+  // когда входящее сообщение обновляет статус, а исходящее — нет.
+  final StreamController<String> _peerSeenController =
+      StreamController<String>.broadcast();
+  Stream<String> get peerSeenStream => _peerSeenController.stream;
+
   // Разовое представление для [CONTACT_REQUEST].
   // Пользователь вводит в диалоге — сохраняем до получения ACK,
   // потом передаём в sendContactRequest. Не меняет MyDisplayName.
@@ -1082,6 +1089,11 @@ class ChatProvider extends ChangeNotifier {
     // Отправлено — черновик больше не нужен.
     await clearDraft(_currentNodeIp);
 
+    // Пир точно в сети — уведомляем UI (обновит status → alive).
+    if (_currentNodeIp.isNotEmpty) {
+      _peerSeenController.add(_currentNodeIp);
+    }
+
     return true;
   }
 
@@ -1152,6 +1164,7 @@ class ChatProvider extends ChangeNotifier {
     _contactRequestController.close();
     _contactAcceptController.close();
     _contactRejectController.close();
+    _peerSeenController.close();
     stopLibP2P();
     super.dispose();
   }
