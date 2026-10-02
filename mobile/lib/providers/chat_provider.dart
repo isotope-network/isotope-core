@@ -733,7 +733,7 @@ class ChatProvider extends ChangeNotifier {
           archived: map['archived'] ?? false,
           channel: map['channel'] ?? _activeChannel,
           ttl: map['ttl'] ?? 0,
-          expiresAt: null,
+          expiresAt: Message.parseExpiresAt(map['expiresAt']),
           recipient: map['recipient'] ?? '',
         );
       }).toList();
@@ -789,7 +789,7 @@ class ChatProvider extends ChangeNotifier {
       archived: data['archived'] ?? false,
       channel: data['channel'] ?? _activeChannel,
       ttl: data['ttl'] ?? 0,
-      expiresAt: null,
+      expiresAt: Message.parseExpiresAt(data['expiresAt']),
       recipient: data['recipient'] ?? '',
     );
     _addMessage(msg);

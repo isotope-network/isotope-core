@@ -103,11 +103,21 @@ class Message {
       pendingState: json['pendingState'],
       channel: json['channel'],
       ttl: json['ttl'] ?? 0,
-      expiresAt: json['expiresAt'] != null
-          ? DateTime.tryParse(json['expiresAt'])
-          : null,
+      expiresAt: Message.parseExpiresAt(json['expiresAt']),
       recipient: json['recipient'] ?? '',
     );
+  }
+
+  /// Парсит expiresAt из Go-JSON.
+  /// Go с omitempty на time.Time возвращает "0001-01-01T00:00:00Z"
+  /// вместо пропуска поля. Трактуем как null.
+  static DateTime? parseExpiresAt(dynamic raw) {
+    if (raw == null) return null;
+    final s = raw.toString();
+    if (s.isEmpty) return null;
+    if (s.startsWith('0001-01-01')) return null;
+    final dt = DateTime.tryParse(s);
+    return dt?.toLocal();
   }
 
   Map<String, dynamic> toJson() {

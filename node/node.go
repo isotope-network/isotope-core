@@ -807,7 +807,6 @@ func (n *Node) tryReplicate(msg Message) bool {
 		return false
 	}
 	msg.ReplicatedFrom = msg.Sender
-	msg.ExpiresAt = time.Time{}
 	msg.IsOwn = false
 	data, err := json.Marshal(msg)
 	if err != nil {
@@ -1338,7 +1337,6 @@ func (n *Node) handleStream(stream network.Stream) {
 					replicaMsg.Text = plaintext
 				}
 			}
-			replicaMsg.ExpiresAt = time.Time{}
 			replicaMsg.ReplicatedAt = time.Now()
 			replicaMsg.IsOwn = false
 
@@ -1809,7 +1807,6 @@ func (n *Node) handleReplicaData(data string) {
 						replicaMsg.Text = plaintext
 					}
 				}
-				replicaMsg.ExpiresAt = time.Time{}
 				replicaMsg.ReplicatedAt = time.Now()
 				replicaMsg.IsOwn = false
 				if n.memory.Add(replicaMsg) {
@@ -2024,7 +2021,6 @@ func (n *Node) replicateMessage(msg Message) {
 		return
 	}
 	msg.ReplicatedFrom = msg.Sender
-	msg.ExpiresAt = time.Time{}
 	msg.IsOwn = false
 	data, err := json.Marshal(msg)
 	if err != nil {
