@@ -278,6 +278,20 @@ class ChatProvider extends ChangeNotifier {
     }
   }
 
+  /// Загружает TTL по умолчанию из Go-настроек.
+  /// Вызывается после старта libp2p (когда Go готов).
+  Future<void> loadMyTtl() async {
+    try {
+      final ttl = await LibP2PService.getMyTtl();
+      final parsed = int.tryParse(ttl) ?? 0;
+      _currentTtl = parsed;
+      LogService.log('ChatProvider: loadMyTtl=$_currentTtl');
+      _safeNotify();
+    } catch (e) {
+      LogService.log('ChatProvider: loadMyTtl ERROR: $e');
+    }
+  }
+
   void configure({
     required ApiService api,
     required WsService ws,
@@ -562,6 +576,7 @@ class ChatProvider extends ChangeNotifier {
       await loadMessages();
 
       _startStatusPolling();
+      await loadMyTtl();
 
       _safeNotify();
     } catch (e) {

@@ -350,6 +350,31 @@ class LibP2PService {
     }
   }
 
+  /// Устанавливает TTL по умолчанию (секунды, строкой).
+  /// "0" — Вечно.
+  static Future<Map<String, dynamic>> setMyTtl(String ttl) async {
+    try {
+      final response = await _channel.invokeMethod<String>('setMyTtl', {
+        'ttl': ttl,
+      });
+      return _safeDecode(response);
+    } on PlatformException catch (e) {
+      return {'error': e.message ?? 'platform_error', 'operation': 'set_my_ttl'};
+    }
+  }
+
+  /// Возвращает TTL по умолчанию (секунды, строкой).
+  /// "0" — Вечно.
+  static Future<String> getMyTtl() async {
+    try {
+      final response = await _channel.invokeMethod<String>('getMyTtl');
+      final decoded = _safeDecode(response, fallback: '{"my_ttl":"0"}');
+      return decoded['my_ttl'] as String? ?? '0';
+    } on PlatformException {
+      return '0';
+    }
+  }
+
   /// Устанавливает локальное имя контакта.
   /// Локальное имя — как я называю контакт. Не передаётся в сеть.
   static Future<Map<String, dynamic>> renameContact({

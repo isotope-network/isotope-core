@@ -344,6 +344,19 @@ class MainActivity : FlutterActivity() {
                             runOnUiThread { result.success(response) }
                         }.start()
                     }
+                    "setMyTtl" -> {
+                        val ttl = call.argument<String>("ttl") ?: "0"
+                        Thread {
+                            val response = Mobile.setMyTtl(ttl)
+                            runOnUiThread { result.success(response) }
+                        }.start()
+                    }
+                    "getMyTtl" -> {
+                        Thread {
+                            val response = Mobile.getMyTtl()
+                            runOnUiThread { result.success(response) }
+                        }.start()
+                    }
                     "renameContact" -> {
                         val peerID = call.argument<String>("peerID") ?: ""
                         val localName = call.argument<String>("localName") ?: ""

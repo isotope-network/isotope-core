@@ -3594,6 +3594,24 @@ func (n *Node) GetMyDisplayName() string {
 	return n.settingsStore.GetMyDisplayName()
 }
 
+// SetMyTtl — устанавливает TTL по умолчанию (секунды, строкой).
+// "0" — Вечно.
+func (n *Node) SetMyTtl(ttl string) error {
+	if n.settingsStore == nil {
+		return fmt.Errorf("settings store not initialized")
+	}
+	return n.settingsStore.SetMyTtl(ttl)
+}
+
+// GetMyTtl — возвращает TTL по умолчанию (секунды, строкой).
+// "0" — Вечно.
+func (n *Node) GetMyTtl() string {
+	if n.settingsStore == nil {
+		return "0"
+	}
+	return n.settingsStore.GetMyTtl()
+}
+
 // GetContacts — возвращает все контакты.
 func (n *Node) GetContacts() []Contact {
 	if n.contacts == nil {

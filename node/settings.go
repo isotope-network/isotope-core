@@ -18,6 +18,10 @@ type Settings struct {
 	// MyDisplayName — представление по умолчанию (как меня видеть другим).
 	// Используется в QR и [CONTACT_REQUEST], если не переопределено.
 	MyDisplayName string `json:"my_display_name,omitempty"`
+	// MyTtl — время жизни сообщения по умолчанию (в секундах).
+	// "0" — Вечно (не удалять). Применяется к новым сообщениям.
+	// Хранится как строка (гибко: "10", "60", "3600", "0").
+	MyTtl string `json:"my_ttl,omitempty"`
 }
 
 // SETTINGS_VERSION — текущая версия формата.
@@ -139,6 +143,29 @@ func (s *SettingsStore) GetMyDisplayName() string {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.data.MyDisplayName
+}
+
+// GetMyTtl — возвращает TTL по умолчанию (в секундах, строкой).
+// Пусто или "0" — Вечно.
+func (s *SettingsStore) GetMyTtl() string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.data.MyTtl == "" {
+		return "0"
+	}
+	return s.data.MyTtl
+}
+
+// SetMyTtl — устанавливает TTL по умолчанию и сохраняет в файл.
+func (s *SettingsStore) SetMyTtl(ttl string) error {
+	s.mu.Lock()
+	if s.data.MyTtl == ttl {
+		s.mu.Unlock()
+		return nil
+	}
+	s.data.MyTtl = ttl
+	s.mu.Unlock()
+	return s.Save()
 }
 
 // SetMyDisplayName — устанавливает представление по умолчанию и сохраняет.

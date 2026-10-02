@@ -679,6 +679,7 @@ class _ConnectScreenState extends State<ConnectScreen> {
           builder: (_) => ChatScreen(
             nodeAddress: clean,
             p2pService: p2p,
+            contactName: _displayName(node),
           ),
         ),
       );

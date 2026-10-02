@@ -476,6 +476,36 @@ func GetMyDisplayName() string {
 	return string(data)
 }
 
+// SetMyTtl — устанавливает TTL по умолчанию (секунды, строкой).
+// "0" — Вечно.
+func SetMyTtl(ttl string) string {
+	nodeMu.Lock()
+	defer nodeMu.Unlock()
+
+	if node == nil {
+		return errorJSON("node not started")
+	}
+	if err := node.SetMyTtl(ttl); err != nil {
+		return errorJSON(err.Error())
+	}
+	addLog("[SETTINGS] my_ttl set: %q", ttl)
+	return `{"status":"ok"}`
+}
+
+// GetMyTtl — возвращает TTL по умолчанию (секунды, строкой).
+// "0" — Вечно.
+func GetMyTtl() string {
+	nodeMu.Lock()
+	defer nodeMu.Unlock()
+
+	if node == nil {
+		return `{"my_ttl":"0"}`
+	}
+	ttl := node.GetMyTtl()
+	data, _ := json.Marshal(map[string]string{"my_ttl": ttl})
+	return string(data)
+}
+
 // RenameContact — устанавливает локальное имя контакта.
 // Локальное имя — как я называю контакт. Не передаётся в сеть.
 func RenameContact(peerID, localName string) string {

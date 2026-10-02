@@ -6,20 +6,19 @@ import '../providers/chat_provider.dart';
 import '../services/api_service.dart';
 import '../services/ws_service.dart';
 import '../services/p2p_service.dart';
-import '../services/log_service.dart';
 import '../widgets/message_bubble.dart';
-import 'connect_screen.dart';
-import 'diagnostic_screen.dart';
-import 'log_screen.dart';
 
 class ChatScreen extends StatefulWidget {
   final String nodeAddress;
   final P2PService p2pService;
+  /// Имя контакта для AppBar. Пусто — фолбэк на PeerID.
+  final String contactName;
 
   const ChatScreen({
     super.key,
     required this.nodeAddress,
     required this.p2pService,
+    this.contactName = '',
   });
 
   @override
@@ -35,19 +34,6 @@ class _ChatScreenState extends State<ChatScreen> {
   Timer? _draftThrottleTimer;
   VoidCallback? _providerListener;
   bool _isNearBottom = true;
-
-  final List<Map<String, dynamic>> _ttlOptions = [
-    {'label': '10 секунд', 'value': 10},
-    {'label': '1 минута', 'value': 60},
-    {'label': '10 минут', 'value': 600},
-    {'label': '1 час', 'value': 3600},
-    {'label': '24 часа', 'value': 86400},
-    {'label': '7 дней', 'value': 604800},
-    {'label': '30 дней', 'value': 2592000},
-    {'label': 'Вечно', 'value': 0},
-  ];
-
-  int _selectedTtl = 86400;
 
   @override
   void initState() {
@@ -70,7 +56,6 @@ class _ChatScreenState extends State<ChatScreen> {
       p2p: widget.p2pService,
       nodeIp: widget.nodeAddress,
     );
-    provider.setTtl(_selectedTtl);
     provider.setChatOpen(true, provider.currentNodeIp);
 
     // Восстанавливаем черновик для этого чата (если есть).
@@ -163,24 +148,6 @@ class _ChatScreenState extends State<ChatScreen> {
     }
   }
 
-  void _openDiagnostics() {
-    Navigator.push(
-      context,
-      MaterialPageRoute(
-        builder: (_) => DiagnosticScreen(nodeAddress: widget.nodeAddress),
-      ),
-    );
-  }
-
-  void _openLogs() {
-    Navigator.push(
-      context,
-      MaterialPageRoute(
-        builder: (_) => const LogScreen(),
-      ),
-    );
-  }
-
   @override
   void dispose() {
     // Немедленно сохраняем черновик (не ждём throttle).
@@ -229,48 +196,6 @@ class _ChatScreenState extends State<ChatScreen> {
 
     // Отправляем через provider (с учётом задержки).
     provider.sendMessage(text);
-  }
-
-  Future<void> _disconnect() async {
-    if (mounted) {
-      Navigator.pop(context);
-    }
-  }
-
-  void _showTtlPicker() {
-    showModalBottomSheet(
-      context: context,
-      builder: (ctx) {
-        return ListView(
-          shrinkWrap: true,
-          children: [
-            const Padding(
-              padding: EdgeInsets.all(16),
-              child: Text(
-                'Исчезновение сообщения',
-                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18),
-              ),
-            ),
-            ..._ttlOptions.map((option) {
-              final isSelected = option['value'] == _selectedTtl;
-              return ListTile(
-                title: Text(option['label']),
-                leading: Icon(
-                  isSelected ? Icons.radio_button_checked : Icons.radio_button_off,
-                  color: isSelected ? Colors.green : Colors.grey,
-                ),
-                onTap: () {
-                  setState(() {
-                    _selectedTtl = option['value'];
-                  });
-                  Navigator.pop(ctx);
-                },
-              );
-            }),
-          ],
-        );
-      },
-    );
   }
 
   /// Строка для pending-сообщения: бабл с кругом и «Отмена».
@@ -377,11 +302,6 @@ class _ChatScreenState extends State<ChatScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final ttlLabel = _ttlOptions.firstWhere(
-      (o) => o['value'] == _selectedTtl,
-      orElse: () => {'label': '24 часа', 'value': 86400},
-    )['label'];
-
     return PopScope(
       canPop: true,
       onPopInvokedWithResult: (didPop, result) async {
@@ -400,46 +320,15 @@ class _ChatScreenState extends State<ChatScreen> {
       },
       child: Scaffold(
       appBar: AppBar(
-        title: Consumer<ChatProvider>(
-          builder: (_, provider, __) {
-            return Text('ИСО [${widget.nodeAddress}]');
-          },
+        title: Text(
+          widget.contactName.isNotEmpty
+              ? widget.contactName
+              : 'Контакт ${widget.nodeAddress.length > 12 ? widget.nodeAddress.substring(0, 12) : widget.nodeAddress}',
+          overflow: TextOverflow.ellipsis,
         ),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.timer_outlined),
-            onPressed: _showTtlPicker,
-            tooltip: 'TTL: $ttlLabel',
-          ),
-          IconButton(
-            icon: const Icon(Icons.bug_report),
-            onPressed: _openDiagnostics,
-            tooltip: 'Диагностика',
-          ),
-          IconButton(
-            icon: const Icon(Icons.article_outlined),
-            onPressed: _openLogs,
-            tooltip: 'Журнал',
-          ),
-          IconButton(
-            icon: const Icon(Icons.link_off),
-            onPressed: _disconnect,
-            tooltip: 'Отключиться',
-          ),
-        ],
       ),
       body: Column(
         children: [
-          Container(
-            width: double.infinity,
-            color: Colors.blue.shade50,
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 2),
-            child: Text(
-              'TTL: $ttlLabel',
-              style: const TextStyle(fontSize: 11),
-              textAlign: TextAlign.center,
-            ),
-          ),
           if (context.watch<ChatProvider>().error != null)
             Container(
               width: double.infinity,

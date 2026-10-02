@@ -2,13 +2,75 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../providers/chat_provider.dart';
+import '../services/libp2p_service.dart';
+import '../services/log_service.dart';
 
 /// Экран «Сообщения».
-/// Пока — задержка отправки. TTL — заглушка (перенесём из chat_screen).
-class MessagesSettingsScreen extends StatelessWidget {
+/// Задержка отправки + TTL (время удаления сообщений).
+class MessagesSettingsScreen extends StatefulWidget {
   const MessagesSettingsScreen({super.key});
 
+  @override
+  State<MessagesSettingsScreen> createState() => _MessagesSettingsScreenState();
+}
+
+class _MessagesSettingsScreenState extends State<MessagesSettingsScreen> {
   static const List<int> _delayOptions = [0, 3, 5, 10];
+
+  // TTL-опции: секунды.
+  static const List<Map<String, dynamic>> _ttlOptions = [
+    {'label': '10 секунд', 'value': '10'},
+    {'label': '1 минута', 'value': '60'},
+    {'label': '10 минут', 'value': '600'},
+    {'label': '1 час', 'value': '3600'},
+    {'label': '24 часа', 'value': '86400'},
+    {'label': '7 дней', 'value': '604800'},
+    {'label': '30 дней', 'value': '2592000'},
+    {'label': 'Вечно', 'value': '0'},
+  ];
+
+  String _myTtl = '0';
+  bool _loading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadTtl();
+  }
+
+  Future<void> _loadTtl() async {
+    try {
+      final ttl = await LibP2PService.getMyTtl();
+      if (mounted) {
+        setState(() {
+          _myTtl = ttl.isEmpty ? '0' : ttl;
+          _loading = false;
+        });
+      }
+    } catch (e) {
+      LogService.log('MessagesSettings: load TTL error: $e');
+      if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  Future<void> _setTtl(String ttl) async {
+    setState(() => _myTtl = ttl);
+    try {
+      final result = await LibP2PService.setMyTtl(ttl);
+      if (result.containsKey('error')) {
+        LogService.log('MessagesSettings: set TTL error: ${result['error']}');
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Ошибка: ${result['error']}')),
+          );
+        }
+      } else {
+        LogService.log('MessagesSettings: my_ttl=$ttl');
+      }
+    } catch (e) {
+      LogService.log('MessagesSettings: set TTL exception: $e');
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -58,7 +120,7 @@ class MessagesSettingsScreen extends StatelessWidget {
               const Padding(
                 padding: EdgeInsets.fromLTRB(16, 16, 16, 8),
                 child: Text(
-                  'ВРЕМЯ УДАЛЕНИЯ (TTL)',
+                  'ВРЕМЯ УДАЛЕНИЯ',
                   style: TextStyle(
                     fontSize: 12,
                     fontWeight: FontWeight.bold,
@@ -67,12 +129,35 @@ class MessagesSettingsScreen extends StatelessWidget {
                   ),
                 ),
               ),
-              const ListTile(
-                leading: Icon(Icons.timer_outlined),
-                title: Text('Время удаления'),
-                subtitle: Text('Скоро — перенос из чата'),
-                enabled: false,
+              const Padding(
+                padding: EdgeInsets.symmetric(horizontal: 16),
+                child: Text(
+                  'Через какое время сообщения удаляются у вас и у собеседника.',
+                  style: TextStyle(fontSize: 13, color: Colors.grey),
+                ),
               ),
+              if (_loading)
+                const Padding(
+                  padding: EdgeInsets.all(16),
+                  child: Center(child: CircularProgressIndicator()),
+                )
+              else
+                ..._ttlOptions.map((option) {
+                  final value = option['value'] as String;
+                  final label = option['label'] as String;
+                  final isSelected = _myTtl == value;
+                  return RadioListTile<String>(
+                    title: Text(label),
+                    value: value,
+                    // ignore: deprecated_member_use
+                    groupValue: _myTtl,
+                    // ignore: deprecated_member_use
+                    onChanged: (v) {
+                      if (v != null) _setTtl(v);
+                    },
+                    selected: isSelected,
+                  );
+                }),
             ],
           );
         },
