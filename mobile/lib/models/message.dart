@@ -16,6 +16,9 @@ class Message {
   final String? channel;
   final int ttl;
   final DateTime? expiresAt;
+  /// PeerID получателя (для адресных сообщений).
+  /// Пусто — broadcast или история без адресата.
+  final String recipient;
 
   Message({
     required this.id,
@@ -34,6 +37,7 @@ class Message {
     this.channel,
     this.ttl = 0,
     this.expiresAt,
+    this.recipient = '',
   });
 
   /// Копия с обновлённым messageStatus.
@@ -55,6 +59,7 @@ class Message {
       channel: channel,
       ttl: ttl,
       expiresAt: expiresAt,
+      recipient: recipient,
     );
   }
 
@@ -77,6 +82,7 @@ class Message {
       channel: channel,
       ttl: ttl,
       expiresAt: expiresAt,
+      recipient: recipient,
     );
   }
 
@@ -100,6 +106,7 @@ class Message {
       expiresAt: json['expiresAt'] != null
           ? DateTime.tryParse(json['expiresAt'])
           : null,
+      recipient: json['recipient'] ?? '',
     );
   }
 
@@ -121,6 +128,7 @@ class Message {
       'channel': channel,
       'ttl': ttl,
       'expiresAt': expiresAt?.toIso8601String(),
+      'recipient': recipient,
     };
   }
 

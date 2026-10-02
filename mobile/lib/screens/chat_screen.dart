@@ -32,6 +32,7 @@ class _ChatScreenState extends State<ChatScreen> {
   StreamSubscription? _messageSub;
   StreamSubscription? _recallSub;
   Timer? _ttlTimer;
+  Timer? _draftThrottleTimer;
   VoidCallback? _providerListener;
   bool _isNearBottom = true;
 
@@ -70,10 +71,22 @@ class _ChatScreenState extends State<ChatScreen> {
       nodeIp: widget.nodeAddress,
     );
     provider.setTtl(_selectedTtl);
-    provider.setChatOpen(true);
+    provider.setChatOpen(true, provider.currentNodeIp);
+
+    // Восстанавливаем черновик для этого чата (если есть).
+    final peerID = provider.currentNodeIp;
+    if (provider.hasDraftFor(peerID)) {
+      _controller.text = provider.draftFor(peerID);
+      _controller.selection = TextSelection.fromPosition(
+        TextPosition(offset: _controller.text.length),
+      );
+    }
 
     _scrollController.addListener(_onScroll);
     _scrollToBottom();
+
+    // Подписка на изменения текста — сохраняем черновик (throttle 500 мс).
+    _controller.addListener(_onControllerChanged);
 
     _providerListener = () {
       if (mounted) {
@@ -122,6 +135,26 @@ class _ChatScreenState extends State<ChatScreen> {
     _scrollToBottom();
   }
 
+  /// Вызывается при каждом изменении текста в поле ввода.
+  /// Throttle 500 мс: сохраняем черновик не чаще раза в 500 мс.
+  void _onControllerChanged() {
+    if (!mounted) return;
+    _draftThrottleTimer?.cancel();
+    _draftThrottleTimer = Timer(const Duration(milliseconds: 500), () {
+      _flushDraft();
+    });
+  }
+
+  /// Немедленно сохраняет текущий черновик.
+  /// Вызывается из throttle-таймера и при dispose.
+  void _flushDraft() {
+    if (!mounted) return;
+    final provider = context.read<ChatProvider>();
+    final peerID = provider.currentNodeIp;
+    if (peerID.isEmpty) return;
+    provider.saveDraft(peerID, _controller.text);
+  }
+
   void _onScroll() {
     if (_scrollController.hasClients) {
       final pos = _scrollController.position.pixels;
@@ -150,11 +183,16 @@ class _ChatScreenState extends State<ChatScreen> {
 
   @override
   void dispose() {
+    // Немедленно сохраняем черновик (не ждём throttle).
+    _draftThrottleTimer?.cancel();
+    _flushDraft();
+
     final provider = context.read<ChatProvider>();
     if (_providerListener != null) {
       provider.removeListener(_providerListener!);
     }
     _scrollController.removeListener(_onScroll);
+    _controller.removeListener(_onControllerChanged);
     _controller.dispose();
     _scrollController.dispose();
     _messageSub?.cancel();
@@ -235,7 +273,8 @@ class _ChatScreenState extends State<ChatScreen> {
     );
   }
 
-  /// Строка для pending-сообщения: полупрозрачный бабл с кругом и «Отмена».
+  /// Строка для pending-сообщения: бабл с кругом и «Отмена».
+  /// Без полупрозрачности — текст должен быть читаем.
   Widget _buildPendingRow(Message msg, ChatProvider provider) {
     final secs = provider.pendingSecondsFor(msg.id) ?? 0;
     final delay = provider.sendDelay;
@@ -254,11 +293,9 @@ class _ChatScreenState extends State<ChatScreen> {
         child: const Icon(Icons.delete, color: Colors.white),
       ),
       child: Align(
-      alignment: Alignment.centerRight,
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-        child: Opacity(
-          opacity: 0.6,
+        alignment: Alignment.centerRight,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
           child: Container(
             constraints: BoxConstraints(
               maxWidth: MediaQuery.of(context).size.width * 0.7,
@@ -334,7 +371,6 @@ class _ChatScreenState extends State<ChatScreen> {
             ),
           ),
         ),
-      ),
       ),
     );
   }
@@ -418,9 +454,9 @@ class _ChatScreenState extends State<ChatScreen> {
           Expanded(
             child: Consumer<ChatProvider>(
               builder: (_, provider, __) {
-                final messages = provider.messages;
+                final messages = provider.messagesFor(provider.currentNodeIp);
                 final pending = provider.pendingMessages;
-                final unreadCount = provider.unreadSnapshot;
+                final unreadCount = provider.unreadSnapshotFor(provider.currentNodeIp);
                 final totalCount = messages.length + pending.length;
 
                 if (totalCount == 0) {

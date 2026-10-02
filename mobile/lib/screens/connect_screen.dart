@@ -25,6 +25,12 @@ import 'settings_screen.dart';
 const String DEFAULT_BOOTSTRAP_ADDR = '/ip4/186.246.31.176/tcp/9001/ws/p2p/QmR8u5YFdcKpM2onQvk7KV5qioai87aysi9JWLdV1LX1bi';
 const String BOOTSTRAP_PEER_ID = 'QmR8u5YFdcKpM2onQvk7KV5qioai87aysi9JWLdV1LX1bi';
 
+/// Вид подзаголовка контакта в списке.
+/// - draft: есть черновик сообщения (зелёный).
+/// - request: verified && !confirmed (оранжевый, «Отправить запрос?»).
+/// - normal: последнее сообщение (серый).
+enum ContactSubtitleKind { draft, request, normal }
+
 /// Префикс для QR-кодов ISOTOPE — чтобы отличать от чужих QR.
 const String ISOTOPE_QR_PREFIX = 'isotope:';
 
@@ -116,6 +122,7 @@ class _ConnectScreenState extends State<ConnectScreen> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       final chatProvider = context.read<ChatProvider>();
+
       chatProvider.helloAckStream.listen((ack) {
         if (!mounted) return;
         LogService.log('ConnectScreen: helloAck для ${ack.peerID}');
@@ -646,7 +653,7 @@ class _ConnectScreenState extends State<ConnectScreen> {
 
       if (mounted) {
         final chatProvider = context.read<ChatProvider>();
-        chatProvider.setChatOpen(false);
+        chatProvider.setChatOpen(false, '');
         LogService.log('ConnectScreen: возврат из чата → setChatOpen(false)');
         setState(() {});
       }
@@ -1423,12 +1430,37 @@ class _ConnectScreenState extends State<ConnectScreen> {
     return const Icon(Icons.warning_amber_rounded, size: 16, color: Colors.orange);
   }
 
-  /// Возвращает текст подзаголовка для контакта.
-  /// Если verified && !confirmed — предложение отправить запрос.
-  /// Иначе — стандартный preview последнего сообщения.
+  /// Возвращает вид подзаголовка (для цвета и действия).
+  ContactSubtitleKind _contactSubtitleKind(NodeInfo node, ChatProvider chatProvider) {
+    final peerID = node.peerID;
+    if (peerID.isEmpty) return ContactSubtitleKind.normal;
+
+    // Черновик — высший приоритет. Моё незавершённое действие.
+    if (chatProvider.hasDraftFor(peerID)) {
+      return ContactSubtitleKind.draft;
+    }
+
+    final verified = _verifiedContacts[peerID] ?? false;
+    final confirmed = _confirmedContacts[peerID] ?? false;
+    if (verified && !confirmed && !_requestSent.contains(peerID)) {
+      return ContactSubtitleKind.request;
+    }
+
+    return ContactSubtitleKind.normal;
+  }
+
+  /// Возвращает текст подзаголовка.
+  /// Приоритет: черновик → «Отправить запрос?» / «Ожидание» → последнее сообщение.
   String? _contactStatusSubtitle(NodeInfo node, ChatProvider chatProvider) {
     final peerID = node.peerID;
     if (peerID.isEmpty) return _lastMessagePreview(node, chatProvider);
+
+    // Черновик — начало текста.
+    if (chatProvider.hasDraftFor(peerID)) {
+      final draft = chatProvider.draftFor(peerID);
+      final short = draft.length > 30 ? '${draft.substring(0, 30)}...' : draft;
+      return 'Черновик: «$short»';
+    }
 
     final verified = _verifiedContacts[peerID] ?? false;
     final confirmed = _confirmedContacts[peerID] ?? false;
@@ -1666,12 +1698,20 @@ class _ConnectScreenState extends State<ConnectScreen> {
                     itemCount: _discoveredNodes.length,
                     itemBuilder: (context, index) {
                       final node = _discoveredNodes[index];
-                      final unread = chatProvider.unreadCount;
+                      final unread = chatProvider.unreadFor(node.peerID);
                       final displayName = _displayName(node);
                       final subtitleText = _contactStatusSubtitle(node, chatProvider) ?? '';
                       final lastTime = _lastMessageTime(node, chatProvider);
                       final badge = _verifiedBadge(node.peerID);
-                      final showRequestLink = subtitleText == 'Не подтверждён. Отправить запрос?';
+                      final kind = _contactSubtitleKind(node, chatProvider);
+                      final subtitleColor = kind == ContactSubtitleKind.draft
+                          ? Colors.green
+                          : kind == ContactSubtitleKind.request
+                              ? Colors.orange
+                              : Colors.grey.shade700;
+                      final subtitleWeight = kind == ContactSubtitleKind.normal
+                          ? FontWeight.normal
+                          : FontWeight.w600;
 
                       return InkWell(
                         onLongPress: () => _showContactActions(node),
@@ -1698,17 +1738,17 @@ class _ConnectScreenState extends State<ConnectScreen> {
                               ],
                             ],
                           ),
-                          subtitle: showRequestLink
+                          subtitle: kind == ContactSubtitleKind.request
                               ? GestureDetector(
                                   onTap: () => _onSubtitleTap(node),
                                   child: Text(
                                     subtitleText,
                                     maxLines: 1,
                                     overflow: TextOverflow.ellipsis,
-                                    style: const TextStyle(
+                                    style: TextStyle(
                                       fontSize: 13,
-                                      color: Colors.orange,
-                                      fontWeight: FontWeight.w600,
+                                      color: subtitleColor,
+                                      fontWeight: subtitleWeight,
                                     ),
                                   ),
                                 )
@@ -1716,7 +1756,11 @@ class _ConnectScreenState extends State<ConnectScreen> {
                                   subtitleText,
                                   maxLines: 1,
                                   overflow: TextOverflow.ellipsis,
-                                  style: const TextStyle(fontSize: 13),
+                                  style: TextStyle(
+                                    fontSize: 13,
+                                    color: subtitleColor,
+                                    fontWeight: subtitleWeight,
+                                  ),
                                 ),
                           trailing: Column(
                             mainAxisAlignment: MainAxisAlignment.center,

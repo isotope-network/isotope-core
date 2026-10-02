@@ -46,9 +46,13 @@ class ChatProvider extends ChangeNotifier {
   bool _libp2pAvailable = false;
   String _libp2pPeerId = '';
   StreamSubscription? _messageSub;
-  int _unreadCount = 0;
-  int _unreadSnapshot = 0;
-  bool _chatOpen = false;
+
+  // Непрочитанные — по чату (peerID).
+  // Открыл чат A → сбросил только A.
+  final Map<String, int> _unreadByPeer = {};
+  final Map<String, int> _unreadSnapshotByPeer = {};
+  // Текущий открытый чат (peerID). null — чат закрыт.
+  String? _currentOpenPeerID;
 
   // Кэш: PeerID → последнее сообщение от этого пира
   final Map<String, Message> _lastMessageByPeer = {};
@@ -79,9 +83,10 @@ class ChatProvider extends ChangeNotifier {
   int _sendDelay = 0;
   static const String _sendDelayKey = 'send_delay';
 
-  // Черновик (один на текущий чат). Текст + время.
-  String? _draftText;
-  static const String _draftKey = 'draft_text';
+  // Черновики — по одному на чат. Ключ — PeerID получателя.
+  // Хранятся в SharedPreferences как JSON-строка под ключом 'drafts'.
+  final Map<String, String> _drafts = {};
+  static const String _draftsKey = 'drafts';
 
   // Контакт-протокол: [CONTACT_HELLO_ACK] от B.
   // При получении ChatProvider сам делает AddContact + sendContactRequest,
@@ -134,6 +139,7 @@ class ChatProvider extends ChangeNotifier {
             channel: m.channel,
             ttl: m.ttl,
             expiresAt: m.expiresAt,
+            recipient: m.recipient,
           );
         })
         .toList();
@@ -142,6 +148,44 @@ class ChatProvider extends ChangeNotifier {
   }
 
   List<Message> get messages => allMessages;
+
+  /// Сообщения для конкретного чата (peerID).
+  /// Свои: recipient == peerID. Входящие: sender == peerID.
+  List<Message> messagesFor(String peerID) {
+    if (peerID.isEmpty) return allMessages;
+    final list = _messagesMap.values
+        .where((m) => m.sender != '🌐 Сеть')
+        .where((m) => !m.isExpired)
+        .where((m) {
+          if (m.isOwn || _ownMessageIds.contains(m.id)) {
+            return m.recipient == peerID;
+          }
+          return m.sender == peerID;
+        })
+        .map((m) {
+          return Message(
+            id: m.id,
+            text: m.text,
+            plainText: m.plainText,
+            version: m.version,
+            sender: m.sender,
+            time: m.time,
+            isOwn: _ownMessageIds.contains(m.id) || m.isOwn,
+            score: m.score,
+            weight: m.weight,
+            archived: m.archived,
+            deliveryStatus: m.deliveryStatus,
+            messageStatus: _messageStatuses[m.id],
+            channel: m.channel,
+            ttl: m.ttl,
+            expiresAt: m.expiresAt,
+            recipient: m.recipient,
+          );
+        })
+        .toList();
+    list.sort((a, b) => a.time.compareTo(b.time));
+    return list;
+  }
 
   String get activeChannel => _activeChannel;
   String get currentNodeIp => _currentNodeIp;
@@ -153,8 +197,13 @@ class ChatProvider extends ChangeNotifier {
   bool get libp2pStarted => _libp2pStarted;
   bool get libp2pAvailable => _libp2pAvailable;
   String get libp2pPeerId => _libp2pPeerId;
-  int get unreadCount => _unreadCount;
-  int get unreadSnapshot => _unreadSnapshot;
+
+  /// Непрочитанные для указанного чата.
+  int unreadFor(String peerID) => _unreadByPeer[peerID] ?? 0;
+
+  /// Снимок непрочитанных (до обнуления) для указанного чата.
+  int unreadSnapshotFor(String peerID) => _unreadSnapshotByPeer[peerID] ?? 0;
+
   List<String> get logs => LogService.logs;
 
   // ==== PENDING / DELAY / DRAFT ====
@@ -171,11 +220,12 @@ class ChatProvider extends ChangeNotifier {
   /// Секунды до отправки для указанного ID.
   int? pendingSecondsFor(String id) => _pendingSeconds[id];
 
-  /// Есть ли черновик.
-  bool get hasDraft => _draftText != null && _draftText!.isNotEmpty;
+  /// Есть ли черновик для указанного чата.
+  bool hasDraftFor(String peerID) =>
+      peerID.isNotEmpty && (_drafts[peerID]?.isNotEmpty ?? false);
 
-  /// Текст черновика (или null).
-  String? get draftText => _draftText;
+  /// Текст черновика для указанного чата (или пустая строка).
+  String draftFor(String peerID) => _drafts[peerID] ?? '';
 
   /// Возвращает последнее сообщение от указанного пира (O(1))
   Message? getLastMessageForPeer(String peerID) => _lastMessageByPeer[peerID];
@@ -191,17 +241,19 @@ class ChatProvider extends ChangeNotifier {
     LogService.log('ChatProvider: setP2P вызван');
   }
 
-  void setChatOpen(bool open, {bool preserveUnread = false}) {
+  /// Открывает/закрывает чат с указанным peerID.
+  /// При открытии — снимок непрочитанных, сброс счётчика, отправка [READ].
+  void setChatOpen(bool open, String peerID) {
     if (open) {
-      _unreadSnapshot = _unreadCount;
-      _chatOpen = true;
-      _unreadCount = 0;
-      // Отправить [READ] для всех непрочитанных входящих.
+      _currentOpenPeerID = peerID;
+      _unreadSnapshotByPeer[peerID] = _unreadByPeer[peerID] ?? 0;
+      _unreadByPeer[peerID] = 0;
+      // [READ] — только для текущего peerID.
       for (final msg in _messagesMap.values) {
         _sendReadFor(msg);
       }
     } else {
-      _chatOpen = false;
+      _currentOpenPeerID = null;
     }
     _safeNotify();
   }
@@ -212,7 +264,7 @@ class ChatProvider extends ChangeNotifier {
       _loadOwnMessageIds();
       _loadReadSent();
       _loadSendDelay();
-      _loadDraft();
+      _loadDrafts();
       _startLibP2P(bootstrapPeers: bootstrapPeers);
     } catch (e) {
       LogService.log('ChatProvider: initialize() ERROR: $e');
@@ -332,37 +384,55 @@ class ChatProvider extends ChangeNotifier {
     _safeNotify();
   }
 
-  Future<void> _loadDraft() async {
+  Future<void> _loadDrafts() async {
     try {
       final prefs = await SharedPreferences.getInstance();
-      final txt = prefs.getString(_draftKey);
-      if (txt != null && txt.isNotEmpty) {
-        _draftText = txt;
-        LogService.log('ChatProvider: загружен черновик (${txt.length} симв.)');
+
+      // Одноразовая чистка старого формата (одиночный draft_text).
+      if (prefs.containsKey('draft_text')) {
+        await prefs.remove('draft_text');
+        LogService.log('ChatProvider: удалён старый ключ draft_text');
       }
+
+      final raw = prefs.getString(_draftsKey);
+      if (raw == null || raw.isEmpty) return;
+      final decoded = jsonDecode(raw);
+      if (decoded is Map) {
+        _drafts.clear();
+        decoded.forEach((k, v) {
+          if (k is String && v is String && v.isNotEmpty) {
+            _drafts[k] = v;
+          }
+        });
+      }
+      LogService.log('ChatProvider: загружено черновиков: ${_drafts.length}');
     } catch (e) {
-      LogService.log('ChatProvider: _loadDraft ERROR: $e');
+      LogService.log('ChatProvider: _loadDrafts ERROR: $e');
     }
   }
 
-  Future<void> _saveDraft(String? text) async {
-    _draftText = text;
+  /// Сохраняет черновик для указанного чата.
+  /// Пустой текст — удаляет черновик (не храним мусор).
+  /// Публичный — вызывается из UI при наборе текста.
+  Future<void> saveDraft(String peerID, String text) async {
+    if (peerID.isEmpty) return;
+    if (text.isEmpty) {
+      _drafts.remove(peerID);
+    } else {
+      _drafts[peerID] = text;
+    }
     try {
       final prefs = await SharedPreferences.getInstance();
-      if (text == null || text.isEmpty) {
-        await prefs.remove(_draftKey);
-      } else {
-        await prefs.setString(_draftKey, text);
-      }
+      await prefs.setString(_draftsKey, jsonEncode(_drafts));
     } catch (e) {
-      LogService.log('ChatProvider: _saveDraft ERROR: $e');
+      LogService.log('ChatProvider: saveDraft ERROR: $e');
     }
     _safeNotify();
   }
 
-  /// Очистить черновик.
-  Future<void> clearDraft() async {
-    await _saveDraft(null);
+  /// Очищает черновик для указанного чата.
+  Future<void> clearDraft(String peerID) async {
+    await saveDraft(peerID, '');
   }
 
   void _subscribeToMessages() {
@@ -425,10 +495,12 @@ class ChatProvider extends ChangeNotifier {
         }
 
         LogService.log('P2P: входящее от $sender: ${map['text']}');
-        if (!_chatOpen) {
-          _unreadCount++;
+
+        if (!isOwn && sender != _currentOpenPeerID) {
+          _unreadByPeer[sender] = (_unreadByPeer[sender] ?? 0) + 1;
           _safeNotify();
         }
+
         addExternalMessage(map);
       } catch (e) {
         LogService.log('P2P: ошибка парсинга: $e');
@@ -640,6 +712,7 @@ class ChatProvider extends ChangeNotifier {
           channel: map['channel'] ?? _activeChannel,
           ttl: map['ttl'] ?? 0,
           expiresAt: null,
+          recipient: map['recipient'] ?? '',
         );
       }).toList();
     } catch (_) {
@@ -657,8 +730,9 @@ class ChatProvider extends ChangeNotifier {
     _safeNotify();
   }
 
-  void resetUnread() {
-    _unreadCount = 0;
+  /// Сбрасывает непрочитанные для указанного чата.
+  void resetUnreadFor(String peerID) {
+    _unreadByPeer[peerID] = 0;
     _safeNotify();
   }
 
@@ -694,6 +768,7 @@ class ChatProvider extends ChangeNotifier {
       channel: data['channel'] ?? _activeChannel,
       ttl: data['ttl'] ?? 0,
       expiresAt: null,
+      recipient: data['recipient'] ?? '',
     );
     _addMessage(msg);
   }
@@ -719,11 +794,9 @@ class ChatProvider extends ChangeNotifier {
 
     LogService.log('ADD id=${msg.id} len=${msg.id.length} text="${msg.text}" sender=${msg.sender}');
 
-    // [READ] отправляется не здесь, а при открытии чата (setChatOpen).
-    // Если чат уже открыт — отправим сразу (пользователь видит сообщение).
-    if (_chatOpen) {
-      _sendReadFor(msg);
-    }
+    // [READ] отправляется при открытии чата (setChatOpen).
+    // Если чат с этим sender открыт — отправим сразу.
+    _sendReadFor(msg);
 
     _safeNotify();
   }
@@ -732,13 +805,12 @@ class ChatProvider extends ChangeNotifier {
   /// Вызывается: при открытии чата (для всех непрочитанных) и при
   /// получении нового сообщения, если чат открыт.
   void _sendReadFor(Message msg) {
-    if (msg.isOwn
-        || msg.sender == 'Вы'
-        || msg.sender == '🌐 Сеть'
-        || msg.sender.isEmpty
-        || _readSent.contains(msg.id)) {
-      return;
-    }
+    if (msg.isOwn) return;                              // свои — не читаем
+    if (msg.sender == 'Вы') return;
+    if (msg.sender == '🌐 Сеть') return;
+    if (msg.sender.isEmpty) return;
+    if (msg.sender != _currentOpenPeerID) return;       // не текущий чат
+    if (_readSent.contains(msg.id)) return;
     _readSent.add(msg.id);
     // Fire-and-forget: не блокируем UI.
     LibP2PService.sendRead(ref: msg.id, recipient: msg.sender).then((r) {
@@ -843,6 +915,7 @@ class ChatProvider extends ChangeNotifier {
       ttl: _currentTtl,
       expiresAt: null,
       pendingState: 'pending',
+      recipient: _currentNodeIp,
     );
 
     _pendingMessages[pendingId] = msg;
@@ -900,7 +973,7 @@ class ChatProvider extends ChangeNotifier {
     _pendingTimers.remove(first.id);
     _pendingSeconds.remove(first.id);
     _pendingMessages.remove(first.id);
-    await _saveDraft(first.text);
+    await saveDraft(_currentNodeIp, first.text);
     LogService.log('ChatProvider: pending → draft (${first.text.length} симв.)');
     _safeNotify();
   }
@@ -950,6 +1023,7 @@ class ChatProvider extends ChangeNotifier {
       channel: _activeChannel,
       ttl: _currentTtl,
       expiresAt: _currentTtl > 0 ? DateTime.now().add(Duration(seconds: _currentTtl)) : null,
+      recipient: _currentNodeIp,
     );
 
     _addMessage(msg);
@@ -958,6 +1032,9 @@ class ChatProvider extends ChangeNotifier {
     _messageStatuses[msg.id] = 1;
 
     p2p?.saveOwnMessage(_currentNodeIp, msg);
+
+    // Отправлено — черновик больше не нужен.
+    await clearDraft(_currentNodeIp);
 
     return true;
   }
