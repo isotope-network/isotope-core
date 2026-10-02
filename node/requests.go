@@ -129,8 +129,12 @@ func (rs *RequestsStore) saveLocked() error {
 	return nil
 }
 
-// Add — добавляет или обновляет запрос по ID.
-// Если запрос с таким ID уже есть — обновляет поля.
+// Add — добавляет или обновляет запрос.
+// Дедупликация:
+//   1. По ID — тот же запрос (msg_id) обновляется.
+//   2. По peerID + pending — новый [CONTACT_REQUEST] от того же пира
+//      (перезапуск A → новый msg_id) обновляет старый pending-запрос,
+//      а не создаёт дубликат.
 // Status нового запроса — pending.
 func (rs *RequestsStore) Add(req ContactRequest) error {
 	rs.mu.Lock()
@@ -150,11 +154,24 @@ func (rs *RequestsStore) Add(req ContactRequest) error {
 		req.Status = RequestStatusPending
 	}
 
+	// 1. Точное совпадение по ID.
 	for i := range rs.requests {
 		if rs.requests[i].ID == req.ID {
 			rs.requests[i] = req
 			log.Printf("[REQUESTS] updated %s (peer=%s)", req.ID, req.PeerID)
 			return rs.saveLocked()
+		}
+	}
+
+	// 2. Тот же peerID с pending — обновить существующий.
+	if req.Status == RequestStatusPending {
+		for i := range rs.requests {
+			if rs.requests[i].PeerID == req.PeerID &&
+				rs.requests[i].Status == RequestStatusPending {
+				rs.requests[i] = req
+				log.Printf("[REQUESTS] updated (dedup peer) %s (peer=%s)", req.ID, req.PeerID)
+				return rs.saveLocked()
+			}
 		}
 	}
 
@@ -256,4 +273,5 @@ func (rs *RequestsStore) Remove(id string) error {
 	log.Printf("[REQUESTS] removed %s", id)
 	return rs.saveLocked()
 }
+
 // node/requests.go
