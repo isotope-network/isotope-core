@@ -205,8 +205,10 @@ func GetMessages() string {
 	return string(data)
 }
 
-// SendMessage — отправляет сообщение всем пирам
-func SendMessage(text string, ttl int) string {
+// SendMessage — отправляет сообщение всем пирам (broadcast).
+// period: "10s" | "1m" | ... | "forever".
+// mode: "" (при forever) | "after_read" | "hard".
+func SendMessage(text string, period string, mode string) string {
 	nodeMu.Lock()
 	defer nodeMu.Unlock()
 
@@ -214,7 +216,7 @@ func SendMessage(text string, ttl int) string {
 		return errorJSON("node not started")
 	}
 
-	id, err := node.SendMessage(text, ttl)
+	id, err := node.SendMessage(text, period, mode)
 	if err != nil {
 		return errorJSON(err.Error())
 	}
@@ -222,8 +224,10 @@ func SendMessage(text string, ttl int) string {
 	return fmt.Sprintf(`{"status":"ok","id":"%s"}`, id)
 }
 
-// SendToPeer — отправляет сообщение конкретному пиру по PeerID
-func SendToPeer(peerID string, text string, ttl int) string {
+// SendToPeer — отправляет сообщение конкретному пиру по PeerID.
+// period: "10s" | "1m" | ... | "forever".
+// mode: "" (при forever) | "after_read" | "hard".
+func SendToPeer(peerID string, text string, period string, mode string) string {
 	nodeMu.Lock()
 	defer nodeMu.Unlock()
 
@@ -231,7 +235,7 @@ func SendToPeer(peerID string, text string, ttl int) string {
 		return errorJSON("node not started")
 	}
 
-	id, err := node.SendToPeer(peerID, text, ttl)
+	id, err := node.SendToPeer(peerID, text, period, mode)
 	if err != nil {
 		return errorJSON(err.Error())
 	}
@@ -476,33 +480,38 @@ func GetMyDisplayName() string {
 	return string(data)
 }
 
-// SetMyTtl — устанавливает TTL по умолчанию (секунды, строкой).
-// "0" — Вечно.
-func SetMyTtl(ttl string) string {
+// SetTtl — устанавливает период и режим удаления сообщений.
+// period: "10s" | "1m" | "10m" | "1h" | "24h" | "7d" | "30d" | "forever".
+// mode: "" (при forever) | "after_read" | "hard".
+func SetTtl(period string, mode string) string {
 	nodeMu.Lock()
 	defer nodeMu.Unlock()
 
 	if node == nil {
 		return errorJSON("node not started")
 	}
-	if err := node.SetMyTtl(ttl); err != nil {
+	if err := node.SetTtl(period, mode); err != nil {
 		return errorJSON(err.Error())
 	}
-	addLog("[SETTINGS] my_ttl set: %q", ttl)
+	addLog("[SETTINGS] ttl set: period=%q mode=%q", period, mode)
 	return `{"status":"ok"}`
 }
 
-// GetMyTtl — возвращает TTL по умолчанию (секунды, строкой).
-// "0" — Вечно.
-func GetMyTtl() string {
+// GetTtl — возвращает период и режим удаления сообщений.
+// Формат: {"ttl_period":"...","ttl_mode":"..."}.
+// ttl_mode — "" при forever.
+func GetTtl() string {
 	nodeMu.Lock()
 	defer nodeMu.Unlock()
 
 	if node == nil {
-		return `{"my_ttl":"0"}`
+		return `{"ttl_period":"forever","ttl_mode":""}`
 	}
-	ttl := node.GetMyTtl()
-	data, _ := json.Marshal(map[string]string{"my_ttl": ttl})
+	period, mode := node.GetTtl()
+	data, _ := json.Marshal(map[string]string{
+		"ttl_period": period,
+		"ttl_mode":   mode,
+	})
 	return string(data)
 }
 

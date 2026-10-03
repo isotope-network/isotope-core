@@ -40,7 +40,8 @@ class ChatProvider extends ChangeNotifier {
   bool _wsConnected = false;
   bool _loading = false;
   String? _error;
-  int _currentTtl = 86400;
+  String _ttlPeriod = 'forever';
+  String _ttlMode = '';
 
   bool _libp2pStarted = false;
   bool _libp2pAvailable = false;
@@ -144,7 +145,8 @@ class ChatProvider extends ChangeNotifier {
             deliveryStatus: m.deliveryStatus,
             messageStatus: _messageStatuses[m.id],
             channel: m.channel,
-            ttl: m.ttl,
+            ttlPeriodSeconds: m.ttlPeriodSeconds,
+            ttlMode: m.ttlMode,
             expiresAt: m.expiresAt,
             recipient: m.recipient,
           );
@@ -184,7 +186,8 @@ class ChatProvider extends ChangeNotifier {
             deliveryStatus: m.deliveryStatus,
             messageStatus: _messageStatuses[m.id],
             channel: m.channel,
-            ttl: m.ttl,
+            ttlPeriodSeconds: m.ttlPeriodSeconds,
+            ttlMode: m.ttlMode,
             expiresAt: m.expiresAt,
             recipient: m.recipient,
           );
@@ -196,7 +199,25 @@ class ChatProvider extends ChangeNotifier {
 
   String get activeChannel => _activeChannel;
   String get currentNodeIp => _currentNodeIp;
-  int get currentTtl => _currentTtl;
+  String get ttlPeriod => _ttlPeriod;
+  String get ttlMode => _ttlMode;
+
+  /// Возвращает период TTL в секундах для UI.
+  int get currentTtl => _ttlPeriodSeconds(_ttlPeriod);
+
+  int _ttlPeriodSeconds(String period) {
+    switch (period) {
+      case '10s': return 10;
+      case '1m': return 60;
+      case '10m': return 600;
+      case '1h': return 3600;
+      case '24h': return 86400;
+      case '7d': return 604800;
+      case '30d': return 2592000;
+      default: return 0;
+    }
+  }
+
   List<Map<String, dynamic>> get channels => _channels;
   bool get wsConnected => _wsConnected;
   bool get loading => _loading;
@@ -280,15 +301,15 @@ class ChatProvider extends ChangeNotifier {
 
   /// Загружает TTL по умолчанию из Go-настроек.
   /// Вызывается после старта libp2p (когда Go готов).
-  Future<void> loadMyTtl() async {
+  Future<void> loadTtl() async {
     try {
-      final ttl = await LibP2PService.getMyTtl();
-      final parsed = int.tryParse(ttl) ?? 0;
-      _currentTtl = parsed;
-      LogService.log('ChatProvider: loadMyTtl=$_currentTtl');
+      final ttl = await LibP2PService.getTtl();
+      _ttlPeriod = ttl['ttl_period'] ?? 'forever';
+      _ttlMode = ttl['ttl_mode'] ?? '';
+      LogService.log('ChatProvider: loadTtl period=$_ttlPeriod mode=$_ttlMode');
       _safeNotify();
     } catch (e) {
-      LogService.log('ChatProvider: loadMyTtl ERROR: $e');
+      LogService.log('ChatProvider: loadTtl ERROR: $e');
     }
   }
 
@@ -577,7 +598,7 @@ class ChatProvider extends ChangeNotifier {
 
       _startStatusPolling();
       _startPurgeTimer();
-      await loadMyTtl();
+      await loadTtl();
 
       _safeNotify();
     } catch (e) {
@@ -715,7 +736,7 @@ class ChatProvider extends ChangeNotifier {
       return {'error': 'libp2p not started'};
     }
     try {
-      return await LibP2PService.send(text: text, ttl: _currentTtl);
+      return await LibP2PService.send(text: text, period: _ttlPeriod, mode: _ttlMode);
     } catch (e) {
       return {'error': e.toString()};
     }
@@ -742,7 +763,8 @@ class ChatProvider extends ChangeNotifier {
           weight: (map['weight'] as num?)?.toDouble() ?? 0.5,
           archived: map['archived'] ?? false,
           channel: map['channel'] ?? _activeChannel,
-          ttl: map['ttl'] ?? 0,
+          ttlPeriodSeconds: map['ttl_period_s'] ?? 0,
+          ttlMode: map['ttl_mode'] ?? '',
           expiresAt: Message.parseExpiresAt(map['expiresAt']),
           recipient: map['recipient'] ?? '',
         );
@@ -757,8 +779,9 @@ class ChatProvider extends ChangeNotifier {
     _safeNotify();
   }
 
-  void setTtl(int ttl) {
-    _currentTtl = ttl;
+  void setTtl(String period, String mode) {
+    _ttlPeriod = period;
+    _ttlMode = mode;
     _safeNotify();
   }
 
@@ -798,7 +821,8 @@ class ChatProvider extends ChangeNotifier {
       weight: (data['weight'] as num?)?.toDouble() ?? 0.5,
       archived: data['archived'] ?? false,
       channel: data['channel'] ?? _activeChannel,
-      ttl: data['ttl'] ?? 0,
+      ttlPeriodSeconds: data['ttl_period_s'] ?? 0,
+      ttlMode: data['ttl_mode'] ?? '',
       expiresAt: Message.parseExpiresAt(data['expiresAt']),
       recipient: data['recipient'] ?? '',
     );
@@ -1021,6 +1045,7 @@ class ChatProvider extends ChangeNotifier {
     final pendingId = 'pending_${DateTime.now().microsecondsSinceEpoch}';
     final now = DateTime.now().toUtc().toIso8601String();
 
+    final ttlSec = _ttlPeriodSeconds(_ttlPeriod);
     final msg = Message(
       id: pendingId,
       text: text,
@@ -1031,7 +1056,8 @@ class ChatProvider extends ChangeNotifier {
       weight: weight,
       archived: false,
       channel: _activeChannel,
-      ttl: _currentTtl,
+      ttlPeriodSeconds: ttlSec,
+      ttlMode: _ttlMode,
       expiresAt: null,
       pendingState: 'pending',
       recipient: _currentNodeIp,
@@ -1106,7 +1132,8 @@ class ChatProvider extends ChangeNotifier {
       response = await LibP2PService.sendToPeer(
         peerID: _currentNodeIp,
         text: text,
-        ttl: _currentTtl,
+        period: _ttlPeriod,
+        mode: _ttlMode,
       );
     } else {
       response = await sendViaLibP2P(text);
@@ -1130,6 +1157,7 @@ class ChatProvider extends ChangeNotifier {
 
     final now = DateTime.now().toUtc().toIso8601String();
 
+    final ttlSec = _ttlPeriodSeconds(_ttlPeriod);
     final msg = Message(
       id: msgId.toString(),
       text: text,
@@ -1140,8 +1168,11 @@ class ChatProvider extends ChangeNotifier {
       weight: weight,
       archived: false,
       channel: _activeChannel,
-      ttl: _currentTtl,
-      expiresAt: _currentTtl > 0 ? DateTime.now().add(Duration(seconds: _currentTtl)) : null,
+      ttlPeriodSeconds: ttlSec,
+      ttlMode: _ttlMode,
+      expiresAt: (ttlSec > 0 && _ttlMode == 'hard')
+          ? DateTime.now().add(Duration(seconds: ttlSec))
+          : null,
       recipient: _currentNodeIp,
     );
 
@@ -1196,7 +1227,8 @@ class ChatProvider extends ChangeNotifier {
       weight: newWeight,
       archived: target.archived,
       channel: target.channel,
-      ttl: target.ttl,
+      ttlPeriodSeconds: target.ttlPeriodSeconds,
+      ttlMode: target.ttlMode,
       expiresAt: target.expiresAt,
     );
 

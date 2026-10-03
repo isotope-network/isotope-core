@@ -59,10 +59,12 @@ type Message struct {
 	ReplicatedFrom string      `json:"replicatedFrom"`         // от какого узла реплика
 	ReplicatedAt   time.Time   `json:"replicatedAt"`           // когда реплицировано
 	Recipient      string      `json:"recipient,omitempty"`    // адресат: PeerID (v1), позже — хеш E2E-ключа
-	Version        int         `json:"version,omitempty"`      // 0 = история/broadcast, 2 = E2E
-	Type           MessageType `json:"type,omitempty"`         // 0 = обычное, 1-5 = служебные (контакт-протокол)
-	Ref            string      `json:"ref,omitempty"`          // msg_id для delivered/read; request_id для accept/reject
-	ReadEnabled    *bool       `json:"read_enabled,omitempty"` // настройка отправителя; nil — не передано
+	Version          int         `json:"version,omitempty"`       // 0 = история/broadcast, 2 = E2E
+	Type             MessageType `json:"type,omitempty"`          // 0 = обычное, 1-5 = служебные (контакт-протокол)
+	Ref              string      `json:"ref,omitempty"`           // msg_id для delivered/read; request_id для accept/reject
+	ReadEnabled      *bool       `json:"read_enabled,omitempty"`  // настройка отправителя; nil — не передано
+	TtlPeriodSeconds int         `json:"ttl_period_s,omitempty"`  // период TTL в секундах; 0 — forever
+	TtlMode          string      `json:"ttl_mode,omitempty"`      // "after_read" | "hard" | ""
 }
 
 // Memory — потокобезопасное хранилище сообщений (без лимита)

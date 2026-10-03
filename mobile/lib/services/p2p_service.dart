@@ -322,7 +322,8 @@ class P2PService {
       'time': msg.time,
       'isOwn': true,
       'weight': msg.weight,
-      'ttl': msg.ttl,
+      'ttlPeriodSeconds': msg.ttlPeriodSeconds,
+      'ttlMode': msg.ttlMode,
       'expiresAt': msg.expiresAt?.toIso8601String(),
     });
     await _saveHistory();

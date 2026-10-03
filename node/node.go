@@ -2093,22 +2093,22 @@ func (n *Node) requestRestore() {
 }
 
 func (n *Node) processMessageWithTTL(msg string, senderID string, isOwn bool, expiresAt time.Time) {
-	n.processMessageInternal(msg, senderID, isOwn, expiresAt, "", "", 0, "", TypeMessage, false)
+	n.processMessageInternal(msg, senderID, isOwn, expiresAt, "", "", 0, "", TypeMessage, false, 0, "")
 }
 
 func (n *Node) processMessageWithID(msg string, senderID string, isOwn bool, expiresAt time.Time, id string) {
-	n.processMessageInternal(msg, senderID, isOwn, expiresAt, id, "", 0, "", TypeMessage, false)
+	n.processMessageInternal(msg, senderID, isOwn, expiresAt, id, "", 0, "", TypeMessage, false, 0, "")
 }
 
 // processMessageWithRecipient — отправляет адресное сообщение конкретному получателю.
 // version — 2 для E2E-шифрованных.
 func (n *Node) processMessageWithRecipient(msg string, senderID string, isOwn bool, expiresAt time.Time, id string, recipient string, version int) {
-	n.processMessageInternal(msg, senderID, isOwn, expiresAt, id, recipient, version, "", TypeMessage, false)
+	n.processMessageInternal(msg, senderID, isOwn, expiresAt, id, recipient, version, "", TypeMessage, false, 0, "")
 }
 
 func (n *Node) processMessageWithModeAndTTL(msg string, senderID string, isOwn bool, mode int, expiresAt time.Time) {
 	if mode == 0 || n.host == nil {
-		n.processMessageInternal(msg, senderID, isOwn, expiresAt, "", "", 0, "", TypeMessage, false)
+		n.processMessageInternal(msg, senderID, isOwn, expiresAt, "", "", 0, "", TypeMessage, false, 0, "")
 		return
 	}
 	relayCount := 4
@@ -2118,7 +2118,7 @@ func (n *Node) processMessageWithModeAndTTL(msg string, senderID string, isOwn b
 	}
 	relays := n.selectRelays(relayCount)
 	if len(relays) < relayCount {
-		n.processMessageInternal(msg, senderID, isOwn, expiresAt, "", "", 0, "", TypeMessage, false)
+		n.processMessageInternal(msg, senderID, isOwn, expiresAt, "", "", 0, "", TypeMessage, false, 0, "")
 		return
 	}
 	n.sendViaRelayChain(relays, msg)
@@ -2183,10 +2183,10 @@ func (n *Node) sendViaRelayChain(relays []string, msg string) {
 }
 
 func (n *Node) processMessage(msg string, senderID string, isOwn bool) {
-	n.processMessageInternal(msg, senderID, isOwn, time.Time{}, "", "", 0, "", TypeMessage, false)
+	n.processMessageInternal(msg, senderID, isOwn, time.Time{}, "", "", 0, "", TypeMessage, false, 0, "")
 }
 
-func (n *Node) processMessageInternal(msg string, senderID string, isOwn bool, expiresAt time.Time, providedID string, recipient string, version int, plainText string, msgType MessageType, viaBootstrap bool) {
+func (n *Node) processMessageInternal(msg string, senderID string, isOwn bool, expiresAt time.Time, providedID string, recipient string, version int, plainText string, msgType MessageType, viaBootstrap bool, ttlPeriodSeconds int, ttlMode string) {
 	inputVector := textToVector(msg)
 	outputVector, _ := forward(inputVector, n.layers)
 	answer := vectorToText(outputVector)
@@ -2266,21 +2266,23 @@ func (n *Node) processMessageInternal(msg string, senderID string, isOwn bool, e
 
 	readEnabled := n.myReadEnabled
 	newMsg := Message{
-		ID:          id,
-		Text:        msg,
-		PlainText:   plainText,
-		Sender:      senderID,
-		Recipient:   recipient,
-		Version:     version,
-		Type:        msgType,
-		Time:        time.Now().UTC().Format("2006-01-02T15:04:05"),
-		IsOwn:       isOwn,
-		Score:       0,
-		Weight:      initialWeight,
-		Priority:    priority,
-		Mode:        0,
-		ExpiresAt:   expiresAt,
-		ReadEnabled: &readEnabled,
+		ID:               id,
+		Text:             msg,
+		PlainText:        plainText,
+		Sender:           senderID,
+		Recipient:        recipient,
+		Version:          version,
+		Type:             msgType,
+		Time:             time.Now().UTC().Format("2006-01-02T15:04:05"),
+		IsOwn:            isOwn,
+		Score:            0,
+		Weight:           initialWeight,
+		Priority:         priority,
+		Mode:             0,
+		ExpiresAt:        expiresAt,
+		ReadEnabled:      &readEnabled,
+		TtlPeriodSeconds: ttlPeriodSeconds,
+		TtlMode:          ttlMode,
 	}
 	if n.memory.Add(newMsg) {
 		// Если это наше E2E-сообщение — фиксируем статус StatusSent.
@@ -2911,22 +2913,23 @@ func (n *Node) ConnectToPeerWithFallback(multiaddrs []string) (string, error) {
 }
 
 // SendMessage — отправляет сообщение всем пирам (broadcast).
-func (n *Node) SendMessage(text string, ttl int) (string, error) {
+func (n *Node) SendMessage(text string, ttlPeriod string, ttlMode string) (string, error) {
 	if n.host == nil {
 		return "", fmt.Errorf("node not started")
 	}
+	ttlSeconds := parsePeriod(ttlPeriod)
 	var expiresAt time.Time
-	if ttl > 0 {
-		expiresAt = time.Now().Add(time.Duration(ttl) * time.Second)
+	if ttlSeconds > 0 && ttlMode == "hard" {
+		expiresAt = time.Now().Add(time.Duration(ttlSeconds) * time.Second)
 	}
 	id := generateMsgID(text)
-	n.processMessageWithID(text, n.host.ID().String(), true, expiresAt, id)
+	n.processMessageInternal(text, n.host.ID().String(), true, expiresAt, id, "", 0, "", TypeMessage, false, ttlSeconds, ttlMode)
 	return id, nil
 }
 
 // SendToPeer — отправляет сообщение конкретному пиру (адресно).
 // Требуется контакт с x25519_pub. Шифрует через box.Seal (Version=2).
-func (n *Node) SendToPeer(peerID string, text string, ttl int) (string, error) {
+func (n *Node) SendToPeer(peerID string, text string, ttlPeriod string, ttlMode string) (string, error) {
 	if n.host == nil {
 		return "", fmt.Errorf("node not started")
 	}
@@ -2939,14 +2942,13 @@ func (n *Node) SendToPeer(peerID string, text string, ttl int) (string, error) {
 		return "", fmt.Errorf("encrypt failed: %w", err)
 	}
 
+	ttlSeconds := parsePeriod(ttlPeriod)
 	var expiresAt time.Time
-	if ttl > 0 {
-		expiresAt = time.Now().Add(time.Duration(ttl) * time.Second)
+	if ttlSeconds > 0 && ttlMode == "hard" {
+		expiresAt = time.Now().Add(time.Duration(ttlSeconds) * time.Second)
 	}
 	id := generateMsgID(text)
-	// plainText = text (открытый) — сохраняется для UI.
-	// В сеть уходит encrypted (Text). PlainText — только для локального показа.
-	n.processMessageInternal(encrypted, n.host.ID().String(), true, expiresAt, id, peerID, MESSAGE_VERSION_E2E, text, TypeMessage, false)
+	n.processMessageInternal(encrypted, n.host.ID().String(), true, expiresAt, id, peerID, MESSAGE_VERSION_E2E, text, TypeMessage, false, ttlSeconds, ttlMode)
 	return id, nil
 }
 
@@ -3077,7 +3079,7 @@ func (n *Node) SendContactRequest(recipient, displayName string) (string, error)
 	}
 
 	id := generateMsgID(fmt.Sprintf("req:%s:%d", recipient, time.Now().UnixNano()))
-	n.processMessageInternal(encrypted, n.host.ID().String(), true, time.Time{}, id, recipient, MESSAGE_VERSION_E2E, "", TypeContactRequest, true)
+	n.processMessageInternal(encrypted, n.host.ID().String(), true, time.Time{}, id, recipient, MESSAGE_VERSION_E2E, "", TypeContactRequest, true, 0, "")
 
 	return id, nil
 }
@@ -3203,7 +3205,7 @@ func (n *Node) sendContactControl(msgType MessageType, requestID, recipient stri
 	}
 
 	id := generateMsgID(fmt.Sprintf("%s:%s:%d", msgTypeString(msgType), requestID, time.Now().UnixNano()))
-	n.processMessageInternal(encrypted, n.host.ID().String(), true, time.Time{}, id, recipient, MESSAGE_VERSION_E2E, "", msgType, true)
+	n.processMessageInternal(encrypted, n.host.ID().String(), true, time.Time{}, id, recipient, MESSAGE_VERSION_E2E, "", msgType, true, 0, "")
 
 	return nil
 }
@@ -3602,22 +3604,34 @@ func (n *Node) GetMyDisplayName() string {
 	return n.settingsStore.GetMyDisplayName()
 }
 
-// SetMyTtl — устанавливает TTL по умолчанию (секунды, строкой).
-// "0" — Вечно.
-func (n *Node) SetMyTtl(ttl string) error {
+// SetTtl — устанавливает период и режим удаления сообщений.
+// period: "10s" | "1m" | "10m" | "1h" | "24h" | "7d" | "30d" | "forever".
+// mode: nil (при forever) | "after_read" | "hard".
+func (n *Node) SetTtl(period string, mode string) error {
 	if n.settingsStore == nil {
 		return fmt.Errorf("settings store not initialized")
 	}
-	return n.settingsStore.SetMyTtl(ttl)
+	var modePtr *string
+	if mode != "" && period != "forever" {
+		m := mode
+		modePtr = &m
+	}
+	return n.settingsStore.SetTtl(period, modePtr)
 }
 
-// GetMyTtl — возвращает TTL по умолчанию (секунды, строкой).
-// "0" — Вечно.
-func (n *Node) GetMyTtl() string {
+// GetTtl — возвращает период и режим удаления сообщений.
+// period: "10s" | "1m" | ... | "forever".
+// mode: "" (при forever) | "after_read" | "hard".
+func (n *Node) GetTtl() (string, string) {
 	if n.settingsStore == nil {
-		return "0"
+		return "forever", ""
 	}
-	return n.settingsStore.GetMyTtl()
+	period, modePtr := n.settingsStore.GetTtl()
+	mode := ""
+	if modePtr != nil {
+		mode = *modePtr
+	}
+	return period, mode
 }
 
 // GetContacts — возвращает все контакты.

@@ -71,12 +71,14 @@ class LibP2PService {
 
   static Future<Map<String, dynamic>> send({
     required String text,
-    int ttl = 0,
+    String period = 'forever',
+    String mode = '',
   }) async {
     try {
       final response = await _channel.invokeMethod<String>('send', {
         'text': text,
-        'ttl': ttl,
+        'period': period,
+        'mode': mode,
       });
       return _safeDecode(response);
     } on PlatformException catch (e) {
@@ -89,13 +91,15 @@ class LibP2PService {
   static Future<Map<String, dynamic>> sendToPeer({
     required String peerID,
     required String text,
-    int ttl = 0,
+    String period = 'forever',
+    String mode = '',
   }) async {
     try {
       final response = await _channel.invokeMethod<String>('sendToPeer', {
         'peerID': peerID,
         'text': text,
-        'ttl': ttl,
+        'period': period,
+        'mode': mode,
       });
       return _safeDecode(response);
     } on PlatformException catch (e) {
@@ -350,28 +354,35 @@ class LibP2PService {
     }
   }
 
-  /// Устанавливает TTL по умолчанию (секунды, строкой).
-  /// "0" — Вечно.
-  static Future<Map<String, dynamic>> setMyTtl(String ttl) async {
+  /// Устанавливает период и режим удаления сообщений.
+  /// period: "10s" | "1m" | "10m" | "1h" | "24h" | "7d" | "30d" | "forever".
+  /// mode: "" (при forever) | "after_read" | "hard".
+  static Future<Map<String, dynamic>> setTtl(String period, String mode) async {
     try {
-      final response = await _channel.invokeMethod<String>('setMyTtl', {
-        'ttl': ttl,
+      final response = await _channel.invokeMethod<String>('setTtl', {
+        'period': period,
+        'mode': mode,
       });
       return _safeDecode(response);
     } on PlatformException catch (e) {
-      return {'error': e.message ?? 'platform_error', 'operation': 'set_my_ttl'};
+      return {'error': e.message ?? 'platform_error', 'operation': 'set_ttl'};
     }
   }
 
-  /// Возвращает TTL по умолчанию (секунды, строкой).
-  /// "0" — Вечно.
-  static Future<String> getMyTtl() async {
+  /// Возвращает период и режим удаления сообщений.
+  /// Формат: {"ttl_period":"...","ttl_mode":"..."}.
+  /// ttl_mode — "" при forever.
+  static Future<Map<String, String>> getTtl() async {
     try {
-      final response = await _channel.invokeMethod<String>('getMyTtl');
-      final decoded = _safeDecode(response, fallback: '{"my_ttl":"0"}');
-      return decoded['my_ttl'] as String? ?? '0';
+      final response = await _channel.invokeMethod<String>('getTtl');
+      final decoded = _safeDecode(response,
+          fallback: '{"ttl_period":"forever","ttl_mode":""}');
+      return {
+        'ttl_period': decoded['ttl_period'] as String? ?? 'forever',
+        'ttl_mode': decoded['ttl_mode'] as String? ?? '',
+      };
     } on PlatformException {
-      return '0';
+      return {'ttl_period': 'forever', 'ttl_mode': ''};
     }
   }
 

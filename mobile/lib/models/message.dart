@@ -14,7 +14,8 @@ class Message {
   final int? messageStatus; // 1=sent, 2=delivered, 3=hidden, 4=read (из Go-ядра)
   final String? pendingState; // null | 'pending' | 'draft' | 'error'
   final String? channel;
-  final int ttl;
+  final int ttlPeriodSeconds;
+  final String ttlMode;
   final DateTime? expiresAt;
   /// PeerID получателя (для адресных сообщений).
   /// Пусто — broadcast или история без адресата.
@@ -35,7 +36,8 @@ class Message {
     this.messageStatus,
     this.pendingState,
     this.channel,
-    this.ttl = 0,
+    this.ttlPeriodSeconds = 0,
+    this.ttlMode = '',
     this.expiresAt,
     this.recipient = '',
   });
@@ -57,7 +59,8 @@ class Message {
       messageStatus: status,
       pendingState: pendingState,
       channel: channel,
-      ttl: ttl,
+      ttlPeriodSeconds: ttlPeriodSeconds,
+      ttlMode: ttlMode,
       expiresAt: expiresAt,
       recipient: recipient,
     );
@@ -80,7 +83,8 @@ class Message {
       messageStatus: messageStatus,
       pendingState: state,
       channel: channel,
-      ttl: ttl,
+      ttlPeriodSeconds: ttlPeriodSeconds,
+      ttlMode: ttlMode,
       expiresAt: expiresAt,
       recipient: recipient,
     );
@@ -102,7 +106,8 @@ class Message {
       messageStatus: json['messageStatus'],
       pendingState: json['pendingState'],
       channel: json['channel'],
-      ttl: json['ttl'] ?? 0,
+      ttlPeriodSeconds: json['ttlPeriodSeconds'] ?? 0,
+      ttlMode: json['ttlMode'] ?? '',
       expiresAt: Message.parseExpiresAt(json['expiresAt']),
       recipient: json['recipient'] ?? '',
     );
@@ -136,7 +141,8 @@ class Message {
       'messageStatus': messageStatus,
       'pendingState': pendingState,
       'channel': channel,
-      'ttl': ttl,
+      'ttlPeriodSeconds': ttlPeriodSeconds,
+      'ttlMode': ttlMode,
       'expiresAt': expiresAt?.toIso8601String(),
       'recipient': recipient,
     };
@@ -262,11 +268,12 @@ class Message {
 
   /// TTL-метка
   String get ttlLabel {
-    if (ttl == 0) return '∞';
-    if (ttl < 60) return '${ttl}с';
-    if (ttl < 3600) return '${ttl ~/ 60}м';
-    if (ttl < 86400) return '${ttl ~/ 3600}ч';
-    return '${ttl ~/ 86400}д';
+    final t = ttlPeriodSeconds;
+    if (t == 0) return '∞';
+    if (t < 60) return '${t}с';
+    if (t < 3600) return '${t ~/ 60}м';
+    if (t < 86400) return '${t ~/ 3600}ч';
+    return '${t ~/ 86400}д';
   }
 }
 // mobile/lib/models/message.dart

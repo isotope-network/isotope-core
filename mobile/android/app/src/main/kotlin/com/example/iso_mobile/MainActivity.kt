@@ -344,16 +344,17 @@ class MainActivity : FlutterActivity() {
                             runOnUiThread { result.success(response) }
                         }.start()
                     }
-                    "setMyTtl" -> {
-                        val ttl = call.argument<String>("ttl") ?: "0"
+                    "setTtl" -> {
+                        val period = call.argument<String>("period") ?: "forever"
+                        val mode = call.argument<String>("mode") ?: ""
                         Thread {
-                            val response = Mobile.setMyTtl(ttl)
+                            val response = Mobile.setTtl(period, mode)
                             runOnUiThread { result.success(response) }
                         }.start()
                     }
-                    "getMyTtl" -> {
+                    "getTtl" -> {
                         Thread {
-                            val response = Mobile.getMyTtl()
+                            val response = Mobile.getTtl()
                             runOnUiThread { result.success(response) }
                         }.start()
                     }
