@@ -1943,6 +1943,10 @@ func (n *Node) cleanupLoop() {
 		for {
 			time.Sleep(1 * time.Minute)
 			n.cleanupAnnounced()
+			if removed := n.memory.DeleteExpired(); removed > 0 {
+				log.Printf("[TTL] purged %d expired messages", removed)
+				n.scheduleSaveState()
+			}
 		}
 	}()
 }
