@@ -7,6 +7,7 @@ import '../utils/time_format.dart';
 import '../services/api_service.dart';
 import '../services/ws_service.dart';
 import '../services/p2p_service.dart';
+import '../services/libp2p_service.dart';
 import '../widgets/message_bubble.dart';
 
 class ChatScreen extends StatefulWidget {
@@ -35,6 +36,8 @@ class _ChatScreenState extends State<ChatScreen> {
   Timer? _draftThrottleTimer;
   VoidCallback? _providerListener;
   bool _isNearBottom = true;
+  // Последнее выставленное значение FLAG_SECURE (null — ещё не выставлялось).
+  bool? _lastSecureFlag;
 
   @override
   void initState() {
@@ -79,9 +82,13 @@ class _ChatScreenState extends State<ChatScreen> {
         if (_isNearBottom) {
           _scrollToBottom();
         }
+        _updateSecureFlag();
       }
     };
     provider.addListener(_providerListener!);
+
+    // Первичное вычисление FLAG_SECURE при открытии чата.
+    _updateSecureFlag();
 
     provider.loadMessages();
 
@@ -114,6 +121,7 @@ class _ChatScreenState extends State<ChatScreen> {
         widget.p2pService.purgeExpiredMessages();
         provider.purgeExpired();
         setState(() {});
+        _updateSecureFlag();
       }
     });
 
@@ -149,6 +157,28 @@ class _ChatScreenState extends State<ChatScreen> {
     }
   }
 
+  /// Пересчитывает FLAG_SECURE: включается, если в чате есть
+  /// активное TTL-сообщение с периодом от 10 секунд до 1 часа.
+  /// Не вызывает setSecureFlag, если значение не изменилось.
+  void _updateSecureFlag() {
+    if (!mounted) return;
+    final provider = context.read<ChatProvider>();
+    final peerID = provider.currentNodeIp;
+    final messages = provider.messagesFor(peerID);
+    bool hasActiveTtl = false;
+    for (final m in messages) {
+      if (m.isExpired) continue;
+      final s = m.ttlPeriodSeconds;
+      if (s >= 10 && s <= 3600) {
+        hasActiveTtl = true;
+        break;
+      }
+    }
+    if (_lastSecureFlag == hasActiveTtl) return;
+    _lastSecureFlag = hasActiveTtl;
+    LibP2PService.setSecureFlag(hasActiveTtl);
+  }
+
   @override
   void dispose() {
     // Немедленно сохраняем черновик (не ждём throttle).
@@ -166,6 +196,10 @@ class _ChatScreenState extends State<ChatScreen> {
     _messageSub?.cancel();
     _recallSub?.cancel();
     _ttlTimer?.cancel();
+
+    // Снимаем FLAG_SECURE при закрытии чата.
+    LibP2PService.setSecureFlag(false);
+
     super.dispose();
   }
 

@@ -182,21 +182,25 @@ class _MessagesSettingsScreenState extends State<MessagesSettingsScreen> {
                   style: TextStyle(fontSize: 13, color: Colors.grey),
                 ),
               ),
-              ..._delayOptions.map((sec) {
-                final label = sec == 0 ? 'Без задержки' : '$sec секунд';
-                final isSelected = provider.sendDelay == sec;
-                return RadioListTile<int>(
-                  title: Text(label),
-                  value: sec,
-                  // ignore: deprecated_member_use
-                  groupValue: provider.sendDelay,
-                  // ignore: deprecated_member_use
+              ListTile(
+                title: const Text('Задержка отправки:'),
+                trailing: DropdownButton<int>(
+                  value: _delayOptions.contains(provider.sendDelay)
+                      ? provider.sendDelay
+                      : 0,
                   onChanged: (v) {
                     if (v != null) provider.setSendDelay(v);
                   },
-                  selected: isSelected,
-                );
-              }),
+                  items: _delayOptions
+                      .map((sec) => DropdownMenuItem<int>(
+                            value: sec,
+                            child: Text(
+                              sec == 0 ? 'Без задержки' : '$sec секунд',
+                            ),
+                          ))
+                      .toList(),
+                ),
+              ),
 
               const Divider(),
 
@@ -228,7 +232,7 @@ class _MessagesSettingsScreenState extends State<MessagesSettingsScreen> {
                 )
               else ...[
                 RadioListTile<bool>(
-                  title: const Text('Вечно'),
+                  title: const Text('Не удаляются'),
                   value: true,
                   // ignore: deprecated_member_use
                   groupValue: _isForever,

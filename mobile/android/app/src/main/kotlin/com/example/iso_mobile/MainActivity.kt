@@ -380,6 +380,22 @@ class MainActivity : FlutterActivity() {
                             runOnUiThread { result.success(response) }
                         }.start()
                     }
+                    "setSecureFlag" -> {
+                        val enabled = call.argument<Boolean>("enabled") ?: false
+                        runOnUiThread {
+                            if (enabled) {
+                                window.setFlags(
+                                    android.view.WindowManager.LayoutParams.FLAG_SECURE,
+                                    android.view.WindowManager.LayoutParams.FLAG_SECURE
+                                )
+                            } else {
+                                window.clearFlags(
+                                    android.view.WindowManager.LayoutParams.FLAG_SECURE
+                                )
+                            }
+                            result.success("ok")
+                        }
+                    }
                     "getFilesDir" -> {
                         result.success(filesDir.absolutePath)
                     }

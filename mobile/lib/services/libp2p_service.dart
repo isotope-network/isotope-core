@@ -369,6 +369,19 @@ class LibP2PService {
     }
   }
 
+  /// Включает/выключает FLAG_SECURE (запрет скриншотов).
+  /// Вызывается, когда в чате есть активное TTL-сообщение
+  /// с периодом от 10 секунд до 1 часа.
+  static Future<void> setSecureFlag(bool enabled) async {
+    try {
+      await _channel.invokeMethod<String>('setSecureFlag', {
+        'enabled': enabled,
+      });
+    } on PlatformException {
+      // Тихо игнорируем — не критично.
+    }
+  }
+
   /// Возвращает период и режим удаления сообщений.
   /// Формат: {"ttl_period":"...","ttl_mode":"..."}.
   /// ttl_mode — "" при forever.
