@@ -576,6 +576,7 @@ class ChatProvider extends ChangeNotifier {
       await loadMessages();
 
       _startStatusPolling();
+      _startPurgeTimer();
       await loadMyTtl();
 
       _safeNotify();
@@ -592,6 +593,15 @@ class ChatProvider extends ChangeNotifier {
     _statusTimer?.cancel();
     _statusTimer = Timer.periodic(const Duration(seconds: 3), (_) async {
       await refreshMessageStatuses();
+    });
+  }
+
+  Timer? _purgeTimer;
+
+  void _startPurgeTimer() {
+    _purgeTimer?.cancel();
+    _purgeTimer = Timer.periodic(const Duration(seconds: 5), (_) {
+      purgeExpired();
     });
   }
 
@@ -905,10 +915,51 @@ class ChatProvider extends ChangeNotifier {
 
   void purgeExpired() {
     final before = _messagesMap.length;
-    _messagesMap.removeWhere((key, msg) => msg.isExpired);
-    if (_messagesMap.length != before) {
-      _safeNotify();
+    final expiredPeers = <String>{};
+    _messagesMap.removeWhere((key, msg) {
+      final e = msg.isExpired;
+      if (e) {
+        if (msg.sender.isNotEmpty && msg.sender != 'Вы' && msg.sender != '🌐 Сеть') {
+          expiredPeers.add(msg.sender);
+        }
+        if (msg.recipient.isNotEmpty) {
+          expiredPeers.add(msg.recipient);
+        }
+      }
+      return e;
+    });
+    if (_messagesMap.length == before) return;
+
+    for (final peerID in expiredPeers) {
+      Message? latest;
+      for (final m in _messagesMap.values) {
+        final fromPeer = m.sender == peerID;
+        final toPeer = m.recipient == peerID;
+        if (!fromPeer && !toPeer) continue;
+        if (latest == null || m.time.compareTo(latest.time) > 0) {
+          latest = m;
+        }
+      }
+      if (latest == null) {
+        _lastMessageByPeer.remove(peerID);
+      } else {
+        _lastMessageByPeer[peerID] = latest;
+      }
+
+      if (_currentOpenPeerID == peerID) {
+        _unreadByPeer[peerID] = 0;
+      } else {
+        int alive = 0;
+        for (final m in _messagesMap.values) {
+          if (m.sender == peerID && !_readSent.contains(m.id)) {
+            alive++;
+          }
+        }
+        _unreadByPeer[peerID] = alive;
+      }
     }
+
+    _safeNotify();
   }
 
   Future<void> loadMessages() async {
@@ -1170,6 +1221,7 @@ class ChatProvider extends ChangeNotifier {
   @override
   void dispose() {
     _statusTimer?.cancel();
+    _purgeTimer?.cancel();
     for (final t in _pendingTimers.values) {
       t.cancel();
     }

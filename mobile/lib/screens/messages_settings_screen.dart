@@ -42,10 +42,16 @@ class _MessagesSettingsScreenState extends State<MessagesSettingsScreen> {
     try {
       final ttl = await LibP2PService.getMyTtl();
       if (mounted) {
+        final normalized = ttl.isEmpty ? '0' : ttl;
         setState(() {
-          _myTtl = ttl.isEmpty ? '0' : ttl;
+          _myTtl = normalized;
           _loading = false;
         });
+        // Синхронизируем с ChatProvider — на случай, если настройка
+        // менялась в предыдущей сессии, а ChatProvider._currentTtl
+        // загрузился со старым значением.
+        final parsed = int.tryParse(normalized) ?? 0;
+        context.read<ChatProvider>().setTtl(parsed);
       }
     } catch (e) {
       LogService.log('MessagesSettings: load TTL error: $e');
@@ -66,6 +72,13 @@ class _MessagesSettingsScreenState extends State<MessagesSettingsScreen> {
         }
       } else {
         LogService.log('MessagesSettings: my_ttl=$ttl');
+        // Обновляем TTL в ChatProvider — иначе он останется со старым
+        // значением (загруженным один раз при старте libp2p) и _sendNow
+        // не будет ставить expiresAt.
+        if (mounted) {
+          final parsed = int.tryParse(ttl) ?? 0;
+          context.read<ChatProvider>().setTtl(parsed);
+        }
       }
     } catch (e) {
       LogService.log('MessagesSettings: set TTL exception: $e');

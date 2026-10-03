@@ -1415,7 +1415,8 @@ class _ConnectScreenState extends State<ConnectScreen> {
             return 'Недоступен';
         }
       }
-      final text = last.text.length > 40 ? '${last.text.substring(0, 40)}...' : last.text;
+      final raw = last.displayText;
+      final text = raw.length > 40 ? '${raw.substring(0, 40)}...' : raw;
       return text;
     } catch (_) {
       return 'Ошибка';
