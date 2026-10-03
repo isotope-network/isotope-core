@@ -547,6 +547,10 @@ class ChatProvider extends ChangeNotifier {
         if (type >= 1 && type <= 2) {
           return;
         }
+        // Type=8 — [TTL_UPDATE]: служебное, обрабатывается в Go.
+        if (type == 8) {
+          return;
+        }
 
         LogService.log('P2P: входящее от $sender: ${map['text']}');
 
