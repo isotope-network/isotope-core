@@ -490,17 +490,24 @@ class ChatProvider extends ChangeNotifier {
         final shortReplicatedFrom = replicatedFrom.length > 8 ? replicatedFrom.substring(0, 8) : replicatedFrom;
         final shortMyID = _libp2pPeerId.length > 8 ? _libp2pPeerId.substring(0, 8) : _libp2pPeerId;
 
+        // Признак «своё»: own-флаг, свой PeerID, сеть.
+        final isSelf = isOwn
+            || sender == '🌐 Сеть'
+            || shortSender == shortMyID
+            || shortReplicatedFrom == shortMyID;
+
         // Свои сообщения — не дублировать. НО: если это обновление
         // уже существующего (push ExpiresAt при after_read) —
         // пропустить в _addMessage (обновит expiresAt).
         final msgIdCheck = map['id'] as String? ?? '';
         final isUpdate = msgIdCheck.isNotEmpty && _messagesMap.containsKey(msgIdCheck);
-        if (!isUpdate && (isOwn || sender == '🌐 Сеть' || shortSender == shortMyID || shortReplicatedFrom == shortMyID)) {
+        if (!isUpdate && isSelf) {
           return;
         }
 
-        // Добавляем пира в список узлов ConnectScreen (для LTE-сетей, где NSD не работает)
-        if (sender.isNotEmpty && p2p != null) {
+        // Добавляем пира в список узлов ConnectScreen (для LTE-сетей, где NSD не работает).
+        // Только для ЧУЖИХ — свой PeerID в контактах не нужен.
+        if (!isSelf && sender.isNotEmpty && p2p != null) {
           p2p!.addDiscoveredPeer(sender);
         }
 
