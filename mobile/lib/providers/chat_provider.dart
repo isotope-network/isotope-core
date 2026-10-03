@@ -490,7 +490,12 @@ class ChatProvider extends ChangeNotifier {
         final shortReplicatedFrom = replicatedFrom.length > 8 ? replicatedFrom.substring(0, 8) : replicatedFrom;
         final shortMyID = _libp2pPeerId.length > 8 ? _libp2pPeerId.substring(0, 8) : _libp2pPeerId;
 
-        if (isOwn || sender == '🌐 Сеть' || shortSender == shortMyID || shortReplicatedFrom == shortMyID) {
+        // Свои сообщения — не дублировать. НО: если это обновление
+        // уже существующего (push ExpiresAt при after_read) —
+        // пропустить в _addMessage (обновит expiresAt).
+        final msgIdCheck = map['id'] as String? ?? '';
+        final isUpdate = msgIdCheck.isNotEmpty && _messagesMap.containsKey(msgIdCheck);
+        if (!isUpdate && (isOwn || sender == '🌐 Сеть' || shortSender == shortMyID || shortReplicatedFrom == shortMyID)) {
           return;
         }
 
