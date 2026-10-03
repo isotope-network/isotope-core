@@ -8,6 +8,7 @@ import '../services/api_service.dart';
 import '../services/ws_service.dart';
 import '../services/p2p_service.dart';
 import '../services/libp2p_service.dart';
+import '../services/log_service.dart';
 import '../widgets/message_bubble.dart';
 
 class ChatScreen extends StatefulWidget {
@@ -38,6 +39,8 @@ class _ChatScreenState extends State<ChatScreen> {
   bool _isNearBottom = true;
   // Последнее выставленное значение FLAG_SECURE (null — ещё не выставлялось).
   bool? _lastSecureFlag;
+  // Сохраняем provider — context.read в dispose невалиден.
+  ChatProvider? _provider;
 
   @override
   void initState() {
@@ -54,6 +57,7 @@ class _ChatScreenState extends State<ChatScreen> {
     final ws = WsService(wsUrl: 'ws://${widget.nodeAddress}/ws');
 
     final provider = context.read<ChatProvider>();
+    _provider = provider;
     provider.configure(
       api: api,
       ws: ws,
@@ -142,8 +146,8 @@ class _ChatScreenState extends State<ChatScreen> {
   /// Немедленно сохраняет текущий черновик.
   /// Вызывается из throttle-таймера и при dispose.
   void _flushDraft() {
-    if (!mounted) return;
-    final provider = context.read<ChatProvider>();
+    final provider = _provider;
+    if (provider == null) return;
     final peerID = provider.currentNodeIp;
     if (peerID.isEmpty) return;
     provider.saveDraft(peerID, _controller.text);
@@ -161,8 +165,8 @@ class _ChatScreenState extends State<ChatScreen> {
   /// активное TTL-сообщение с периодом от 10 секунд до 1 часа.
   /// Не вызывает setSecureFlag, если значение не изменилось.
   void _updateSecureFlag() {
-    if (!mounted) return;
-    final provider = context.read<ChatProvider>();
+    final provider = _provider;
+    if (provider == null) return;
     final peerID = provider.currentNodeIp;
     final messages = provider.messagesFor(peerID);
     bool hasActiveTtl = false;
@@ -174,6 +178,7 @@ class _ChatScreenState extends State<ChatScreen> {
         break;
       }
     }
+    LogService.log('SECURE: _updateSecureFlag hasActiveTtl=$hasActiveTtl last=$_lastSecureFlag');
     if (_lastSecureFlag == hasActiveTtl) return;
     _lastSecureFlag = hasActiveTtl;
     LibP2PService.setSecureFlag(hasActiveTtl);
@@ -185,8 +190,8 @@ class _ChatScreenState extends State<ChatScreen> {
     _draftThrottleTimer?.cancel();
     _flushDraft();
 
-    final provider = context.read<ChatProvider>();
-    if (_providerListener != null) {
+    final provider = _provider;
+    if (provider != null && _providerListener != null) {
       provider.removeListener(_providerListener!);
     }
     _scrollController.removeListener(_onScroll);
@@ -198,8 +203,10 @@ class _ChatScreenState extends State<ChatScreen> {
     _ttlTimer?.cancel();
 
     // Снимаем FLAG_SECURE при закрытии чата.
+    LogService.log('SECURE: dispose → setSecureFlag(false)');
     LibP2PService.setSecureFlag(false);
 
+    _provider = null;
     super.dispose();
   }
 
