@@ -1541,6 +1541,25 @@ func (n *Node) handleServiceMessage(m Message) {
 		if !n.myReadEnabled || !peerReadEnabled {
 			n.setMessageStatus(m.Ref, StatusHidden)
 			log.Printf("[SERVICE] delivered ack (hidden) ref=%s from=%s (my=%v, peer=%v)", m.Ref, m.Sender, n.myReadEnabled, peerReadEnabled)
+
+			// Авто-hard: прочтение не будет (я или получатель не делимся).
+			// Переходим на hard — ставим ExpiresAt от текущего момента.
+			if msg, ok := n.findMyMessageByID(m.Ref); ok {
+				if msg.TtlMode == "after_read" && msg.ExpiresAt.IsZero() && msg.TtlPeriodSeconds > 0 {
+					expiresAt := time.Now().Add(time.Duration(msg.TtlPeriodSeconds) * time.Second)
+					if n.memory.SetExpiresAt(m.Ref, expiresAt) {
+						log.Printf("[TTL] after_read → hard (hidden): set ExpiresAt for %s (+%ds)", m.Ref, msg.TtlPeriodSeconds)
+						n.scheduleSaveState()
+						if updated, ok := n.findMyMessageByID(m.Ref); ok {
+							if data, err := json.Marshal(updated); err == nil {
+								if n.messageHook != nil {
+									n.messageHook(string(data))
+								}
+							}
+						}
+					}
+				}
+			}
 		} else {
 			n.setMessageStatus(m.Ref, StatusDelivered)
 			log.Printf("[SERVICE] delivered ack ref=%s from=%s", m.Ref, m.Sender)
