@@ -42,6 +42,30 @@ class Message {
     this.recipient = '',
   });
 
+  /// Копия с обновлённым expiresAt.
+  Message copyWith({DateTime? expiresAt}) {
+    return Message(
+      id: id,
+      text: text,
+      plainText: plainText,
+      version: version,
+      sender: sender,
+      time: time,
+      isOwn: isOwn,
+      score: score,
+      weight: weight,
+      archived: archived,
+      deliveryStatus: deliveryStatus,
+      messageStatus: messageStatus,
+      pendingState: pendingState,
+      channel: channel,
+      ttlPeriodSeconds: ttlPeriodSeconds,
+      ttlMode: ttlMode,
+      expiresAt: expiresAt ?? this.expiresAt,
+      recipient: recipient,
+    );
+  }
+
   /// Копия с обновлённым messageStatus.
   Message withStatus(int? status) {
     return Message(

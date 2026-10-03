@@ -1566,6 +1566,14 @@ func (n *Node) handleServiceMessage(m Message) {
 				if n.memory.SetExpiresAt(m.Ref, expiresAt) {
 					log.Printf("[TTL] after_read: set ExpiresAt for %s (+%ds)", m.Ref, msg.TtlPeriodSeconds)
 					n.scheduleSaveState()
+					// Push в Dart: сообщаем об обновлении ExpiresAt.
+					if updated, ok := n.findMyMessageByID(m.Ref); ok {
+						if data, err := json.Marshal(updated); err == nil {
+							if n.messageHook != nil {
+								n.messageHook(string(data))
+							}
+						}
+					}
 				}
 			}
 		}
@@ -3001,6 +3009,14 @@ func (n *Node) SendRead(ref, recipient string) error {
 			if n.memory.SetExpiresAt(ref, expiresAt) {
 				log.Printf("[TTL] after_read (recipient): set ExpiresAt for %s (+%ds)", ref, msg.TtlPeriodSeconds)
 				n.scheduleSaveState()
+				// Push в Dart: сообщаем об обновлении ExpiresAt.
+				if updated, ok := n.findMyMessageByID(ref); ok {
+					if data, err := json.Marshal(updated); err == nil {
+						if n.messageHook != nil {
+							n.messageHook(string(data))
+						}
+					}
+				}
 			}
 		}
 	}

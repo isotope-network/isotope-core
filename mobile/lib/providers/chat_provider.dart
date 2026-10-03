@@ -834,8 +834,17 @@ class ChatProvider extends ChangeNotifier {
       LogService.log('ADD SKIP: empty id, text="${msg.text}"');
       return;
     }
-    if (_messagesMap.containsKey(msg.id)) {
-      LogService.log('ADD SKIP: id exists id=${msg.id} len=${msg.id.length} text="${msg.text}"');
+    final existing = _messagesMap[msg.id];
+    if (existing != null) {
+      // Сообщение уже есть. Если пришло обновление ExpiresAt (push из Go
+      // при after_read → [READ]) — обновляем.
+      if (msg.expiresAt != null && existing.expiresAt != msg.expiresAt) {
+        _messagesMap[msg.id] = existing.copyWith(expiresAt: msg.expiresAt);
+        LogService.log('ADD UPDATE id=${msg.id} expiresAt=${msg.expiresAt}');
+        _safeNotify();
+      } else {
+        LogService.log('ADD SKIP: id exists id=${msg.id} len=${msg.id.length} text="${msg.text}"');
+      }
       return;
     }
     _messagesMap[msg.id] = msg;
