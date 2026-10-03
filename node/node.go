@@ -1501,6 +1501,21 @@ func (n *Node) handleStream(stream network.Stream) {
 	n.processMessage(msg, remoteID, false)
 }
 
+// findMyMessageByID — находит моё сообщение по ID в памяти.
+// Возвращает копию и true, если найдено.
+func (n *Node) findMyMessageByID(id string) (Message, bool) {
+	if id == "" {
+		return Message{}, false
+	}
+	all := n.memory.GetAll()
+	for _, msg := range all {
+		if msg.ID == id {
+			return msg, true
+		}
+	}
+	return Message{}, false
+}
+
 // isServiceType — классификация. Только тип, без побочных эффектов.
 // Сервисные сообщения не идут в UI.
 func (n *Node) isServiceType(t MessageType) bool {
@@ -1540,6 +1555,19 @@ func (n *Node) handleServiceMessage(m Message) {
 		} else {
 			n.setMessageStatus(m.Ref, StatusRead)
 			log.Printf("[SERVICE] read ack ref=%s from=%s", m.Ref, m.Sender)
+		}
+
+		// Режим after_read: сообщение получателя прочитано — запускаем
+		// таймер удаления на отправителе (у нас). Если ExpiresAt ещё не
+		// установлен — ставим now + ttlPeriodSeconds.
+		if msg, ok := n.findMyMessageByID(m.Ref); ok {
+			if msg.TtlMode == "after_read" && msg.ExpiresAt.IsZero() && msg.TtlPeriodSeconds > 0 {
+				expiresAt := time.Now().Add(time.Duration(msg.TtlPeriodSeconds) * time.Second)
+				if n.memory.SetExpiresAt(m.Ref, expiresAt) {
+					log.Printf("[TTL] after_read: set ExpiresAt for %s (+%ds)", m.Ref, msg.TtlPeriodSeconds)
+					n.scheduleSaveState()
+				}
+			}
 		}
 
 	case TypeContactRequest:
