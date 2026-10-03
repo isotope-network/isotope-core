@@ -2991,7 +2991,19 @@ func (n *Node) SendDelivered(ref, recipient string) error {
 
 // SendRead — отправляет подтверждение прочтения сообщения отправителю.
 // См. SendDelivered.
+// Плюс: локально запускает TTL у получателя — если это after_read,
+// ставим ExpiresAt = now + period для входящего сообщения.
 func (n *Node) SendRead(ref, recipient string) error {
+	// Локальный TTL: получатель прочитал — запускаем таймер удаления.
+	if msg, ok := n.findMyMessageByID(ref); ok {
+		if msg.TtlMode == "after_read" && msg.ExpiresAt.IsZero() && msg.TtlPeriodSeconds > 0 {
+			expiresAt := time.Now().Add(time.Duration(msg.TtlPeriodSeconds) * time.Second)
+			if n.memory.SetExpiresAt(ref, expiresAt) {
+				log.Printf("[TTL] after_read (recipient): set ExpiresAt for %s (+%ds)", ref, msg.TtlPeriodSeconds)
+				n.scheduleSaveState()
+			}
+		}
+	}
 	return n.sendConfirmation(TypeRead, ref, recipient)
 }
 
