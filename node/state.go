@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"time"
 )
 
 // ============================================================
@@ -103,10 +104,21 @@ func (n *Node) saveState() error {
 	}
 	n.messageStatusMu.Unlock()
 
+	// Не сохраняем истёкшие — они не должны возродиться после перезапуска.
+	now := time.Now()
+	allMsgs := n.memory.GetAll()
+	aliveMsgs := make([]Message, 0, len(allMsgs))
+	for _, m := range allMsgs {
+		if !m.ExpiresAt.IsZero() && now.After(m.ExpiresAt) {
+			continue
+		}
+		aliveMsgs = append(aliveMsgs, m)
+	}
+
 	state := State{
 		Layers:        n.layers,
 		MsgCount:      n.msgCount,
-		Messages:      n.memory.GetAll(),
+		Messages:      aliveMsgs,
 		Seen:          seen,
 		PreHash:       n.preHash,
 		AntiHash:      n.antiHash,

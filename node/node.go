@@ -2373,7 +2373,6 @@ func (n *Node) loadState() error {
 	}
 	for i := range state.Messages {
 		state.Messages[i].Time = migrateTime(state.Messages[i].Time)
-		state.Messages[i].ExpiresAt = time.Time{}
 	}
 	for _, msg := range state.Messages {
 		n.memory.Add(msg)
@@ -2663,9 +2662,18 @@ func (n *Node) Stop() error {
 	return nil
 }
 
-// GetMessages — возвращает все сообщения
+// GetMessages — возвращает все НЕ истёкшие сообщения.
 func (n *Node) GetMessages() []Message {
-	return n.memory.GetAll()
+	all := n.memory.GetAll()
+	now := time.Now()
+	alive := make([]Message, 0, len(all))
+	for _, m := range all {
+		if !m.ExpiresAt.IsZero() && now.After(m.ExpiresAt) {
+			continue
+		}
+		alive = append(alive, m)
+	}
+	return alive
 }
 
 // GetPeers — возвращает список активных пиров

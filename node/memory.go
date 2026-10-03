@@ -72,7 +72,7 @@ type Memory struct {
 	seen     map[string]bool
 }
 
-// Add — добавляет сообщение, если оно не дубликат
+// Add — добавляет сообщение, если оно не дубликат и не истекло.
 func (m *Memory) Add(msg Message) bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -83,6 +83,12 @@ func (m *Memory) Add(msg Message) bool {
 	if m.seen[msg.ID] {
 		return false
 	}
+
+	// Не добавляем уже истёкшее сообщение — оно не должно существовать.
+	if !msg.ExpiresAt.IsZero() && time.Now().After(msg.ExpiresAt) {
+		return false
+	}
+
 	m.seen[msg.ID] = true
 
 	if msg.Weight == 0 {
