@@ -150,26 +150,20 @@ class MainActivity : FlutterActivity() {
                     }
                     "send" -> {
                         val text = call.argument<String>("text") ?: ""
-                        val ttl = when (val t = call.argument<Any>("ttl")) {
-                            is Long -> t
-                            is Int -> t.toLong()
-                            else -> 0L
-                        }
+                        val period = call.argument<String>("period") ?: "forever"
+                        val mode = call.argument<String>("mode") ?: ""
                         Thread {
-                            val response = Mobile.sendMessage(text, ttl)
+                            val response = Mobile.sendMessage(text, period, mode)
                             runOnUiThread { result.success(response) }
                         }.start()
                     }
                     "sendToPeer" -> {
                         val peerID = call.argument<String>("peerID") ?: ""
                         val text = call.argument<String>("text") ?: ""
-                        val ttl = when (val t = call.argument<Any>("ttl")) {
-                            is Long -> t
-                            is Int -> t.toLong()
-                            else -> 0L
-                        }
+                        val period = call.argument<String>("period") ?: "forever"
+                        val mode = call.argument<String>("mode") ?: ""
                         Thread {
-                            val response = Mobile.sendToPeer(peerID, text, ttl)
+                            val response = Mobile.sendToPeer(peerID, text, period, mode)
                             runOnUiThread { result.success(response) }
                         }.start()
                     }
