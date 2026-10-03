@@ -34,6 +34,9 @@ const (
 	// TypeContactHelloAck — ответ на приветствие.
 	// Открытое (Version=0). Payload: peerID + публичные ключи отправителя (B).
 	TypeContactHelloAck MessageType = 7
+	// TypeTtlUpdate — обновление TTL от отправителя получателю.
+	// Открытое (Version=0). Payload: expires_in_seconds в Text. Ref = msg_id.
+	TypeTtlUpdate MessageType = 8
 )
 
 // ============================================================

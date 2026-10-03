@@ -1521,7 +1521,7 @@ func (n *Node) findMyMessageByID(id string) (Message, bool) {
 func (n *Node) isServiceType(t MessageType) bool {
 	switch t {
 	case TypeDelivered, TypeRead, TypeContactRequest, TypeContactAccept, TypeContactReject,
-		TypeContactHello, TypeContactHelloAck:
+		TypeContactHello, TypeContactHelloAck, TypeTtlUpdate:
 		return true
 	}
 	return false
@@ -1556,6 +1556,10 @@ func (n *Node) handleServiceMessage(m Message) {
 									n.messageHook(string(data))
 								}
 							}
+						}
+						// Уведомляем получателя: перешли на hard.
+						if err := n.SendTtlUpdate(m.Ref, msg.TtlPeriodSeconds, m.Sender); err != nil {
+							log.Printf("[TTL_UPDATE] send failed ref=%s: %v", m.Ref, err)
 						}
 					}
 				}
@@ -1611,6 +1615,37 @@ func (n *Node) handleServiceMessage(m Message) {
 
 	case TypeContactHelloAck:
 		n.handleContactHelloAck(m)
+
+	case TypeTtlUpdate:
+		n.handleTtlUpdate(m)
+	}
+}
+
+// handleTtlUpdate — обновляет ExpiresAt для сообщения по ref.
+// Приходит от отправителя, когда он перешёл на hard (auto-hard).
+// Payload: m.Text — expires_in_seconds (целое, строкой).
+func (n *Node) handleTtlUpdate(m Message) {
+	if m.Ref == "" {
+		return
+	}
+	seconds, err := strconv.Atoi(m.Text)
+	if err != nil || seconds <= 0 {
+		log.Printf("[TTL_UPDATE] invalid seconds %q ref=%s", m.Text, m.Ref)
+		return
+	}
+	expiresAt := time.Now().Add(time.Duration(seconds) * time.Second)
+	if n.memory.SetExpiresAt(m.Ref, expiresAt) {
+		log.Printf("[TTL_UPDATE] set ExpiresAt for %s (+%ds)", m.Ref, seconds)
+		n.scheduleSaveState()
+		if updated, ok := n.findMyMessageByID(m.Ref); ok {
+			if data, err := json.Marshal(updated); err == nil {
+				if n.messageHook != nil {
+					n.messageHook(string(data))
+				}
+			}
+		}
+	} else {
+		log.Printf("[TTL_UPDATE] message not found ref=%s", m.Ref)
 	}
 }
 
@@ -3004,16 +3039,71 @@ func (n *Node) SendToPeer(peerID string, text string, ttlPeriod string, ttlMode 
 	}
 	id := generateMsgID(text)
 	n.processMessageInternal(encrypted, n.host.ID().String(), true, expiresAt, id, peerID, MESSAGE_VERSION_E2E, text, TypeMessage, false, ttlSeconds, ttlMode)
+
+	// Случай 2: отправитель не делится (myReadEnabled=false).
+	// [READ] не увидим → сразу hard + [TTL_UPDATE] получателю.
+	if !n.myReadEnabled && ttlMode == "after_read" && ttlSeconds > 0 {
+		expiresAt := time.Now().Add(time.Duration(ttlSeconds) * time.Second)
+		if n.memory.SetExpiresAt(id, expiresAt) {
+			log.Printf("[TTL] after_read → hard (myReadEnabled=false): set ExpiresAt for %s (+%ds)", id, ttlSeconds)
+			n.scheduleSaveState()
+			if updated, ok := n.findMyMessageByID(id); ok {
+				if data, err := json.Marshal(updated); err == nil {
+					if n.messageHook != nil {
+						n.messageHook(string(data))
+					}
+				}
+			}
+			if err := n.SendTtlUpdate(id, ttlSeconds, peerID); err != nil {
+				log.Printf("[TTL_UPDATE] send failed (self): ref=%s: %v", id, err)
+			}
+		}
+	}
 	return id, nil
 }
 
 // SendDelivered — отправляет подтверждение доставки сообщения отправителю.
-// ref — msg_id. recipient — PeerID отправителя (кому подтверждаем).
-// Пытаемся напрямую — если peerstore знает рабочий адрес.
-// Fallback — через relay (bootstrap).
-// Version=0 — метаданные, не E2E.
+// См. SendRead.
 func (n *Node) SendDelivered(ref, recipient string) error {
 	return n.sendConfirmation(TypeDelivered, ref, recipient)
+}
+
+// SendTtlUpdate — отправляет получателю [TTL_UPDATE] с expires_in_seconds.
+// Используется при auto-hard (отправитель знает, что прочтения не будет).
+func (n *Node) SendTtlUpdate(ref string, seconds int, recipient string) error {
+	if n.host == nil {
+		return fmt.Errorf("node not started")
+	}
+	if ref == "" || recipient == "" || seconds <= 0 {
+		return fmt.Errorf("ref, recipient, seconds required")
+	}
+	text := strconv.Itoa(seconds)
+	return n.sendTtlUpdate(ref, text, recipient)
+}
+
+// sendTtlUpdate — общая логика отправки [TTL_UPDATE].
+// Version=0, Type=TypeTtlUpdate, Ref=msg_id, Text=seconds. Через bootstrap.
+func (n *Node) sendTtlUpdate(ref, text, recipient string) error {
+	if n.host == nil {
+		return fmt.Errorf("node not started")
+	}
+	id := generateMsgID(ref + ":" + recipient)
+	msg := Message{
+		ID:        id,
+		Text:      text,
+		Sender:    n.host.ID().String(),
+		Recipient: recipient,
+		Version:   0,
+		Type:      TypeTtlUpdate,
+		Ref:       ref,
+		Time:      time.Now().UTC().Format("2006-01-02T15:04:05"),
+		IsOwn:     true,
+		Weight:    0.5,
+	}
+	if err := n.sendServiceViaBootstrap(msg); err != nil {
+		return fmt.Errorf("sendServiceViaBootstrap: %w", err)
+	}
+	return nil
 }
 
 // SendRead — отправляет подтверждение прочтения сообщения отправителю.
@@ -3113,6 +3203,8 @@ func msgTypeString(t MessageType) string {
 		return "contact_hello"
 	case TypeContactHelloAck:
 		return "contact_hello_ack"
+	case TypeTtlUpdate:
+		return "ttl_update"
 	default:
 		return "message"
 	}
