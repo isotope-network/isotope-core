@@ -71,7 +71,7 @@ class LibP2PService {
 
   static Future<Map<String, dynamic>> send({
     required String text,
-    String period = 'forever',
+    String period = 'never',
     String mode = '',
   }) async {
     try {
@@ -91,7 +91,7 @@ class LibP2PService {
   static Future<Map<String, dynamic>> sendToPeer({
     required String peerID,
     required String text,
-    String period = 'forever',
+    String period = 'never',
     String mode = '',
   }) async {
     try {
@@ -355,8 +355,8 @@ class LibP2PService {
   }
 
   /// Устанавливает период и режим удаления сообщений.
-  /// period: "10s" | "1m" | "10m" | "1h" | "24h" | "7d" | "30d" | "forever".
-  /// mode: "" (при forever) | "after_read" | "hard".
+  /// period: "10s" | "30s" | "1m" | "5m" | "15m" | "30m" | "1h" | "4h" | "24h" | "never".
+  /// mode: "" (при never) | "after_read" | "hard".
   static Future<Map<String, dynamic>> setTtl(String period, String mode) async {
     try {
       final response = await _channel.invokeMethod<String>('setTtl', {
@@ -384,18 +384,22 @@ class LibP2PService {
 
   /// Возвращает период и режим удаления сообщений.
   /// Формат: {"ttl_period":"...","ttl_mode":"..."}.
-  /// ttl_mode — "" при forever.
+  /// ttl_mode — "" при never.
   static Future<Map<String, String>> getTtl() async {
     try {
       final response = await _channel.invokeMethod<String>('getTtl');
       final decoded = _safeDecode(response,
-          fallback: '{"ttl_period":"forever","ttl_mode":""}');
+          fallback: '{"ttl_period":"never","ttl_mode":""}');
+      var period = decoded['ttl_period'] as String? ?? 'never';
+      if (period == 'forever' || period.isEmpty) {
+        period = 'never';
+      }
       return {
-        'ttl_period': decoded['ttl_period'] as String? ?? 'forever',
+        'ttl_period': period,
         'ttl_mode': decoded['ttl_mode'] as String? ?? '',
       };
     } on PlatformException {
-      return {'ttl_period': 'forever', 'ttl_mode': ''};
+      return {'ttl_period': 'never', 'ttl_mode': ''};
     }
   }
 

@@ -162,9 +162,10 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   /// Пересчитывает FLAG_SECURE: включается, если в чате есть
-  /// активное TTL-сообщение с периодом от 10 секунд до 1 часа.
+  /// активное TTL-сообщение с периодом от 10 секунд до 1 минуты.
   /// Не вызывает setSecureFlag, если значение не изменилось.
   void _updateSecureFlag() {
+    if (!mounted) return;
     final provider = _provider;
     if (provider == null) return;
     final peerID = provider.currentNodeIp;
@@ -173,12 +174,11 @@ class _ChatScreenState extends State<ChatScreen> {
     for (final m in messages) {
       if (m.isExpired) continue;
       final s = m.ttlPeriodSeconds;
-      if (s >= 10 && s <= 3600) {
+      if (s >= 10 && s <= 60) {
         hasActiveTtl = true;
         break;
       }
     }
-    LogService.log('SECURE: _updateSecureFlag hasActiveTtl=$hasActiveTtl last=$_lastSecureFlag');
     if (_lastSecureFlag == hasActiveTtl) return;
     _lastSecureFlag = hasActiveTtl;
     LibP2PService.setSecureFlag(hasActiveTtl);

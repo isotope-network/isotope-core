@@ -40,7 +40,7 @@ class ChatProvider extends ChangeNotifier {
   bool _wsConnected = false;
   bool _loading = false;
   String? _error;
-  String _ttlPeriod = 'forever';
+  String _ttlPeriod = 'never';
   String _ttlMode = '';
 
   bool _libp2pStarted = false;
@@ -208,13 +208,18 @@ class ChatProvider extends ChangeNotifier {
   int _ttlPeriodSeconds(String period) {
     switch (period) {
       case '10s': return 10;
+      case '30s': return 30;
       case '1m': return 60;
-      case '10m': return 600;
+      case '5m': return 300;
+      case '15m': return 900;
+      case '30m': return 1800;
       case '1h': return 3600;
+      case '4h': return 14400;
       case '24h': return 86400;
-      case '7d': return 604800;
-      case '30d': return 2592000;
-      default: return 0;
+      case 'never':
+      case 'forever':
+      default:
+        return 0;
     }
   }
 
@@ -304,7 +309,11 @@ class ChatProvider extends ChangeNotifier {
   Future<void> loadTtl() async {
     try {
       final ttl = await LibP2PService.getTtl();
-      _ttlPeriod = ttl['ttl_period'] ?? 'forever';
+      var period = ttl['ttl_period'] ?? 'never';
+      if (period == 'forever' || period.isEmpty) {
+        period = 'never';
+      }
+      _ttlPeriod = period;
       _ttlMode = ttl['ttl_mode'] ?? '';
       LogService.log('ChatProvider: loadTtl period=$_ttlPeriod mode=$_ttlMode');
       _safeNotify();

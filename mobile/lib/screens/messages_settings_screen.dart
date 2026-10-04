@@ -20,12 +20,14 @@ class _MessagesSettingsScreenState extends State<MessagesSettingsScreen> {
   /// Периоды TTL. Ключ — значение для Go, метка — для UI.
   static const List<Map<String, String>> _ttlPeriods = [
     {'value': '10s', 'label': '10 секунд'},
+    {'value': '30s', 'label': '30 секунд'},
     {'value': '1m', 'label': '1 минута'},
-    {'value': '10m', 'label': '10 минут'},
+    {'value': '5m', 'label': '5 минут'},
+    {'value': '15m', 'label': '15 минут'},
+    {'value': '30m', 'label': '30 минут'},
     {'value': '1h', 'label': '1 час'},
+    {'value': '4h', 'label': '4 часа'},
     {'value': '24h', 'label': '24 часа'},
-    {'value': '7d', 'label': '7 дней'},
-    {'value': '30d', 'label': '30 дней'},
   ];
 
   /// Режимы удаления.
@@ -34,15 +36,16 @@ class _MessagesSettingsScreenState extends State<MessagesSettingsScreen> {
     {'value': 'hard', 'label': 'Жёсткий'},
   ];
 
-  String _ttlPeriod = 'forever';
+  String _ttlPeriod = 'never';
   String _ttlMode = '';
-  // Последние выбранные период/режим (не «Вечно»).
-  // Восстанавливаются при возврате с «Вечно» на «Удалять через».
+  // Последние выбранные период/режим (не «Не удаляются»).
+  // Восстанавливаются при возврате с «Не удаляются» на «Удалять через».
   String _lastPeriod = '10s';
   String _lastMode = 'after_read';
   bool _loading = true;
 
-  bool get _isForever => _ttlPeriod == 'forever';
+  /// "Не удаляются" — любое из старых/новых значений.
+  bool get _isForever => _ttlPeriod == 'never' || _ttlPeriod == 'forever';
 
   @override
   void initState() {
@@ -54,12 +57,15 @@ class _MessagesSettingsScreenState extends State<MessagesSettingsScreen> {
     try {
       final ttl = await LibP2PService.getTtl();
       if (mounted) {
-        final period = ttl['ttl_period'] ?? 'forever';
+        var period = ttl['ttl_period'] ?? 'never';
+        if (period == 'forever' || period.isEmpty) {
+          period = 'never';
+        }
         final mode = ttl['ttl_mode'] ?? '';
         setState(() {
           _ttlPeriod = period;
           _ttlMode = mode;
-          if (period != 'forever') {
+          if (period != 'never') {
             _lastPeriod = period;
             _lastMode = mode.isEmpty ? 'after_read' : mode;
           }
@@ -99,10 +105,10 @@ class _MessagesSettingsScreenState extends State<MessagesSettingsScreen> {
     }
   }
 
-  /// Переключение «Вечно» / «Удалять через».
+  /// Переключение «Не удаляются» / «Удалять через».
   void _setForever(bool forever) {
     if (forever) {
-      _saveTtl('forever', '');
+      _saveTtl('never', '');
     } else {
       _saveTtl(_lastPeriod, _lastMode);
     }
@@ -129,27 +135,31 @@ class _MessagesSettingsScreenState extends State<MessagesSettingsScreen> {
     switch (period) {
       case '10s':
         return 10;
+      case '30s':
+        return 30;
       case '1m':
         return 60;
-      case '10m':
-        return 600;
+      case '5m':
+        return 300;
+      case '15m':
+        return 900;
+      case '30m':
+        return 1800;
       case '1h':
         return 3600;
+      case '4h':
+        return 14400;
       case '24h':
         return 86400;
-      case '7d':
-        return 604800;
-      case '30d':
-        return 2592000;
       default:
         return 0;
     }
   }
 
-  /// Предупреждение о запрете скриншотов (TTL от 10 сек до 1 часа).
+  /// Предупреждение о запрете скриншотов (TTL от 10 секунд до 1 минуты).
   bool get _showSecureWarning {
     final s = _periodSeconds(_ttlPeriod);
-    return s >= 10 && s <= 3600;
+    return s >= 10 && s <= 60;
   }
 
   @override
@@ -256,10 +266,22 @@ class _MessagesSettingsScreenState extends State<MessagesSettingsScreen> {
                                   if (v != null) _setPeriod(v);
                                 },
                           items: _ttlPeriods
-                              .map((p) => DropdownMenuItem<String>(
-                                    value: p['value'],
-                                    child: Text(p['label'] ?? ''),
-                                  ))
+                              .map((p) {
+                                final value = p['value'] ?? '';
+                                // 10s / 30s / 1m — периоды с запретом скриншотов.
+                                final isSecure = value == '10s' ||
+                                    value == '30s' ||
+                                    value == '1m';
+                                return DropdownMenuItem<String>(
+                                  value: value,
+                                  child: Text(
+                                    p['label'] ?? '',
+                                    style: isSecure
+                                        ? const TextStyle(color: Colors.orange)
+                                        : null,
+                                  ),
+                                );
+                              })
                               .toList(),
                         ),
                       ),
@@ -325,7 +347,7 @@ class _MessagesSettingsScreenState extends State<MessagesSettingsScreen> {
                     const Padding(
                       padding: EdgeInsets.fromLTRB(16, 8, 16, 16),
                       child: Text(
-                        '⚠ При выборе от 10 секунд до 1 часа скриншоты чата с такими сообщениями временно запрещены — до их удаления.',
+                        '⚠ При выборе от 10 секунд до 1 минуты скриншоты чата с такими сообщениями временно запрещены — до их удаления.',
                         style: TextStyle(
                           fontSize: 13,
                           color: Colors.orange,
