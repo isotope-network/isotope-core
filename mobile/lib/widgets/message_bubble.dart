@@ -6,12 +6,16 @@ class MessageBubble extends StatelessWidget {
   final Message message;
   final VoidCallback? onLike;
   final VoidCallback? onDislike;
+  /// Отображаемое имя отправителя (для входящих).
+  /// Пусто — используется message.sender (PeerID).
+  final String? senderName;
 
   const MessageBubble({
     super.key,
     required this.message,
     this.onLike,
     this.onDislike,
+    this.senderName,
   });
 
   @override
@@ -52,7 +56,11 @@ class MessageBubble extends StatelessWidget {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      isOwn ? 'Вы' : message.sender,
+                      isOwn
+                          ? 'Вы'
+                          : (senderName != null && senderName!.isNotEmpty
+                              ? senderName!
+                              : message.sender),
                       style: TextStyle(
                         fontSize: 12,
                         fontWeight: FontWeight.w600,

@@ -131,6 +131,7 @@ class _ConnectScreenState extends State<ConnectScreen> {
       chatProvider.helloAckStream.listen((ack) {
         if (!mounted) return;
         LogService.log('ConnectScreen: helloAck для ${ack.peerID}');
+        chatProvider.loadPeerNames();
         setState(() {});
       });
 
@@ -160,6 +161,7 @@ class _ConnectScreenState extends State<ConnectScreen> {
         if (!mounted) return;
         LogService.log('ConnectScreen: [CONTACT_ACCEPT] от $peerID — перечитать контакты');
         _loadContactsFromCore();
+        chatProvider.loadPeerNames();
       });
 
       // Слушаем peerSeen — при отправке сообщения обновляем status → alive.
@@ -840,7 +842,10 @@ class _ConnectScreenState extends State<ConnectScreen> {
     }
     LogService.log('RenameContact: $peerID → "$newName"');
     await _loadContactsFromCore();
-    if (mounted) setState(() {});
+    if (mounted) {
+      context.read<ChatProvider>().setPeerName(peerID, newName);
+      setState(() {});
+    }
   }
 
   /// Диалог «Удалить контакт?». У собеседника остаётся.

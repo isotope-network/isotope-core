@@ -58,6 +58,11 @@ class ChatProvider extends ChangeNotifier {
   // Кэш: PeerID → последнее сообщение от этого пира
   final Map<String, Message> _lastMessageByPeer = {};
 
+  // Кэш: PeerID → отображаемое имя контакта.
+  // Приоритет: локальное Name → RemoteName → короткий PeerID.
+  // Заполняется loadPeerNames() из Go-контактов.
+  final Map<String, String> _peerNames = {};
+
   // ID входящих сообщений, для которых уже отправили [READ].
   // Сохраняется в SharedPreferences (последние _readSentMax IDs).
   // При перезапуске — загружается, не сбрасывается.
@@ -262,6 +267,26 @@ class ChatProvider extends ChangeNotifier {
 
   /// Возвращает последнее сообщение от указанного пира (O(1))
   Message? getLastMessageForPeer(String peerID) => _lastMessageByPeer[peerID];
+
+  /// Возвращает отображаемое имя контакта.
+  /// Приоритет: Name → RemoteName → короткий PeerID.
+  String nameFor(String peerID) {
+    if (peerID.isEmpty) return '';
+    final name = _peerNames[peerID];
+    if (name != null && name.isNotEmpty) return name;
+    return peerID.length > 12 ? '${peerID.substring(0, 12)}…' : peerID;
+  }
+
+  /// Устанавливает локальное имя контакта (после RenameContact).
+  void setPeerName(String peerID, String name) {
+    if (peerID.isEmpty) return;
+    if (name.isEmpty) {
+      _peerNames.remove(peerID);
+    } else {
+      _peerNames[peerID] = name;
+    }
+    _safeNotify();
+  }
 
   /// Возвращает количество известных пиров с историей (для отладки)
   int get knownPeersCount => _lastMessageByPeer.length;
@@ -624,6 +649,7 @@ class ChatProvider extends ChangeNotifier {
 
       _subscribeToMessages();
       await loadMessages();
+      await loadPeerNames();
 
       _startStatusPolling();
       _startPurgeTimer();
@@ -820,6 +846,31 @@ class ChatProvider extends ChangeNotifier {
     _safeNotify();
   }
 
+  /// Загружает имена контактов из Go и заполняет _peerNames.
+  /// Приоритет: Name → RemoteName → (не заполняем, fallback — PeerID).
+  Future<void> loadPeerNames() async {
+    if (!_libp2pStarted) return;
+    try {
+      final contacts = await LibP2PService.getContacts();
+      for (final c in contacts) {
+        final map = c as Map<String, dynamic>;
+        final peerID = map['peerID'] as String? ?? '';
+        if (peerID.isEmpty) continue;
+        final name = (map['name'] as String? ?? '').trim();
+        final remoteName = (map['remote_name'] as String? ?? '').trim();
+        if (name.isNotEmpty) {
+          _peerNames[peerID] = name;
+        } else if (remoteName.isNotEmpty) {
+          _peerNames[peerID] = remoteName;
+        }
+      }
+      LogService.log('ChatProvider: loadPeerNames — ${_peerNames.length} имён');
+      _safeNotify();
+    } catch (e) {
+      LogService.log('ChatProvider: loadPeerNames ERROR: $e');
+    }
+  }
+
   void initWs() {
     ws.onMessage = (msg) => _addMessage(msg);
     ws.onDisconnected = () {
@@ -944,6 +995,9 @@ class ChatProvider extends ChangeNotifier {
 
     // 2. Кэш последнего сообщения.
     _lastMessageByPeer.remove(peerID);
+
+    // 2b. Имя контакта.
+    _peerNames.remove(peerID);
 
     // 3. Черновик чата.
     _drafts.remove(peerID);
