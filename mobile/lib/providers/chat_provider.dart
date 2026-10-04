@@ -554,7 +554,11 @@ class ChatProvider extends ChangeNotifier {
 
         LogService.log('P2P: входящее от $sender: ${map['text']}');
 
-        if (!isOwn && sender != _currentOpenPeerID) {
+        // Увеличиваем непрочитанные только для НОВЫХ сообщений от ЧУЖИХ,
+        // когда чат с ними не открыт. Иначе — дубликат или своё.
+        final msgIdU = map['id'] as String? ?? '';
+        final isNew = msgIdU.isNotEmpty && !_messagesMap.containsKey(msgIdU);
+        if (isNew && !isSelf && sender != _currentOpenPeerID) {
           _unreadByPeer[sender] = (_unreadByPeer[sender] ?? 0) + 1;
           _safeNotify();
         }

@@ -3039,26 +3039,6 @@ func (n *Node) SendToPeer(peerID string, text string, ttlPeriod string, ttlMode 
 	}
 	id := generateMsgID(text)
 	n.processMessageInternal(encrypted, n.host.ID().String(), true, expiresAt, id, peerID, MESSAGE_VERSION_E2E, text, TypeMessage, false, ttlSeconds, ttlMode)
-
-	// Случай 2: отправитель не делится (myReadEnabled=false).
-	// [READ] не увидим → сразу hard + [TTL_UPDATE] получателю.
-	if !n.myReadEnabled && ttlMode == "after_read" && ttlSeconds > 0 {
-		expiresAt := time.Now().Add(time.Duration(ttlSeconds) * time.Second)
-		if n.memory.SetExpiresAt(id, expiresAt) {
-			log.Printf("[TTL] after_read → hard (myReadEnabled=false): set ExpiresAt for %s (+%ds)", id, ttlSeconds)
-			n.scheduleSaveState()
-			if updated, ok := n.findMyMessageByID(id); ok {
-				if data, err := json.Marshal(updated); err == nil {
-					if n.messageHook != nil {
-						n.messageHook(string(data))
-					}
-				}
-			}
-			if err := n.SendTtlUpdate(id, ttlSeconds, peerID); err != nil {
-				log.Printf("[TTL_UPDATE] send failed (self): ref=%s: %v", id, err)
-			}
-		}
-	}
 	return id, nil
 }
 
