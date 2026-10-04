@@ -3752,14 +3752,14 @@ func (n *Node) GetMyDisplayName() string {
 }
 
 // SetTtl — устанавливает период и режим удаления сообщений.
-// period: "10s" | "1m" | "10m" | "1h" | "24h" | "7d" | "30d" | "forever".
-// mode: nil (при forever) | "after_read" | "hard".
+// period: "10s" | "30s" | "1m" | "5m" | "15m" | "30m" | "1h" | "4h" | "24h" | "never".
+// mode: nil (при never) | "after_read" | "hard".
 func (n *Node) SetTtl(period string, mode string) error {
 	if n.settingsStore == nil {
 		return fmt.Errorf("settings store not initialized")
 	}
 	var modePtr *string
-	if mode != "" && period != "forever" {
+	if mode != "" && period != "never" && period != "forever" {
 		m := mode
 		modePtr = &m
 	}
@@ -3767,11 +3767,11 @@ func (n *Node) SetTtl(period string, mode string) error {
 }
 
 // GetTtl — возвращает период и режим удаления сообщений.
-// period: "10s" | "1m" | ... | "forever".
-// mode: "" (при forever) | "after_read" | "hard".
+// period: "10s" | "30s" | "1m" | ... | "never".
+// mode: "" (при never) | "after_read" | "hard".
 func (n *Node) GetTtl() (string, string) {
 	if n.settingsStore == nil {
-		return "forever", ""
+		return "never", ""
 	}
 	period, modePtr := n.settingsStore.GetTtl()
 	mode := ""

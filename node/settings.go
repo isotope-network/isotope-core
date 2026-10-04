@@ -106,9 +106,13 @@ func (s *SettingsStore) Load() error {
 		}
 	}
 
-	// Дефолт: "forever" без режима.
+	// Дефолт: "never" без режима.
 	if loaded.TtlPeriod == "" {
-		loaded.TtlPeriod = "forever"
+		loaded.TtlPeriod = "never"
+	}
+	// Обратная совместимость: старое значение "forever" → "never".
+	if loaded.TtlPeriod == "forever" {
+		loaded.TtlPeriod = "never"
 	}
 
 	s.data = loaded
@@ -166,14 +170,14 @@ func (s *SettingsStore) GetMyDisplayName() string {
 }
 
 // GetTtl — возвращает период и режим удаления сообщений.
-// period: "10s" | "1m" | ... | "forever".
-// mode: nil (при forever) | &"after_read" | &"hard".
+// period: "10s" | "30s" | "1m" | ... | "never".
+// mode: nil (при never) | &"after_read" | &"hard".
 func (s *SettingsStore) GetTtl() (string, *string) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	period := s.data.TtlPeriod
-	if period == "" {
-		period = "forever"
+	if period == "" || period == "forever" {
+		period = "never"
 	}
 	return period, s.data.TtlMode
 }
@@ -189,47 +193,59 @@ func (s *SettingsStore) SetTtl(period string, mode *string) error {
 
 // secondsToPeriod — конвертирует старое значение my_ttl (секунды строкой)
 // в новый формат ttl_period.
+// Старые значения (10m, 7d, 30d), которых нет в новом списке,
+// конвертируются в ближайшие новые или в "never".
 func secondsToPeriod(sec string) string {
 	switch sec {
 	case "", "0":
-		return "forever"
+		return "never"
 	case "10":
 		return "10s"
+	case "30":
+		return "30s"
 	case "60":
 		return "1m"
-	case "600":
-		return "10m"
+	case "300":
+		return "5m"
+	case "900":
+		return "15m"
+	case "1800":
+		return "30m"
 	case "3600":
 		return "1h"
+	case "14400":
+		return "4h"
 	case "86400":
 		return "24h"
-	case "604800":
-		return "7d"
-	case "2592000":
-		return "30d"
 	default:
-		return "forever"
+		return "never"
 	}
 }
 
 // parsePeriod — конвертирует ttl_period в секунды.
-// "forever" или неизвестное — 0.
+// "never" / "forever" / неизвестное — 0.
 func parsePeriod(period string) int {
 	switch period {
 	case "10s":
 		return 10
+	case "30s":
+		return 30
 	case "1m":
 		return 60
-	case "10m":
-		return 600
+	case "5m":
+		return 300
+	case "15m":
+		return 900
+	case "30m":
+		return 1800
 	case "1h":
 		return 3600
+	case "4h":
+		return 14400
 	case "24h":
 		return 86400
-	case "7d":
-		return 604800
-	case "30d":
-		return 2592000
+	case "never", "forever":
+		return 0
 	default:
 		return 0
 	}

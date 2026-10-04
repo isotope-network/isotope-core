@@ -292,7 +292,9 @@ func (m *Memory) PurgeDead(threshold float64) int {
 	return removed
 }
 
-// DeleteExpired — удаляет сообщения с истёкшим сроком жизни
+// DeleteExpired — удаляет сообщения с истёкшим сроком жизни.
+// Плюс fallback 48ч: если TTL-сообщение (after_read или hard) не было
+// удалено по обычному таймеру за 48ч — удаляем принудительно.
 func (m *Memory) DeleteExpired() int {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -301,7 +303,13 @@ func (m *Memory) DeleteExpired() int {
 	var alive []Message
 	removed := 0
 	for _, msg := range m.messages {
-		if !msg.ExpiresAt.IsZero() && now.After(msg.ExpiresAt) {
+		expired := !msg.ExpiresAt.IsZero() && now.After(msg.ExpiresAt)
+		fallback := !expired &&
+			msg.TtlMode != "" &&
+			msg.TtlPeriodSeconds > 0 &&
+			!msg.Created.IsZero() &&
+			now.After(msg.Created.Add(48*time.Hour))
+		if expired || fallback {
 			delete(m.seen, msg.ID)
 			removed++
 		} else {

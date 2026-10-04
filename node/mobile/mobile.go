@@ -206,8 +206,8 @@ func GetMessages() string {
 }
 
 // SendMessage — отправляет сообщение всем пирам (broadcast).
-// period: "10s" | "1m" | ... | "forever".
-// mode: "" (при forever) | "after_read" | "hard".
+// period: "10s" | "30s" | "1m" | ... | "never".
+// mode: "" (при never) | "after_read" | "hard".
 func SendMessage(text string, period string, mode string) string {
 	nodeMu.Lock()
 	defer nodeMu.Unlock()
@@ -225,8 +225,8 @@ func SendMessage(text string, period string, mode string) string {
 }
 
 // SendToPeer — отправляет сообщение конкретному пиру по PeerID.
-// period: "10s" | "1m" | ... | "forever".
-// mode: "" (при forever) | "after_read" | "hard".
+// period: "10s" | "30s" | "1m" | ... | "never".
+// mode: "" (при never) | "after_read" | "hard".
 func SendToPeer(peerID string, text string, period string, mode string) string {
 	nodeMu.Lock()
 	defer nodeMu.Unlock()
@@ -481,8 +481,8 @@ func GetMyDisplayName() string {
 }
 
 // SetTtl — устанавливает период и режим удаления сообщений.
-// period: "10s" | "1m" | "10m" | "1h" | "24h" | "7d" | "30d" | "forever".
-// mode: "" (при forever) | "after_read" | "hard".
+// period: "10s" | "30s" | "1m" | "5m" | "15m" | "30m" | "1h" | "4h" | "24h" | "never".
+// mode: "" (при never) | "after_read" | "hard".
 func SetTtl(period string, mode string) string {
 	nodeMu.Lock()
 	defer nodeMu.Unlock()
@@ -499,13 +499,13 @@ func SetTtl(period string, mode string) string {
 
 // GetTtl — возвращает период и режим удаления сообщений.
 // Формат: {"ttl_period":"...","ttl_mode":"..."}.
-// ttl_mode — "" при forever.
+// ttl_mode — "" при never.
 func GetTtl() string {
 	nodeMu.Lock()
 	defer nodeMu.Unlock()
 
 	if node == nil {
-		return `{"ttl_period":"forever","ttl_mode":""}`
+		return `{"ttl_period":"never","ttl_mode":""}`
 	}
 	period, mode := node.GetTtl()
 	data, _ := json.Marshal(map[string]string{
