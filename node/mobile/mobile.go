@@ -723,6 +723,29 @@ func SendReadBatch(refsJSON, recipient string) string {
 	return `{"status":"ok"}`
 }
 
+// MarkReadLocally — помечает входящие сообщения как прочитанные локально.
+// Принимает JSON-массив msg_id. Вызывается из Dart при открытии чата
+// (перед sendReadBatch). Возвращает количество изменённых.
+func MarkReadLocally(refsJSON string) string {
+	nodeMu.Lock()
+	defer nodeMu.Unlock()
+
+	if node == nil {
+		return errorJSON("node not started")
+	}
+
+	var refs []string
+	if err := json.Unmarshal([]byte(refsJSON), &refs); err != nil {
+		return errorJSON("invalid JSON: " + err.Error())
+	}
+	if len(refs) == 0 {
+		return `{"status":"ok","changed":0}`
+	}
+
+	changed := node.MarkReadLocally(refs)
+	return fmt.Sprintf(`{"status":"ok","changed":%d}`, changed)
+}
+
 // GetMessageStatuses — возвращает JSON со статусами всех сообщений.
 // Формат: {"<msg_id>": 1|2|3, ...}. 0 — неизвестен (не включается).
 // 1 — отправлено, 2 — доставлено, 3 — прочитано.

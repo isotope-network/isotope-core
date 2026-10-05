@@ -606,6 +606,22 @@ class LibP2PService {
     }
   }
 
+  /// Помечает входящие сообщения как прочитанные локально (ReadLocally=true).
+  /// Вызывается при открытии чата — до отправки [READ] собеседнику.
+  /// refs — список msg_id.
+  static Future<Map<String, dynamic>> markReadLocally({
+    required List<String> refs,
+  }) async {
+    try {
+      final response = await _channel.invokeMethod<String>('markReadLocally', {
+        'refs': jsonEncode(refs),
+      });
+      return _safeDecode(response);
+    } on PlatformException catch (e) {
+      return {'error': e.message ?? 'platform_error', 'operation': 'mark_read_locally'};
+    }
+  }
+
   static Future<Map<String, dynamic>> joinDHT(String bootstrapPeers) async {
     try {
       final response = await _channel.invokeMethod<String>('joinDHT', {

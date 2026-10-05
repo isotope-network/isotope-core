@@ -314,8 +314,9 @@ class ChatProvider extends ChangeNotifier {
     _safeNotify();
   }
 
-  /// Собирает все непрочитанные msg_id от указанного peerID
-  /// и отправляет одним батчем [READ]. Помечает их в _readSent.
+  /// Собирает все непрочитанные msg_id от указанного peerID,
+  /// помечает их прочитанными локально (Go) и отправляет
+  /// одним батчем [READ] собеседнику.
   void _sendReadBatchFor(String peerID) {
     if (peerID.isEmpty) return;
     final refs = <String>[];
@@ -329,6 +330,14 @@ class ChatProvider extends ChangeNotifier {
     for (final id in refs) {
       _readSent.add(id);
     }
+    // Локально — пометить прочитанными (источник истины — Go).
+    LibP2PService.markReadLocally(refs: refs).then((r) {
+      if (r.containsKey('error')) {
+        LogService.log('P2P: markReadLocally failed for $peerID: ${r['error']}');
+      }
+    }).catchError((e) {
+      LogService.log('P2P: markReadLocally exception for $peerID: $e');
+    });
     // Fire-and-forget: не блокируем UI.
     LibP2PService.sendReadBatch(refs: refs, recipient: peerID).then((r) {
       if (r.containsKey('error')) {
@@ -846,6 +855,7 @@ class ChatProvider extends ChangeNotifier {
           ttlMode: map['ttl_mode'] ?? '',
           expiresAt: Message.parseExpiresAt(map['expiresAt']),
           recipient: map['recipient'] ?? '',
+          readLocally: map['read_locally'] ?? false,
         );
       }).toList();
     } catch (_) {
@@ -929,6 +939,7 @@ class ChatProvider extends ChangeNotifier {
       ttlMode: data['ttl_mode'] ?? '',
       expiresAt: Message.parseExpiresAt(data['expiresAt']),
       recipient: data['recipient'] ?? '',
+      readLocally: data['read_locally'] ?? false,
     );
     _addMessage(msg);
   }
@@ -1114,7 +1125,18 @@ class ChatProvider extends ChangeNotifier {
           if (msg.sender != '🌐 Сеть' && msg.id.isNotEmpty) {
             final before = _messagesMap.length;
             _addMessage(msg);
-            if (_messagesMap.length > before) added++;
+            final isNew = _messagesMap.length > before;
+            if (isNew) added++;
+            // Восстановление счётчика непрочитанных: входящее,
+            // ещё не прочитано локально, чат не открыт.
+            if (isNew &&
+                !msg.isOwn &&
+                !msg.readLocally &&
+                msg.sender.isNotEmpty &&
+                msg.sender != '🌐 Сеть' &&
+                msg.sender != _currentOpenPeerID) {
+              _unreadByPeer[msg.sender] = (_unreadByPeer[msg.sender] ?? 0) + 1;
+            }
           }
         }
         LogService.log('Загружено из libp2p: ${fromLibP2P.length}, добавлено новых: $added');

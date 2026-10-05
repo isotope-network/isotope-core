@@ -1,3 +1,4 @@
+// mobile/android/app/src/main/kotlin/com/example/iso_mobile/MainActivity.kt
 package com.example.iso_mobile
 
 import android.Manifest
@@ -298,6 +299,13 @@ class MainActivity : FlutterActivity() {
                         val recipient = call.argument<String>("recipient") ?: ""
                         Thread {
                             val response = Mobile.sendReadBatch(refsJson, recipient)
+                            runOnUiThread { result.success(response) }
+                        }.start()
+                    }
+                    "markReadLocally" -> {
+                        val refsJson = call.argument<String>("refs") ?: "[]"
+                        Thread {
+                            val response = Mobile.markReadLocally(refsJson)
                             runOnUiThread { result.success(response) }
                         }.start()
                     }
@@ -887,3 +895,4 @@ class MainActivity : FlutterActivity() {
         }
     }
 }
+// mobile/android/app/src/main/kotlin/com/example/iso_mobile/MainActivity.kt

@@ -70,6 +70,7 @@ type Message struct {
 	TtlPeriodSeconds int           `json:"ttl_period_s,omitempty"` // период TTL в секундах; 0 — forever
 	TtlMode          string        `json:"ttl_mode,omitempty"`     // "after_read" | "hard" | ""
 	Status           MessageStatus `json:"status,omitempty"`       // статус доставки/прочтения; 0 — неизвестен
+	ReadLocally      bool          `json:"read_locally,omitempty"` // я прочитал это входящее; false — не прочитано
 }
 
 // Memory — потокобезопасное хранилище сообщений (без лимита)
@@ -146,6 +147,32 @@ func (m *Memory) SetStatus(id string, status MessageStatus) bool {
 		return true
 	}
 	return false
+}
+
+// MarkReadLocally — помечает входящие сообщения как прочитанные локально.
+// Возвращает количество изменённых.
+func (m *Memory) MarkReadLocally(refs []string) int {
+	if len(refs) == 0 {
+		return 0
+	}
+	set := make(map[string]bool, len(refs))
+	for _, r := range refs {
+		set[r] = true
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	changed := 0
+	for i := range m.messages {
+		if !set[m.messages[i].ID] {
+			continue
+		}
+		if m.messages[i].ReadLocally {
+			continue
+		}
+		m.messages[i].ReadLocally = true
+		changed++
+	}
+	return changed
 }
 
 // Remove — удаляет сообщение по ID. Возвращает true, если было.

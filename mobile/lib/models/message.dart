@@ -20,6 +20,9 @@ class Message {
   /// PeerID получателя (для адресных сообщений).
   /// Пусто — broadcast или история без адресата.
   final String recipient;
+  /// Я прочитал это входящее. false — не прочитано (для бейджа).
+  /// Источник истины — Go. Восстанавливается при старте.
+  final bool readLocally;
 
   Message({
     required this.id,
@@ -40,6 +43,7 @@ class Message {
     this.ttlMode = '',
     this.expiresAt,
     this.recipient = '',
+    this.readLocally = false,
   });
 
   /// Копия с обновлённым expiresAt.
@@ -63,6 +67,7 @@ class Message {
       ttlMode: ttlMode,
       expiresAt: expiresAt ?? this.expiresAt,
       recipient: recipient,
+      readLocally: readLocally,
     );
   }
 
@@ -87,6 +92,7 @@ class Message {
       ttlMode: ttlMode,
       expiresAt: expiresAt,
       recipient: recipient,
+      readLocally: readLocally,
     );
   }
 
@@ -111,6 +117,7 @@ class Message {
       ttlMode: ttlMode,
       expiresAt: expiresAt,
       recipient: recipient,
+      readLocally: readLocally,
     );
   }
 
@@ -134,6 +141,7 @@ class Message {
       ttlMode: json['ttlMode'] ?? '',
       expiresAt: Message.parseExpiresAt(json['expiresAt']),
       recipient: json['recipient'] ?? '',
+      readLocally: json['read_locally'] ?? false,
     );
   }
 

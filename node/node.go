@@ -3189,6 +3189,22 @@ func (n *Node) SendReadBatch(refs []string, recipient string) error {
 	return nil
 }
 
+// MarkReadLocally — помечает входящие сообщения как прочитанные локально.
+// Вызывается из Dart при открытии чата (перед sendReadBatch).
+// Идемпотентно. Push в Dart не делает — UI обновит _unreadByPeer сам.
+// Возвращает количество изменённых.
+func (n *Node) MarkReadLocally(refs []string) int {
+	if len(refs) == 0 {
+		return 0
+	}
+	changed := n.memory.MarkReadLocally(refs)
+	if changed > 0 {
+		log.Printf("[READ] marked %d messages as read locally", changed)
+		n.scheduleSaveState()
+	}
+	return changed
+}
+
 // sendConfirmation — общая логика отправки [DELIVERED]/[READ].
 // Version=0, Type=delivered|read, Ref=msg_id. Прямо или через relay.
 func (n *Node) sendConfirmation(msgType MessageType, ref, recipient string) error {
