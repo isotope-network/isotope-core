@@ -774,7 +774,6 @@ func (n *Node) flushPending() {
 	n.pendingMu.Lock()
 	queue := make([]Message, len(n.pendingMessages))
 	copy(queue, n.pendingMessages)
-	n.pendingMessages = nil
 	n.pendingMu.Unlock()
 
 	if len(queue) == 0 {
@@ -782,18 +781,36 @@ func (n *Node) flushPending() {
 	}
 
 	log.Printf("[QUEUE] flushing %d pending messages", len(queue))
-	var remaining []Message
+	// Переотправляем всё. Из очереди НЕ удаляем.
+	// Удаление — только при получении [DELIVERED] (removePendingByRef).
 	for _, msg := range queue {
-		if n.tryReplicate(msg) {
-			continue
-		}
-		remaining = append(remaining, msg)
+		n.tryReplicate(msg)
+	}
+	log.Printf("[QUEUE] flushed, remaining: %d", len(queue))
+}
+
+// removePendingByRef — удаляет сообщение из очереди по ID.
+// Вызывается при получении [DELIVERED] от получателя —
+// только тогда доставка считается состоявшейся.
+func (n *Node) removePendingByRef(ref string) {
+	if ref == "" {
+		return
 	}
 	n.pendingMu.Lock()
+	before := len(n.pendingMessages)
+	var remaining []Message
+	for _, m := range n.pendingMessages {
+		if m.ID != ref {
+			remaining = append(remaining, m)
+		}
+	}
 	n.pendingMessages = remaining
+	after := len(n.pendingMessages)
 	n.pendingMu.Unlock()
-	n.savePendingQueue()
-	log.Printf("[QUEUE] flushed, remaining: %d", len(remaining))
+	if before != after {
+		log.Printf("[QUEUE] removed %s from pending (delivered)", ref)
+		n.savePendingQueue()
+	}
 }
 
 func (n *Node) tryReplicate(msg Message) bool {
@@ -1526,6 +1543,9 @@ func (n *Node) isServiceType(t MessageType) bool {
 func (n *Node) handleServiceMessage(m Message) {
 	switch m.Type {
 	case TypeDelivered:
+		// Доставка состоялась — убираем из очереди pending.
+		n.removePendingByRef(m.Ref)
+
 		// Обновляем read_enabled контакта, если пришло в сообщении.
 		if m.ReadEnabled != nil && n.contacts != nil {
 			_ = n.SetContactReadEnabled(m.Sender, *m.ReadEnabled)
@@ -2124,7 +2144,11 @@ func (n *Node) replicateMessage(msg Message) {
 	}
 
 	if msg.Recipient != "" {
+		// Адресное сообщение: всегда кладём в pending.
+		// Удаление — только при получении [DELIVERED] от получателя.
+		// Успешная отправка на relay ≠ доставка получателю.
 		n.sendToRecipient(msg, data)
+		n.enqueuePending(msg)
 		return
 	}
 
