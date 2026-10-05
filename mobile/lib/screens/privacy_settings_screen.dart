@@ -14,6 +14,7 @@ class PrivacySettingsScreen extends StatefulWidget {
 
 class _PrivacySettingsScreenState extends State<PrivacySettingsScreen> {
   bool _myReadEnabled = true;
+  bool _showNotificationContent = true;
   bool _loading = true;
 
   @override
@@ -24,10 +25,12 @@ class _PrivacySettingsScreenState extends State<PrivacySettingsScreen> {
 
   Future<void> _load() async {
     try {
-      final enabled = await LibP2PService.getMyReadEnabled();
+      final readEnabled = await LibP2PService.getMyReadEnabled();
+      final showContent = await LibP2PService.getShowNotificationContent();
       if (mounted) {
         setState(() {
-          _myReadEnabled = enabled;
+          _myReadEnabled = readEnabled;
+          _showNotificationContent = showContent;
           _loading = false;
         });
       }
@@ -59,6 +62,27 @@ class _PrivacySettingsScreenState extends State<PrivacySettingsScreen> {
     }
   }
 
+  Future<void> _setShowContent(bool value) async {
+    setState(() => _showNotificationContent = value);
+    try {
+      final result = await LibP2PService.setShowNotificationContent(value);
+      if (result.containsKey('error')) {
+        LogService.log('PrivacySettings: setShowContent failed: ${result['error']}');
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Ошибка: ${result['error']}')),
+          );
+          setState(() => _showNotificationContent = !value);
+        }
+      } else {
+        LogService.log('PrivacySettings: show_notification_content=$value');
+      }
+    } catch (e) {
+      LogService.log('PrivacySettings: setShowContent exception: $e');
+      if (mounted) setState(() => _showNotificationContent = !value);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -77,6 +101,15 @@ class _PrivacySettingsScreenState extends State<PrivacySettingsScreen> {
                   ),
                   value: _myReadEnabled,
                   onChanged: _setEnabled,
+                ),
+                SwitchListTile(
+                  title: const Text('Показывать содержимое уведомлений'),
+                  subtitle: const Text(
+                    'Когда включено — в уведомлении отображается имя контакта и начало сообщения. '
+                    'Когда выключено — только «Новое сообщение».',
+                  ),
+                  value: _showNotificationContent,
+                  onChanged: _setShowContent,
                 ),
               ],
             ),
