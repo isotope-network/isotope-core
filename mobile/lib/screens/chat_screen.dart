@@ -502,23 +502,29 @@ class _ChatScreenState extends State<ChatScreen> {
                     child: Consumer<ChatProvider>(
                       builder: (_, provider, __) {
                         final blocked = provider.hasPending;
-                        return TextField(
-                          controller: _controller,
-                          enabled: !blocked,
-                          decoration: InputDecoration(
-                            hintText: blocked ? 'Подождите…' : 'Сообщение...',
-                            filled: true,
-                            fillColor: Colors.grey.shade100,
-                            border: OutlineInputBorder(
-                              borderRadius: BorderRadius.circular(24),
-                              borderSide: BorderSide.none,
-                            ),
-                            contentPadding: const EdgeInsets.symmetric(
-                              horizontal: 16,
-                              vertical: 10,
+                        return ConstrainedBox(
+                          constraints: const BoxConstraints(maxHeight: 140),
+                          child: TextField(
+                            controller: _controller,
+                            enabled: !blocked,
+                            keyboardType: TextInputType.multiline,
+                            textInputAction: TextInputAction.newline,
+                            minLines: 1,
+                            maxLines: null,
+                            decoration: InputDecoration(
+                              hintText: blocked ? 'Подождите…' : 'Сообщение...',
+                              filled: true,
+                              fillColor: Colors.grey.shade100,
+                              border: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(24),
+                                borderSide: BorderSide.none,
+                              ),
+                              contentPadding: const EdgeInsets.symmetric(
+                                horizontal: 16,
+                                vertical: 10,
+                              ),
                             ),
                           ),
-                          onSubmitted: (_) => _sendMessage(),
                         );
                       },
                     ),
