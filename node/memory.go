@@ -45,32 +45,33 @@ const (
 
 // Message — структура одного сообщения
 type Message struct {
-	ID               string      `json:"id"`
-	Text             string      `json:"text"`
-	PlainText        string      `json:"plainText,omitempty"` // открытый текст своих E2E-сообщений (v2)
-	Sender           string      `json:"sender"`
-	Time             string      `json:"time"`
-	IsOwn            bool        `json:"isOwn"`
-	Score            int         `json:"score"`
-	Weight           float64     `json:"weight"`
-	Created          time.Time   `json:"created"`
-	Archived         bool        `json:"archived"`
-	Priority         int         `json:"priority"`
-	Mode             int         `json:"mode"`
-	Relayed          bool        `json:"relayed"`
-	ExpiresAt        time.Time   `json:"expiresAt,omitempty"`
-	ReplicatedFrom   string      `json:"replicatedFrom"`         // от какого узла реплика
-	ReplicatedAt     time.Time   `json:"replicatedAt"`           // когда реплицировано
-	Recipient        string      `json:"recipient,omitempty"`    // адресат: PeerID (v1), позже — хеш E2E-ключа
-	Version          int         `json:"version,omitempty"`      // 0 = история/broadcast, 2 = E2E
-	Type             MessageType `json:"type,omitempty"`         // 0 = обычное, 1-5 = служебные (контакт-протокол)
-	Ref              string      `json:"ref,omitempty"`          // msg_id для delivered/read; request_id для accept/reject
-	Refs             []string    `json:"refs,omitempty"`         // батч: массив msg_id для [READ]. Если пуст — читать Ref
+	ID               string        `json:"id"`
+	Text             string        `json:"text"`
+	PlainText        string        `json:"plainText,omitempty"` // открытый текст своих E2E-сообщений (v2)
+	Sender           string        `json:"sender"`
+	Time             string        `json:"time"`
+	IsOwn            bool          `json:"isOwn"`
+	Score            int           `json:"score"`
+	Weight           float64       `json:"weight"`
+	Created          time.Time     `json:"created"`
+	Archived         bool          `json:"archived"`
+	Priority         int           `json:"priority"`
+	Mode             int           `json:"mode"`
+	Relayed          bool          `json:"relayed"`
+	ExpiresAt        time.Time     `json:"expiresAt,omitempty"`
+	ReplicatedFrom   string        `json:"replicatedFrom"`         // от какого узла реплика
+	ReplicatedAt     time.Time     `json:"replicatedAt"`           // когда реплицировано
+	Recipient        string        `json:"recipient,omitempty"`    // адресат: PeerID (v1), позже — хеш E2E-ключа
+	Version          int           `json:"version,omitempty"`      // 0 = история/broadcast, 2 = E2E
+	Type             MessageType   `json:"type,omitempty"`         // 0 = обычное, 1-5 = служебные (контакт-протокол)
+	Ref              string        `json:"ref,omitempty"`          // msg_id для delivered/read; request_id для accept/reject
+	Refs             []string      `json:"refs,omitempty"`         // батч: массив msg_id для [READ]. Если пуст — читать Ref
 	ReadEnabled      *bool         `json:"read_enabled,omitempty"` // настройка отправителя; nil — не передано
 	TtlPeriodSeconds int           `json:"ttl_period_s,omitempty"` // период TTL в секундах; 0 — forever
 	TtlMode          string        `json:"ttl_mode,omitempty"`     // "after_read" | "hard" | ""
 	Status           MessageStatus `json:"status,omitempty"`       // статус доставки/прочтения; 0 — неизвестен
 	ReadLocally      bool          `json:"read_locally,omitempty"` // я прочитал это входящее; false — не прочитано
+	SenderName       string        `json:"sender_name,omitempty"`  // имя отправителя (Name → RemoteName); runtime, не сохраняется в state
 }
 
 // Memory — потокобезопасное хранилище сообщений (без лимита)

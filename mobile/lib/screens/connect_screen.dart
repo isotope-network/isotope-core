@@ -175,6 +175,18 @@ class _ConnectScreenState extends State<ConnectScreen> {
         });
         LogService.log('ConnectScreen: peerSeen $peerID → alive');
       });
+
+      // Слушаем openChat — тап по уведомлению → открыть чат с peerID.
+      chatProvider.openChatStream.listen((peerID) {
+        if (!mounted || peerID.isEmpty) return;
+        LogService.log('ConnectScreen: openChat для $peerID');
+        final index = _discoveredNodes.indexWhere((n) => n.peerID == peerID);
+        if (index >= 0) {
+          _connectToNode(_discoveredNodes[index]);
+        } else {
+          _findAndConnectByPeerId(peerID);
+        }
+      });
     });
 
     // Обработка initialAction — после первого кадра,

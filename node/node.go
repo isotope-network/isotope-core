@@ -1362,6 +1362,7 @@ func (n *Node) handleStream(stream network.Stream) {
 						return
 					}
 					replicaMsg.Text = plaintext
+					replicaMsg.SenderName = n.nameForPeer(replicaMsg.Sender)
 					if n.memory.Add(replicaMsg) {
 						log.Printf("[REPLICA] decrypted message for us: %s", replicaMsg.ID)
 						// Подтверждаем доставку отправителю (напрямую или через relay).
@@ -1399,6 +1400,7 @@ func (n *Node) handleStream(stream network.Stream) {
 					}
 					return
 				}
+				replicaMsg.SenderName = n.nameForPeer(replicaMsg.Sender)
 				if n.memory.Add(replicaMsg) {
 					log.Printf("[REPLICA] received addressed message for us: %s", replicaMsg.ID)
 					if n.messageHook != nil {
@@ -1921,6 +1923,7 @@ func (n *Node) handleReplicaData(data string) {
 				}
 				replicaMsg.ReplicatedAt = time.Now()
 				replicaMsg.IsOwn = false
+				replicaMsg.SenderName = n.nameForPeer(replicaMsg.Sender)
 				if n.memory.Add(replicaMsg) {
 					go n.replicateMessage(replicaMsg)
 					if n.messageHook != nil {
@@ -2123,6 +2126,7 @@ func (n *Node) processMessageRelayed(msg string, senderID string) {
 		Mode:     1,
 		Relayed:  true,
 	}
+	newMsg.SenderName = n.nameForPeer(newMsg.Sender)
 	if n.memory.Add(newMsg) {
 		n.replicateMessage(newMsg)
 		if n.messageHook != nil {
@@ -3790,6 +3794,23 @@ func (n *Node) SetMyDisplayName(name string) error {
 	return n.settingsStore.SetMyDisplayName(name)
 }
 
+// GetShowNotificationContent — показывать ли содержимое в уведомлениях.
+// Источник истины — settingsStore.
+func (n *Node) GetShowNotificationContent() bool {
+	if n.settingsStore == nil {
+		return true
+	}
+	return n.settingsStore.GetShowNotificationContent()
+}
+
+// SetShowNotificationContent — устанавливает настройку и сохраняет.
+func (n *Node) SetShowNotificationContent(enabled bool) error {
+	if n.settingsStore == nil {
+		return fmt.Errorf("settings store not initialized")
+	}
+	return n.settingsStore.SetShowNotificationContent(enabled)
+}
+
 // GetDeletedPeers — возвращает список удалённых peerID (для Dart).
 // Dart фильтрует _discoveredNodes по этому списку — удалённые не показываются.
 func (n *Node) GetDeletedPeers() []string {
@@ -3868,6 +3889,33 @@ func (n *Node) GetContact(peerID string) (Contact, bool) {
 		return Contact{}, false
 	}
 	return n.contacts.Get(peerID)
+}
+
+// nameForPeer — возвращает имя отправителя по приоритету:
+//   - свой peerID → MyDisplayName;
+//   - контакт → Name → RemoteName;
+//   - иначе — пусто (UI возьмёт короткий PeerID).
+func (n *Node) nameForPeer(peerID string) string {
+	if peerID == "" {
+		return ""
+	}
+	if n.host != nil && peerID == n.host.ID().String() {
+		if n.settingsStore != nil {
+			return n.settingsStore.GetMyDisplayName()
+		}
+		return ""
+	}
+	if n.contacts != nil {
+		if c, ok := n.contacts.Get(peerID); ok {
+			if c.Name != "" {
+				return c.Name
+			}
+			if c.RemoteName != "" {
+				return c.RemoteName
+			}
+		}
+	}
+	return ""
 }
 
 // AddTempContact — добавляет временный контакт (только в памяти).

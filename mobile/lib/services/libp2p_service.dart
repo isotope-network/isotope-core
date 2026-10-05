@@ -343,6 +343,41 @@ class LibP2PService {
     }
   }
 
+  /// Возвращает настройку показа содержимого в уведомлениях.
+  /// true — имя + превью. false — «Новое сообщение».
+  static Future<bool> getShowNotificationContent() async {
+    try {
+      final response = await _channel.invokeMethod<String>('getShowNotificationContent');
+      final decoded = _safeDecode(response, fallback: '{"show_notification_content":true}');
+      return decoded['show_notification_content'] as bool? ?? true;
+    } on PlatformException {
+      return true;
+    }
+  }
+
+  /// Устанавливает настройку показа содержимого в уведомлениях.
+  static Future<Map<String, dynamic>> setShowNotificationContent(bool enabled) async {
+    try {
+      final response = await _channel.invokeMethod<String>('setShowNotificationContent', {
+        'enabled': enabled,
+      });
+      return _safeDecode(response);
+    } on PlatformException catch (e) {
+      return {'error': e.message ?? 'platform_error', 'operation': 'set_show_notification_content'};
+    }
+  }
+
+  /// Возвращает peerID для открытия чата (после тапа по уведомлению).
+  /// Одноразовый: возвращает и очищает. Пустая строка — нет.
+  static Future<String> getPendingOpenChat() async {
+    try {
+      final response = await _channel.invokeMethod<String>('getPendingOpenChat');
+      return response ?? '';
+    } on PlatformException {
+      return '';
+    }
+  }
+
   /// Возвращает представление по умолчанию.
   static Future<String> getMyDisplayName() async {
     try {

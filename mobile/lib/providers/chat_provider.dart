@@ -123,6 +123,11 @@ class ChatProvider extends ChangeNotifier {
       StreamController<String>.broadcast();
   Stream<String> get peerSeenStream => _peerSeenController.stream;
 
+  // Событие: тап по уведомлению → открыть чат с peerID.
+  final StreamController<String> _openChatController =
+      StreamController<String>.broadcast();
+  Stream<String> get openChatStream => _openChatController.stream;
+
   // Разовое представление для [CONTACT_REQUEST].
   // Пользователь вводит в диалоге — сохраняем до получения ACK,
   // потом передаём в sendContactRequest. Не меняет MyDisplayName.
@@ -540,6 +545,17 @@ class ChatProvider extends ChangeNotifier {
     _messageSub?.cancel();
     _messageSub = LibP2PService.getMessageStream().listen((messageJSON) {
       try {
+        // Специальное событие: тап по уведомлению → открыть чат.
+        if (messageJSON.contains('"open_chat"')) {
+          final map = jsonDecode(messageJSON) as Map<String, dynamic>;
+          final peerID = map['open_chat'] as String? ?? '';
+          if (peerID.isNotEmpty) {
+            LogService.log('P2P: событие open_chat → $peerID');
+            _openChatController.add(peerID);
+          }
+          return;
+        }
+
         final map = jsonDecode(messageJSON) as Map<String, dynamic>;
         final isOwn = map['isOwn'] ?? false;
         final sender = map['sender'] ?? '';
@@ -678,6 +694,9 @@ class ChatProvider extends ChangeNotifier {
       // После миграции — пересчитать имена (и, возможно, бейджи).
       await loadPeerNames();
 
+      // Проверяем, не был ли тап по уведомлению до старта UI.
+      await _checkPendingOpenChat();
+
       _startStatusPolling();
       _startPurgeTimer();
       await loadTtl();
@@ -807,6 +826,20 @@ class ChatProvider extends ChangeNotifier {
       signature: signature,
     ));
     LogService.log('HelloAck: [CONTACT_REQUEST] отправлен $peerID');
+  }
+
+  /// Проверяет, не был ли тап по уведомлению до старта UI.
+  /// Если да — эмитит событие openChatStream.
+  Future<void> _checkPendingOpenChat() async {
+    try {
+      final peerID = await LibP2PService.getPendingOpenChat();
+      if (peerID.isNotEmpty) {
+        LogService.log('P2P: pendingOpenChat при старте → $peerID');
+        _openChatController.add(peerID);
+      }
+    } catch (e) {
+      LogService.log('P2P: _checkPendingOpenChat ERROR: $e');
+    }
   }
 
   void _safeNotify() {
@@ -1393,6 +1426,7 @@ class ChatProvider extends ChangeNotifier {
     _contactAcceptController.close();
     _contactRejectController.close();
     _peerSeenController.close();
+    _openChatController.close();
     stopLibP2P();
     super.dispose();
   }

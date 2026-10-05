@@ -467,6 +467,36 @@ func SetMyDisplayName(name string) string {
 	return `{"status":"ok"}`
 }
 
+// GetShowNotificationContent — возвращает настройку показа содержимого уведомлений.
+func GetShowNotificationContent() string {
+	nodeMu.Lock()
+	defer nodeMu.Unlock()
+
+	if node == nil {
+		return `{"show_notification_content":true}`
+	}
+	enabled := node.GetShowNotificationContent()
+	if enabled {
+		return `{"show_notification_content":true}`
+	}
+	return `{"show_notification_content":false}`
+}
+
+// SetShowNotificationContent — устанавливает настройку показа содержимого.
+func SetShowNotificationContent(enabled bool) string {
+	nodeMu.Lock()
+	defer nodeMu.Unlock()
+
+	if node == nil {
+		return errorJSON("node not started")
+	}
+	if err := node.SetShowNotificationContent(enabled); err != nil {
+		return errorJSON(err.Error())
+	}
+	addLog("[SETTINGS] show_notification_content set: %v", enabled)
+	return `{"status":"ok"}`
+}
+
 // GetMyDisplayName — возвращает представление по умолчанию.
 func GetMyDisplayName() string {
 	nodeMu.Lock()

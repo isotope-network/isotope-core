@@ -2,6 +2,9 @@
 package com.example.iso_mobile
 
 import android.Manifest
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.app.PendingIntent
 import android.bluetooth.BluetoothAdapter
 import android.bluetooth.BluetoothDevice
 import android.bluetooth.BluetoothGatt
@@ -15,12 +18,16 @@ import android.bluetooth.le.AdvertiseData
 import android.bluetooth.le.AdvertiseSettings
 import android.bluetooth.le.BluetoothLeAdvertiser
 import android.content.Context
+import android.content.Intent
 import android.content.pm.PackageManager
+import android.os.Build
 import android.net.nsd.NsdManager
 import android.net.nsd.NsdServiceInfo
-import android.os.Build
 import android.os.ParcelUuid
 import android.util.Log
+import androidx.core.app.ActivityCompat
+import androidx.core.app.NotificationCompat
+import androidx.core.app.NotificationManagerCompat
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.EventChannel
@@ -67,12 +74,23 @@ class MainActivity : FlutterActivity() {
     private var saveLogText: String? = null
     private val SAVE_LOG_REQUEST_CODE = 1001
 
+    // Уведомления и foreground-состояние.
+    private var isForeground: Boolean = true
+    private var pendingOpenChat: String? = null
+    private var notificationChannelCreated: Boolean = false
+    private val NOTIFICATION_CHANNEL_ID = "isotope_messages"
+    private val NOTIFICATION_CHANNEL_NAME = "Сообщения"
+    private val NOTIFICATION_REQUEST_CODE = 2001
+    private val NOTIFICATION_PERMISSION_REQUEST_CODE = 2002
+
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
         nsdManager = getSystemService(Context.NSD_SERVICE) as NsdManager
 
         Mobile.setFilesDir(filesDir.absolutePath)
         IsotopeService.start(this)
+        createNotificationChannel()
+        requestNotificationPermissionIfNeeded()
 
         // NSD MethodChannel
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, METHOD_CHANNEL)
@@ -354,6 +372,19 @@ class MainActivity : FlutterActivity() {
                             runOnUiThread { result.success(response) }
                         }.start()
                     }
+                    "getShowNotificationContent" -> {
+                        Thread {
+                            val response = Mobile.getShowNotificationContent()
+                            runOnUiThread { result.success(response) }
+                        }.start()
+                    }
+                    "setShowNotificationContent" -> {
+                        val enabled = call.argument<Boolean>("enabled") ?: true
+                        Thread {
+                            val response = Mobile.setShowNotificationContent(enabled)
+                            runOnUiThread { result.success(response) }
+                        }.start()
+                    }
                     "setTtl" -> {
                         val period = call.argument<String>("period") ?: "forever"
                         val mode = call.argument<String>("mode") ?: ""
@@ -414,6 +445,11 @@ class MainActivity : FlutterActivity() {
                     }
                     "getFilesDir" -> {
                         result.success(filesDir.absolutePath)
+                    }
+                    "getPendingOpenChat" -> {
+                        val peer = pendingOpenChat ?: ""
+                        pendingOpenChat = null
+                        result.success(peer)
                     }
                     "getLogs" -> {
                         result.success(Mobile.getLogs())
@@ -513,6 +549,9 @@ class MainActivity : FlutterActivity() {
                         override fun onMessage(message: String) {
                             runOnUiThread {
                                 runCatching { messageEventSink?.success(message) }
+                                if (!isForeground) {
+                                    showMessageNotification(message)
+                                }
                             }
                         }
                     })
@@ -526,6 +565,22 @@ class MainActivity : FlutterActivity() {
 
         val bluetoothManager = getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager
         bluetoothAdapter = bluetoothManager.adapter
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        handleIntentForChatOpen(intent)
+    }
+
+    override fun onResume() {
+        super.onResume()
+        isForeground = true
+    }
+
+    override fun onPause() {
+        super.onPause()
+        isForeground = false
     }
 
     override fun onDestroy() {
@@ -558,6 +613,110 @@ class MainActivity : FlutterActivity() {
             saveLogResult = null
             saveLogText = null
         }
+    }
+
+    private fun createNotificationChannel() {
+        if (notificationChannelCreated) return
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val channel = NotificationChannel(
+                NOTIFICATION_CHANNEL_ID,
+                NOTIFICATION_CHANNEL_NAME,
+                NotificationManager.IMPORTANCE_HIGH
+            ).apply {
+                description = "Уведомления о новых сообщениях"
+            }
+            val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            nm.createNotificationChannel(channel)
+        }
+        notificationChannelCreated = true
+    }
+
+    private fun requestNotificationPermissionIfNeeded() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            if (ActivityCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS)
+                != PackageManager.PERMISSION_GRANTED) {
+                ActivityCompat.requestPermissions(
+                    this,
+                    arrayOf(Manifest.permission.POST_NOTIFICATIONS),
+                    NOTIFICATION_PERMISSION_REQUEST_CODE
+                )
+            }
+        }
+    }
+
+    private fun showMessageNotification(messageJson: String) {
+        try {
+            val map = org.json.JSONObject(messageJson)
+
+            // Только входящие, не свои, не служебные.
+            val isOwn = map.optBoolean("isOwn", false)
+            val type = map.optInt("type", 0)
+            if (isOwn || type != 0) return
+
+            val sender = map.optString("sender", "")
+            if (sender.isEmpty()) return
+
+            val senderName = map.optString("sender_name", "")
+            val displaySender = if (senderName.isNotEmpty()) senderName
+                                else if (sender.length > 12) sender.substring(0, 12) + "…"
+                                else sender
+
+            // Заголовок и текст.
+            val ttlMode = map.optString("ttl_mode", "")
+            val showContentResp = Mobile.getShowNotificationContent()
+            val showContent = showContentResp.contains("\"show_notification_content\":true")
+
+            val title = displaySender
+            val body = if (!showContent) {
+                "Новое сообщение"
+            } else if (ttlMode.isNotEmpty()) {
+                "Исчезающее сообщение"
+            } else {
+                val text = if (map.optString("plainText", "").isNotEmpty() && isOwn) {
+                    map.optString("plainText")
+                } else {
+                    map.optString("text", "")
+                }
+                if (text.length > 50) text.substring(0, 50) + "…" else text
+            }
+
+            // Тап → открыть чат.
+            val intent = Intent(this, MainActivity::class.java).apply {
+                flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
+                putExtra("peer_id", sender)
+            }
+            val pendingIntent = PendingIntent.getActivity(
+                this,
+                sender.hashCode(),
+                intent,
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            )
+
+            val builder = NotificationCompat.Builder(this, NOTIFICATION_CHANNEL_ID)
+                .setSmallIcon(android.R.drawable.ic_dialog_email)
+                .setContentTitle(title)
+                .setContentText(body)
+                .setPriority(NotificationCompat.PRIORITY_HIGH)
+                .setAutoCancel(true)
+                .setContentIntent(pendingIntent)
+
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                if (ActivityCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS)
+                    != PackageManager.PERMISSION_GRANTED) {
+                    return
+                }
+            }
+            NotificationManagerCompat.from(this).notify(sender.hashCode(), builder.build())
+        } catch (e: Exception) {
+            Log.e("MainActivity", "showMessageNotification error: ${e.message}")
+        }
+    }
+
+    private fun handleIntentForChatOpen(intent: Intent?) {
+        val peerId = intent?.getStringExtra("peer_id") ?: return
+        if (peerId.isEmpty()) return
+        pendingOpenChat = peerId
+        runCatching { messageEventSink?.success("{\"open_chat\":\"$peerId\"}") }
     }
 
     private fun sendEvent(data: Map<String, Any>) {

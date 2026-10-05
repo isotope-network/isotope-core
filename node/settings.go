@@ -24,6 +24,9 @@ type Settings struct {
 	// TtlMode — режим удаления: "after_read" | "hard".
 	// nil — при "forever" (нет режима).
 	TtlMode *string `json:"ttl_mode"`
+	// ShowNotificationContent — показывать ли текст сообщения в уведомлении.
+	// true (дефолт) — имя + превью. false — «Новое сообщение».
+	ShowNotificationContent bool `json:"show_notification_content"`
 }
 
 // SETTINGS_VERSION — текущая версия формата.
@@ -42,8 +45,9 @@ func NewSettingsStore(file string) *SettingsStore {
 	s := &SettingsStore{
 		file: file,
 		data: Settings{
-			V:             SETTINGS_VERSION,
-			MyReadEnabled: true, // дефолт: делюсь статусом прочтения
+			V:                       SETTINGS_VERSION,
+			MyReadEnabled:           true, // дефолт: делюсь статусом прочтения
+			ShowNotificationContent: true, // дефолт: показывать содержимое
 		},
 	}
 	if err := s.Load(); err != nil {
@@ -91,6 +95,10 @@ func (s *SettingsStore) Load() error {
 	_ = json.Unmarshal(data, &raw)
 	if _, ok := raw["my_read_enabled"]; !ok {
 		loaded.MyReadEnabled = true
+	}
+	// Обратная совместимость: старый файл без show_notification_content.
+	if _, ok := raw["show_notification_content"]; !ok {
+		loaded.ShowNotificationContent = true
 	}
 
 	// Миграция my_ttl → ttl_period + ttl_mode.
@@ -167,6 +175,25 @@ func (s *SettingsStore) GetMyDisplayName() string {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.data.MyDisplayName
+}
+
+// GetShowNotificationContent — показывать ли содержимое в уведомлении.
+func (s *SettingsStore) GetShowNotificationContent() bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.data.ShowNotificationContent
+}
+
+// SetShowNotificationContent — устанавливает и сохраняет.
+func (s *SettingsStore) SetShowNotificationContent(enabled bool) error {
+	s.mu.Lock()
+	if s.data.ShowNotificationContent == enabled {
+		s.mu.Unlock()
+		return nil
+	}
+	s.data.ShowNotificationContent = enabled
+	s.mu.Unlock()
+	return s.Save()
 }
 
 // GetTtl — возвращает период и режим удаления сообщений.
