@@ -2,9 +2,9 @@
 
 ## Текущий статус
 
-**Версия:** v1.28.0 (право на забвение)
+**Версия:** v1.29.0 (единый источник истины)
 
-Ядро — библиотека (package core). Контакт-протокол работает. Система имён. Статусы. Таймер. TTL с двумя режимами. FLAG_SECURE. Удаление контакта.
+Ядро — библиотека. Контакт-протокол. Система имён. TTL. Batch [READ]. Message.Status. Message.ReadLocally. Offline-очередь до [DELIVERED]. Multiline input.
 
 ---
 
@@ -16,116 +16,107 @@
 - Ассоциативная память
 - WebSocket + TLS
 - Обфускация AES-GCM
-- Голосовая стеганография (LSB в WAV)
+- Голосовая стеганография
 - Onion Routing v2
-- Исчезающие сообщения (TTL)
-- Локальное шифрование (AES-256-GCM)
-- Селф-хилинг (heartbeat)
+- TTL
+- Локальное шифрование
+- Селф-хилинг
 - Репликация
 - Самоадаптация
-- Каналы с весовыми уровнями
-- Весовая модель доступа
+- Каналы
+- Весовая модель
 - Эмерджентное доверие
-- Этический хеш: 7 заповедей
-- Нейросеть: 100-мерные векторы, биграммы
+- Этический хеш
+- Нейросеть
 
 ### Рефакторинг (v1.18.1)
 - package main → package core
 - Точка входа: node/main/main.go
-- Экспорт API
 
 ### Мобильная версия (v1.19.0)
-- libp2p через FFI (.aar)
+- libp2p через FFI
 - Стабильный PeerID
 - Обработка смены сети
-- NodeInfo, heartbeat
-- Логирование Go → Flutter
 - NSD-обнаружение
 
 ### Мобильная стабилизация (v1.21.0)
 - Единый ID сообщений
-- Non-blocking Mobile calls (ANR устранён)
+- Non-blocking Mobile calls
 - Reconnect loop
 - Бейдж непрочитанных
 
 ### Foreground Service (v1.22.0)
-- Foreground Service (Android)
+- Foreground Service
 - Battery Optimization Whitelist
 - Отображение пиров через libp2p
 
 ### Relay-circuit (v1.23.0)
 - Multi-address ANNOUNCE
-- Relay-circuit (client.Reserve)
-- Flush on reconnect (три уровня)
+- Relay-circuit
+- Flush on reconnect
 
 ### E2E-шифрование (v1.24.0)
-- 4.1 E2E keypair, QR v:1
-- 4.2 Recipient, адресная маршрутизация
-- 4.3.1 Ed25519 + X25519 ключи
-- 4.3.2 isotope_contacts.json
-- 4.3.3 E2E-шифрование (box.Seal, Version=2)
-- 4.4 Ed25519 подпись над peerID || x25519_pub
-- Backoff reconnect 1 → 30 сек
+- X25519 + Ed25519 ключи
+- box.Seal, Version=2
+- Ed25519 подпись
+- Backoff reconnect
 - Параллельный dial
-- TTL 5 → 8 мин
 
 ### UI 1.1–1.3 (v1.25.0)
-- UI 1.1: терминология
-- UI 1.2: единый вход «Добавить контакт»
-- UI 1.3: пустое состояние с кнопкой
+- Терминология
+- Единый вход «Добавить контакт»
+- Пустое состояние
 
 ### Стабильность (v1.26.0)
-- PlainText для своих E2E-сообщений
-- Автоочистка старых E2E без PlainText
+- PlainText
+- Автоочистка
 - Self-QR блокируется
-- Relay: refresh reservation on reconnect
-- Relay: exponential backoff
+- Relay: refresh + backoff
 - Retry loading contacts
-- Upsert nodes on alive-event
 
 ### Контакт-протокол и имена (v1.27.0)
-- Bootstrap-handshake: [HELLO] → [ACK] → [REQUEST] → [ACCEPT]
-- Открытые сервисные — через bootstrap
-- E2E — circuit → bootstrap fallback
+- Bootstrap-handshake
 - tempContacts
 - Push через messageHook
-- Симметрия: confirmed: true
+- Симметрия: confirmed
 - Система имён: Name / RemoteName / PeerID
-- MyDisplayName в Settings
-- QR содержит display_name
+- MyDisplayName
 - Диалог «Как вас представить?»
-- Профиль → «Ваше имя»
-- Долгий тап → Открыть / Переименовать / Удалить
-- Предупреждение о безопасности
 
-### TTL и право на забвение (v1.28.0)
+### TTL (v1.28.0)
 - Периоды: 10s / 30s / 1m / 5m / 15m / 30m / 1h / 4h / 24h / never
 - Режимы: hard / after_read
-- [TTL_UPDATE] (Type=8) — авто-hard
-- Fallback 48 часов
-- DeleteExpired в cleanupLoop (1 мин)
-- FLAG_SECURE: TTL 10s–1m
-- Бейдж + превью синхронно
+- [TTL_UPDATE] (Type=8)
+- Fallback 48 ч
+- FLAG_SECURE
 - Удаление контакта: тихий отказ
-- isotope_deleted.json
-- Per-chat / per-peer: сообщения, черновики, непрочитанные
-- [READ] только для текущего чата
-- UI: настройки TTL, оранжевые периоды, умный формат времени
+- Per-chat / per-peer
+- UI: настройки TTL
+
+### Единый источник истины (v1.29.0)
+- Single source of names
+- Batch [READ] — Message.Refs
+- Message.Status (перенос из MessageStatus)
+- Message.ReadLocally
+- Offline-очередь: pending до [DELIVERED]
+- Multiline input
 
 ---
 
 ## В работе / Ближайшие задачи
 
 ### Приоритет 1 (сейчас)
-- 🔜 **connect_screen — единый источник имени** (убрать _contactNames, _displayName → chatProvider.nameFor)
 - 🔜 **[PROFILE_UPDATE]** (Type=9) — смена read_enabled / display_name без QR
-- 🔜 **Батч [READ]** — массив msg_id в одном вызове
+- 🔜 **TTL для tempContacts** (5 минут)
+- 🔜 **VPS reconnectLoop** — отключить на relay-сервере
+- 🔜 **Уведомления системы**
 
 ### Приоритет 2
-- 🔜 **Circuit direct при 15+ узлах**
-- 🔜 Foreground service — разное поведение Xiaomi/Huawei
-- 🔜 VPS reconnectLoop — шумит вхолостую
-- 🔜 messageStatus — рост. Чистка при удалении / архивации
+- 🔜 Circuit direct при 15+ узлах
+- 🔜 Foreground service — разное поведение Xiaomi / Huawei
+- 🔜 Полупрозрачность pending-сообщения
+- 🔜 TTL в настройках — перенести из chat_screen
+- 🔜 Черновик UI — тап по 📝 → возврат в поле
 
 ### Приоритет 3
 - 🔜 DHT Provide — падает при малом числе пиров
@@ -156,20 +147,21 @@
 
 ### v3.0 — ISOTOPE AI Mesh
 - Распределённый инференс ИИ
-- Swarm Inference: PeerRankedConsensus
+- Swarm Inference
 - Семантическая маршрутизация
-- Облегчённые модели на узлах
+- Федеративное обучение
+- Анонимный сбор данных
 - Этический паспорт моделей
+- **Интеллект без хозяина**
 
 ### v3.1 — Развитие AI Mesh
-- (внутренняя разработка, детали не публикуются)
+- (внутренняя разработка)
 
 ### v4.0 — Полная автономия
-- Сеть без интернета (offline-first)
+- Сеть без интернета
 - Mesh-сообщества (isotope.zone)
 - Самоорганизация без bootstrap
 - Полный иммунитет (100+ узлов)
-- Саморегуляция
 
 ---
 
@@ -193,10 +185,6 @@
 - DHT Provide — при малом числе пиров
 - Уведомления системы
 - Оптимизация ANNOUNCE
-- История имён
-- Разные имена у одного пользователя
-- Голос / видео (v2.0+)
-- Групповые чаты (G4)
 
 ---
 
@@ -207,7 +195,7 @@
 - PeerID: QmR8u5YFdcKpM2onQvk7KV5qioai87aysi9JWLdV1LX1bi
 - Bootstrap: /ip4/186.246.31.176/tcp/9001/ws/p2p/QmR8u5YFdcKpM2onQvk7KV5qioai87aysi9JWLdV1LX1bi
 - Порты: 9000 (TCP), 9001 (WS), 8081 (HTTP API)
-- Роль: временная инфраструктура
+- Роль: временная инфраструктура (relay для узлов за NAT)
 
 ### Телефоны (тестовые)
 - Xiaomi: QmTtUkwXmx9vnUSTLCfdPZn6MNaPkFbxTMHjofFzHMfUz5
@@ -224,7 +212,7 @@ sleep 3
 pgrep -f isotope-node          # один, новый
 curl -s http://127.0.0.1:8081/status
 
-НЕ удалять /root/isotope/state/
+НЕ удалять /root/isotope/state/.
 
 ### Сборка .aar
 cd /d D:\isotope\node
@@ -246,10 +234,11 @@ flutter build apk --debug
 2. **UI и стабильность** — v1.25–v1.26 (закрыто)
 3. **Контакты и идентификация** — v1.27 (закрыто)
 4. **Право на забвение** — v1.28 (закрыто)
-5. **Мелкие UX + инфраструктура** — сейчас
-6. **Onion, padding, mixing** — v2.0+
-7. **AI Mesh** — v3.0
-8. **Полная автономия** — v4.0
+5. **Единый источник истины** — v1.29 (закрыто)
+6. **Мелкие UX + инфраструктура** — сейчас
+7. **Onion, padding, mixing** — v2.0+
+8. **AI Mesh** — v3.0
+9. **Полная автономия** — v4.0
 
 Каждый этап — новый уровень децентрализации.
 VPS отключается, когда DHT и hole punching закроют его роль.

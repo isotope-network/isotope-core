@@ -13,7 +13,7 @@ ISOTOPE — инфраструктура для этичного, неуязви
 
 ---
 
-## Структура ядра (v1.28.0)
+## Структура ядра (v1.29.0)
 
 Ядро ISOTOPE — **библиотека** (пакет `core`).
 
@@ -47,6 +47,8 @@ func ConnectToPeer(node *Node, addr string) error
 
 func (n *Node) SendMessage(text string, ttl int) (string, error)
 func (n *Node) SendToPeer(recipient, text string, ttl int) (string, error)
+func (n *Node) SendReadBatch(refs []string, recipient string) error
+func (n *Node) MarkReadLocally(refs []string) error
 func (n *Node) AddContact(...) error
 func (n *Node) RemoveContact(peerID string) error
 func (n *Node) RenameContact(peerID, localName string) error
@@ -55,26 +57,51 @@ func (n *Node) GetPeers() []string
 func (n *Node) GetWeight() float64
 func (n *Node) GetStatus() string
 
+### Структура Message
+
+type Message struct {
+    ID               string
+    Recipient        string
+    Sender           string
+    Text             string
+    PlainText        string
+    TTL              int
+    Priority         int
+    Timestamp        int64
+    Version          int          // 0 = история, 2 = E2E
+    Type             MessageType  // 0 = обычное, 1-9 = служебные
+    Ref              string       // одиночная ссылка
+    Refs             []string     // массив ссылок (батч)
+    Status           MessageStatus // sent / delivered / read / hidden
+    ReadLocally      bool         // я прочитал входящее
+    TtlPeriodSeconds int          // 0 = never
+    TtlMode          string       // "after_read" | "hard" | ""
+    ExpiresAt        time.Time
+    ReadEnabled      *bool
+}
+
 ---
 
 ## Мобильная обёртка (mobile.go)
 
-**Статус:** работает (v1.28.0)
+**Статус:** работает (v1.29.0)
 
 ### Методы (возвращают JSON-строки)
 
 | Метод | Описание |
 |-------|----------|
-| Start(stateFile string) | Запуск узла, восстановление PeerID |
+| Start(stateFile) | Запуск узла |
 | Send(text, ttl) | Отправка (broadcast) |
-| SendToPeer(recipient, text, ttl) | Отправка контакту (E2E) |
+| SendToPeer(recipient, text, ttl) | Отправка контакту |
+| SendReadBatch(refs, recipient) | Батч [READ] |
+| MarkReadLocally(refs) | Пометить прочитанным локально |
 | GetMessages() | Список сообщений |
 | GetPeers() | Список пиров |
 | GetWeight() | Вес узла |
 | GetStatus() | JSON-статус |
-| GetMultiaddrs() | Список адресов узла |
-| ConnectToPeer(addr) | Подключение к пиру |
-| ConnectToPeerWithFallback(addrs) | Подключение с перебором |
+| GetMultiaddrs() | Список адресов |
+| ConnectToPeer(addr) | Подключение |
+| ConnectToPeerWithFallback(addrs) | С перебором |
 | Announce(json) | Публикация адресов |
 | FindPeerByID(peerID) | Поиск пира |
 | AddContact(...) | Добавить контакт |
@@ -88,24 +115,6 @@ func (n *Node) GetStatus() string
 | SetTtl(period, mode) | TTL |
 | GetMyQRData() | QR-данные |
 
-### Ключевые особенности
-
-- libp2p через FFI (.aar)
-- Non-blocking вызовы
-- Стабильный PeerID
-- Смена сети (connectivity_plus)
-- Reconnect loop (exponential backoff)
-- Flush on reconnect (три уровня)
-- Логирование Go → Flutter
-- Динамический поиск порта
-- NSD-обнаружение
-
-### Архитектурное ограничение (Android)
-
-- InterfaceListenAddresses недоступен
-- Получение IP — только через Dart
-- Обход: QR через PeerID + ключи
-
 ---
 
 ## E2E-шифрование (v1.24)
@@ -117,8 +126,6 @@ func (n *Node) GetStatus() string
 | PeerID | Идентификация | RSA 2048 | isotope_state.json.key |
 | Ed25519 | Подпись | Ed25519 | isotope_state.json.ed25519.key |
 | X25519 | Шифрование E2E | X25519 | isotope_state.json.x25519.key |
-
-Публичные ключи вычисляются из приватных.
 
 ### QR-формат (v1)
 
@@ -166,11 +173,79 @@ func (n *Node) GetStatus() string
   ]
 }
 
-### PlainText
+---
 
-- Message.PlainText — открытый текст для UI
-- Свои E2E: Text = шифротекст, PlainText = открытый
-- UI показывает PlainText для isOwn && Version == 2
+## Единый источник истины (v1.29)
+
+**Принцип:** если поле выводимо из `Message` — оно в `Message`.
+
+### Message.Status (v1.29)
+
+**Было:** `MessageStatus` — отдельный map в Node и State.
+
+**Проблема:** второй источник истины. Четыре пути удаления сообщений не чистили map.
+
+**Стало:** `Message.Status`.
+
+- Удаляется сообщение → уходит статус.
+- Автоматически, во всех путях.
+- `Memory.SetStatus(id, status)` — по образцу `SetExpiresAt`.
+- Миграция: при `loadState` старый `messageStatus` → `Message.Status`.
+- Лог: `[STATUS] migrated N statuses to Message.Status`.
+
+### Message.ReadLocally (v1.29)
+
+**Было:** `_readSent` в Dart (Set<String> в SharedPreferences).
+
+**Проблема:** второй источник истины. При перезапуске — теряется.
+
+**Стало:** `Message.ReadLocally bool`.
+
+- `Memory.MarkReadLocally(refs)`.
+- Dart: `_sendReadBatchFor` → `markReadLocally` перед `sendReadBatch`.
+- При `loadMessages` — пересчёт `_unreadByPeer` для `readLocally == false`.
+- Миграция: `_readSent` → `markReadLocally`, флаг `read_sent_migrated`.
+
+### Message.Refs (v1.29)
+
+**Было:** `[READ]` по одному на сообщение.
+
+**Стало:** `Message.Refs []string` — массив.
+
+- `Ref` — одиночная ссылка.
+- `Refs` — батч.
+- Обратная совместимость: если `Refs` пуст — читаем `Ref`.
+- Version 0. Обратная совместимость через содержимое поля.
+- `SendReadBatch(refs, recipient)`.
+- `handleServiceMessage` case `TypeRead` — цикл по `Refs`.
+
+---
+
+## Offline-очередь (v1.29)
+
+**Проблема:** оффлайн-получатель. VPS не буферизует.
+
+**Решение:** pending до `[DELIVERED]`.
+
+- `replicateMessage` — при адресном всегда `enqueuePending`.
+- `flushPending` — не удаляет из очереди, только переотправляет.
+- `removePendingByRef(ref)` — удаление по `[DELIVERED]`.
+- `case TypeDelivered` → `removePendingByRef(m.Ref)`.
+- Триггеры: `ConnectedF` (Notifiee) + `announceLoop` (4 мин).
+
+**Проверено:** 10 сообщений подряд, получатель оффлайн → при появлении приходят мгновенно пачкой.
+
+**VPS — курьер, не хранилище.**
+
+---
+
+## Миграции (v1.29)
+
+**Обязательны. Старые данные не теряются.**
+
+- `messageStatus` → `Message.Status`.
+- `_readSent` → `ReadLocally`.
+- Каждая миграция логируется.
 
 ---
 
@@ -180,16 +255,12 @@ func (n *Node) GetStatus() string
 Ты предлагаешь. Я принимаю. Или отклоняю.
 Без принуждения. Без навязывания.
 
-Bootstrap-handshake — это не технический ритуал.
-Это социальный акт: приветствие, подтверждение, запрос, согласие.
-Сеть не решает за нас — она лишь хранит наше согласие.
-
 ### Bootstrap-handshake
 
-1. [CONTACT_HELLO] — открытый. PeerID A + публичные ключи A.
-2. [CONTACT_HELLO_ACK] — открытый. PeerID B + публичные ключи B.
-3. [CONTACT_REQUEST] — E2E. Полный payload.
-4. [CONTACT_ACCEPT] — E2E. Подтверждение + представление B.
+1. `[CONTACT_HELLO]` — открытый. PeerID A + публичные ключи A.
+2. `[CONTACT_HELLO_ACK]` — открытый. PeerID B + публичные ключи B.
+3. `[CONTACT_REQUEST]` — E2E. Полный payload.
+4. `[CONTACT_ACCEPT]` — E2E. Подтверждение + представление B.
 
 ### Разделение транспортов
 
@@ -200,29 +271,24 @@ Bootstrap-handshake — это не технический ритуал.
 
 ### tempContacts
 
-- Создаются при [CONTACT_HELLO], если B не знает A
-- Нужны только для расшифровки [CONTACT_REQUEST]
-- Удаляются после requests.Add
-- Не сохраняются на диск, не в UI
+- Создаются при `[CONTACT_HELLO]`, если B не знает A.
+- Нужны только для расшифровки `[CONTACT_REQUEST]`.
+- Удаляются после `requests.Add`.
+- Не сохраняются на диск, не в UI.
 
 ### Симметрия
 
-- Обе стороны confirmed: true
-- Через [CONTACT_ACCEPT]
-
-### Push через messageHook
-
-- Go уведомляет Dart о событиях
-- UI реагирует, не polling
+- Обе стороны `confirmed: true`.
+- Через `[CONTACT_ACCEPT]`.
 
 ### Удаление контакта — тихий отказ
 
 Удаление — это не блокировка. Это тихий отказ.
 Блокировка — принуждение. Тишина — свобода.
 
-- RemoveContact — полная чистка
-- isotope_deleted.json — удалённые не возвращаются
-- B не знает о факте удаления
+- `RemoveContact` — полная чистка.
+- `isotope_deleted.json` — удалённые не возвращаются.
+- B не знает о факте удаления.
 
 ---
 
@@ -233,7 +299,6 @@ RemoteName — моё представление для других.
 Name — моё имя для себя.
 
 Три уровня — три свободы: быть собой, быть понятым, быть узнанным.
-Имя — это не идентификатор. Это то, как я хочу быть услышанным.
 
 ### Два поля у контакта
 
@@ -243,20 +308,13 @@ Name — моё имя для себя.
 | RemoteName | Контакт | Да | Средний |
 | — | — | — | Fallback: PeerID |
 
-UI: Name → RemoteName → PeerID.
+UI: `Name` → `RemoteName` → PeerID.
 
-### MyDisplayName
+### Single source of names (v1.29)
 
-- В Settings
-- QR содержит display_name
-- Диалог «Как вас представить?» (предзаполнено + выделено)
-- Разово. MyDisplayName не меняется
-
-### Переименование
-
-- Долгий тап → bottom sheet
-- Меняет только Name
-- Никуда не передаётся
+- Убран `_contactNames` из `connect_screen`.
+- `_displayName` делегирует в `chatProvider.nameFor(peerID)`.
+- `_loadContactsFromCore` вызывает `loadPeerNames()`.
 
 ---
 
@@ -273,15 +331,15 @@ UI: Name → RemoteName → PeerID.
 
 ### read_enabled
 
-- В контакте
-- В Settings (my_read_enabled)
-- Передаётся с каждым сообщением
-- В QR
+- В контакте.
+- В Settings (`my_read_enabled`).
+- Передаётся с каждым сообщением.
+- В QR.
 
 ### hidden — терминальное
 
-- Замок = «прочтения не будет»
-- Не откатывается
+- Замок = «прочтения не будет».
+- Не откатывается.
 
 ---
 
@@ -295,7 +353,7 @@ UI: Name → RemoteName → PeerID.
 
 10s / 30s / 1m / 5m / 15m / 30m / 1h / 4h / 24h / never
 
-Дефолт: never («Не удаляются»).
+Дефолт: `never` («Не удаляются»).
 
 ### Режимы
 
@@ -304,26 +362,25 @@ UI: Name → RemoteName → PeerID.
 Два режима — два выбора. Не навязано — предложено.
 
 **hard:**
-- Таймер от получения
-- Отправитель: от [DELIVERED]
-- Получатель: от получения
+- Таймер от получения.
+- Отправитель: от `[DELIVERED]`.
+- Получатель: от получения.
 
 **after_read:**
-- Таймер от прочтения
-- Оба делятся → синхронно
-- Получатель не делится → авто-hard + [TTL_UPDATE]
-- Отправитель не делится → авто-hard + [TTL_UPDATE]
+- Таймер от прочтения.
+- Оба делятся → синхронно.
+- Получатель не делится → авто-hard + `[TTL_UPDATE]`.
+- Отправитель не делится → авто-hard + `[TTL_UPDATE]`.
 
 ### Fallback 48 часов
 
 Fallback — честность. Если получатель не делится — сеть решает сама.
-Не тайна. Не сюрприз. Просто честность.
 
 ### [TTL_UPDATE] (Type=8)
 
-- Version = 0
-- Payload: expires_in_seconds
-- При авто-hard
+- Version = 0.
+- Payload: `expires_in_seconds`.
+- При авто-hard.
 
 ### FLAG_SECURE — право на тишину
 
@@ -332,9 +389,6 @@ Fallback — честность. Если получатель не делитс
 
 Короткие TTL (10с – 1 мин) — запрет скриншотов.
 Это право на тишину.
-Не «я не хочу, чтобы ты видел».
-А «я хочу, чтобы это осталось между нами и исчезло».
-
 Тишина — это тоже свобода.
 
 ### Бейдж + превью
@@ -346,11 +400,19 @@ Fallback — честность. Если получатель не делитс
 
 ## Таймер отправки (v1.26)
 
-- Задержка 0/3/5/10 сек
-- Сообщение сразу с круговым прогрессом
-- Кнопка «Отмена»
-- Back — черновик
-- Home — таймер продолжается
+- Задержка 0/3/5/10 сек.
+- Сообщение сразу с круговым прогрессом.
+- Кнопка «Отмена».
+- Back — черновик.
+- Home — таймер продолжается.
+
+---
+
+## Multiline input (v1.29)
+
+- `TextField`: `maxLines: null`, `minLines: 1`.
+- `keyboardType: multiline`, `textInputAction: newline`.
+- `ConstrainedBox(maxHeight: 140)` — рост до ~5 строк, потом скролл.
 
 ---
 
@@ -360,21 +422,21 @@ Fallback — честность. Если получатель не делитс
 
 **Решение:** relay через VPS.
 
-- Узел резервирует слот (client.Reserve)
-- VPS форвардит, не хранит
-- ANNOUNCE автоматически добавляет relay-адрес
-- FIND fallback — relay-адрес
+- Узел резервирует слот (`client.Reserve`).
+- VPS форвардит, не хранит.
+- ANNOUNCE автоматически добавляет relay-адрес.
+- FIND fallback — relay-адрес.
 
 **Обновление резервации (v1.25):**
-- Notifiee ConnectedF — при reconnect
-- relayLoop 30 секунд
-- Exponential backoff
+- Notifiee `ConnectedF` — при reconnect.
+- relayLoop 30 секунд.
+- Exponential backoff.
 
 **Условие отключения VPS:**
 
-1. DHT покрывает 15+ узлов
-2. Hole punching работает для большинства NAT
-3. 2-3 независимых relay-узла
+1. DHT покрывает 15+ узлов.
+2. Hole punching работает для большинства NAT.
+3. 2-3 независимых relay-узла.
 
 ---
 
@@ -385,18 +447,18 @@ Fallback — честность. Если получатель не делитс
 
 ### Технический иммунитет
 
-- Три уровня защиты
-- Репликация: на 2+ живых узла
-- Селф-хилинг: heartbeat
-- Fallback: локальный IP → relay
-- Exponential backoff
+- Три уровня защиты.
+- Репликация: на 2+ живых узла.
+- Селф-хилинг: heartbeat.
+- Fallback: локальный IP → relay.
+- Exponential backoff.
 
 ### Социальный иммунитет
 
-- Вес от этического хеша
-- Лайки/дизлайки
-- Время размывает
-- Архив → удаление
+- Вес от этического хеша.
+- Лайки/дизлайки.
+- Время размывает.
+- Архив → удаление.
 
 ### Единство
 
@@ -419,41 +481,43 @@ Fallback — честность. Если получатель не делитс
 
 ### 1. P2P-сеть (libp2p)
 
-- Транспорт: TCP + WebSocket + TLS
-- Обнаружение: mDNS + DHT + NSD
-- Синхронизация: Gossip
-- Маршрутизация: Onion Routing v2
-- Relay-circuit
-- Маскировка
-- Reconnect, Flush
+- Транспорт: TCP + WebSocket + TLS.
+- Обнаружение: mDNS + DHT + NSD.
+- Синхронизация: Gossip.
+- Маршрутизация: Onion Routing v2.
+- Relay-circuit.
+- Маскировка.
+- Reconnect, Flush.
 
 ### 2. Этический движок
 
-- Вектор: 100 измерений
-- Слои: каждые 20 сообщений
-- Хеш: 7 заповедей
+- Вектор: 100 измерений.
+- Слои: каждые 20 сообщений.
+- Хеш: 7 заповедей.
 
 ### 3. Память
 
-- Взвешенная, FIFO с архивом
-- Вес, старение, архив
-- TTL
-- Шифрование AES-256-GCM
-- PlainText
+- Взвешенная, FIFO с архивом.
+- Вес, старение, архив.
+- TTL.
+- Шифрование AES-256-GCM.
+- PlainText.
+- Status (v1.29).
+- ReadLocally (v1.29).
 
 ### 4. Каналы
 
-- Пороги: full=0.3, comment=0.5, vote=0.7
+- Пороги: full=0.3, comment=0.5, vote=0.7.
 
 ### 5. Безопасность
 
-- Onion Routing v2
-- Маскировка
-- Стеганография
-- Селф-хилинг
-- E2E: X25519 + box.Seal
-- Подпись: Ed25519
-- FLAG_SECURE
+- Onion Routing v2.
+- Маскировка.
+- Стеганография.
+- Селф-хилинг.
+- E2E: X25519 + box.Seal.
+- Подпись: Ed25519.
+- FLAG_SECURE.
 
 ### 6. Весовая модель
 
@@ -466,20 +530,20 @@ Fallback — честность. Если получатель не делитс
 
 ### 7. Самоадаптация
 
-- node/adapt.go
-- avgWeight, lowWeightRatio, highWeightRatio
-- Фоновая адаптация
+- node/adapt.go.
+- avgWeight, lowWeightRatio, highWeightRatio.
+- Фоновая адаптация.
 
 ### 8. ИИ-слой
 
-- Статус: v3.0+
+- Статус: v3.0+.
 
 ### 9. API
 
-- REST: /send, /messages, /status, /health, /feedback
-- WebSocket: /ws
-- Фильтры
-- Стего
+- REST: /send, /messages, /status, /health, /feedback.
+- WebSocket: /ws.
+- Фильтры.
+- Стего.
 
 ---
 
@@ -499,12 +563,12 @@ Fallback — честность. Если получатель не делитс
 
 ### VPS bootstrap/relay
 
-- IP: 186.246.31.176
-- PeerID: QmR8u5YFdcKpM2onQvk7KV5qioai87aysi9JWLdV1LX1bi
-- Bootstrap: /ip4/186.246.31.176/tcp/9001/ws/p2p/QmR8u5YFdcKpM2onQvk7KV5qioai87aysi9JWLdV1LX1bi
-- Порты: 9000 (TCP), 9001 (WS), 8081 (HTTP API)
+- IP: 186.246.31.176.
+- PeerID: QmR8u5YFdcKpM2onQvk7KV5qioai87aysi9JWLdV1LX1bi.
+- Bootstrap: /ip4/186.246.31.176/tcp/9001/ws/p2p/QmR8u5YFdcKpM2onQvk7KV5qioai87aysi9JWLdV1LX1bi.
+- Порты: 9000 (TCP), 9001 (WS), 8081 (HTTP API).
 
-НЕ удалять /root/isotope/state/
+НЕ удалять /root/isotope/state/.
 
 ### Обновление VPS
 
@@ -530,20 +594,23 @@ flutter build apk --debug
 
 ## Принципы
 
-1. Децентрализация. Нет сервера
-2. Этический иммунитет
-3. Самообучение
-4. Приватность
-5. Неуязвимость
-6. Унификация
-7. Правка в корне
-8. Открытость без наивности
-9. Эмерджентное доверие
-10. Приватность по умолчанию
-11. Пользователь не гадает
-12. Право на забвение (TTL)
-13. Право на тишину (FLAG_SECURE)
-14. Тихий отказ
+1. Децентрализация. Нет сервера.
+2. Этический иммунитет.
+3. Самообучение.
+4. Приватность.
+5. Неуязвимость.
+6. Унификация.
+7. Правка в корне.
+8. Открытость без наивности.
+9. Эмерджентное доверие.
+10. Приватность по умолчанию.
+11. Пользователь не гадает.
+12. Право на забвение (TTL).
+13. Право на тишину (FLAG_SECURE).
+14. Тихий отказ.
+15. Единый источник истины (v1.29).
+16. Offline-очередь — ответственность отправителя (v1.29).
+17. Миграции обязательны (v1.29).
 
 ---
 

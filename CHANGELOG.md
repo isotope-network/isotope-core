@@ -1,5 +1,62 @@
 # История изменений ISOTOPE
 
+## v1.29.0 (2026-10-05)
+
+«Единый источник истины»
+
+### Добавлено
+- Single source of names:
+  - Убран _contactNames из connect_screen.dart
+  - _displayName делегирует в chatProvider.nameFor(peerID)
+  - _loadContactsFromCore вызывает loadPeerNames()
+- Batch [READ]:
+  - Message.Refs []string + fallback на Message.Ref
+  - Version 0. Обратная совместимость через содержимое поля
+  - SendReadBatch(refs, recipient)
+  - handleServiceMessage case TypeRead — цикл по Refs
+- Message.Status (перенос из MessageStatus):
+  - Поле Status MessageStatus в Message
+  - Удалены n.messageStatus, n.messageStatusMu, State.MessageStatus
+  - Memory.SetStatus(id, status) — по образцу SetExpiresAt
+  - Миграция: при loadState старый messageStatus → Message.Status
+- Message.ReadLocally:
+  - Поле ReadLocally bool в Go + Dart
+  - Memory.MarkReadLocally(refs), Node.MarkReadLocally(refs)
+  - LibP2PService.markReadLocally, MainActivity.kt case
+  - _sendReadBatchFor → markReadLocally перед sendReadBatch
+  - loadMessages — пересчёт _unreadByPeer для readLocally == false
+  - Удалён _readSent. Миграция: _readSent → markReadLocally, флаг read_sent_migrated
+- Offline queue: pending до [DELIVERED]:
+  - replicateMessage — при адресном всегда enqueuePending
+  - flushPending — не удаляет из очереди, только переотправляет
+  - removePendingByRef(ref) — удаление по [DELIVERED]
+  - case TypeDelivered → removePendingByRef(m.Ref)
+  - Триггеры: ConnectedF (Notifiee) + announceLoop (4 мин)
+- Multiline input:
+  - TextField в chat_screen.dart: maxLines: null, minLines: 1
+  - keyboardType: multiline, textInputAction: newline
+  - ConstrainedBox(maxHeight: 140) — рост до ~5 строк
+
+### Проверено
+- 10 сообщений подряд, получатель оффлайн → при появлении приходят мгновенно пачкой
+- Бейдж переживает перезапуск. Не теряется, не двоится
+
+### Коммиты
+- 011d719 — single source of names
+- a36c617 — batch [READ]
+- 9a19879 — MessageStatus → Message.Status
+- 212f8f3 — multiline input
+- 6a9fac6 — offline queue: pending до [DELIVERED]
+- 64e1d8b, 4353842 — ReadLocally
+
+### Следующий шаг
+- [PROFILE_UPDATE] (Type=9)
+- TTL для tempContacts (5 минут)
+- VPS reconnectLoop — отключить на relay
+- Уведомления системы
+
+---
+
 ## v1.28.0 (2026-10-04)
 
 «Право на забвение»
@@ -20,7 +77,7 @@
   - Оптимизация _lastSecureFlag
   - Снятие при dispose
 - Удаление контакта:
-  - RemoveContact — полная чистка (контакт, сообщения, статусы, черновики, unread)
+  - RemoveContact — полная чистка
   - isotope_deleted.json — удалённые не возвращаются
   - Тихий отказ — B не знает
 - Per-chat / per-peer:
@@ -33,8 +90,8 @@
   - Настройки → Приватность (read_enabled)
   - Профиль (MyDisplayName)
   - Оранжевые периоды 10s / 30s / 1m
-  - Умный формат времени (сегодня / вчера / дата)
-  - Таймер отправки (pending-сообщение)
+  - Умный формат времени
+  - Таймер отправки
   - AppBar — чисто, только имя контакта
   - Диалог «Как вас представить?»
 
@@ -49,12 +106,6 @@
 - d482dfc — HEAD (TTL финальный)
 - 27ca05c — TTL механизм
 
-### Следующий шаг
-- connect_screen — единый источник имени
-- [PROFILE_UPDATE] (Type=9)
-- Батч [READ]
-- Документация v1.29+
-
 ---
 
 ## v1.27.0 (2026-10-01)
@@ -64,57 +115,45 @@
 ### Добавлено
 - Контакт-протокол (bootstrap-handshake):
   - [CONTACT_HELLO] → [CONTACT_HELLO_ACK] → [CONTACT_REQUEST] → [CONTACT_ACCEPT]
-  - Открытые сервисные (HELLO, ACK) — всегда через bootstrap
-  - E2E (REQUEST, ACCEPT) — circuit → bootstrap fallback
-  - tempContacts — временные в памяти для расшифровки
-  - Push через messageHook (не polling)
-  - Симметрия: обе стороны confirmed: true
+  - Открытые сервисные — всегда через bootstrap
+  - E2E — circuit → bootstrap fallback
+  - tempContacts
+  - Push через messageHook
+  - Симметрия: confirmed: true
 - Система имён:
-  - Name (локальное) / RemoteName (представление) / PeerID (fallback)
-  - UI: Name → RemoteName → PeerID
+  - Name / RemoteName / PeerID
   - MyDisplayName в Settings
   - QR содержит display_name
-  - Диалог «Как вас представить?» (предзаполнено + выделено)
-  - Профиль в настройках → «Ваше имя»
-  - Долгий тап на контакте → bottom sheet: Открыть / Переименовать / Удалить
-  - Предупреждение о безопасности при запросе
+  - Диалог «Как вас представить?»
+  - Профиль → «Ваше имя»
+  - Долгий тап → Открыть / Переименовать / Удалить
+  - Предупреждение о безопасности
 
 ### Изменено
-- Разделение транспортов по назначению:
-  - Открытые сервисные (HELLO, ACK) → bootstrap
-  - E2E (REQUEST, ACCEPT, сообщения) → circuit → bootstrap fallback
-- Type в processMessageInternal — с рождения, не пост-правка
+- Разделение транспортов по назначению
+- Type в processMessageInternal — с рождения
 - Логи: убраны STATUS POLL, [MULTIADDR], [DIAG], [DHT] Provide
 
 ### Коммиты
 - 6896800, bead650, 692418d, 67778cd, a2004db, d083997
 - 849c388, 36a6af6, 0cb9de2, 2a9083a, 196af37, 156fe0a
-- 8e6280c — HEAD (имена, диалоги, переименование, безопасность)
-
-### Следующий шаг
-- [PROFILE_UPDATE]
-- Батч [READ]
-- Circuit direct при 15+ узлах
-- TTL для tempContacts (5 минут)
-- Чистка messageStatus при удалении
+- 8e6280c — HEAD
 
 ---
 
 ## v1.26.0 (2026-09-27)
 
 ### Добавлено
-- PlainText в Message: свои E2E-сообщения сохраняются открытым текстом для UI
-- Автоочистка: удаление своих E2E-сообщений без PlainText при первом запуске
-- Флаг .e2e_cleanup рядом со state
-- Memory.Remove — с чисткой seen
-- Relay: refresh reservation on reconnect + 30s loop check
-- Relay: exponential backoff для reservation retry (2 → 30 сек)
-- UI: отображение plainText для своих E2E-сообщений
+- PlainText в Message
+- Автоочистка своих E2E без PlainText
+- Relay: refresh reservation on reconnect + 30s loop
+- Relay: exponential backoff
+- UI: отображение plainText
 
 ### Исправлено
-- Свой QR блокируется (три уровня: UI + ядро + автоочистка)
-- UI: retry loading contacts from core (гонка с Go startup)
-- Upsert nodes on alive-event — статус меняется с unknown на alive
+- Свой QR блокируется
+- Retry loading contacts
+- Upsert nodes on alive-event
 
 ### Коммиты
 - d0e9744, 3235060, 882c998, abc5f01, 6e1d1b9, 2f35fb1
@@ -124,9 +163,9 @@
 ## v1.25.0 (2026-09-25)
 
 ### Добавлено
-- UI 1.1 — терминология: технические термины убраны из интерфейса
-- UI 1.2 — единый вход «Добавить контакт», настройки в bottom sheet
-- UI 1.3 — пустое состояние с кнопкой действия
+- UI 1.1 — терминология
+- UI 1.2 — единый вход «Добавить контакт»
+- UI 1.3 — пустое состояние
 
 ### Коммиты
 - 5ebe222, 4940998, 988fe17
@@ -136,19 +175,10 @@
 ## v1.24.0 (2026-09-23)
 
 ### Добавлено
-- E2E 4.1 — генерация ключей, QR v:1 с e2e_pub
-- E2E 4.2 — поле Recipient, адресная маршрутизация
-- E2E 4.3.1 — Ed25519 + X25519, раздельные ключи, curve25519.X25519
-- E2E 4.3.2 — isotope_contacts.json с флагом verified
-- E2E 4.3.3 — шифрование Text через box.Seal, Version=2
-- E2E 4.4 — Ed25519 подпись над peerID || x25519_pub, флаг verified
-- Backoff reconnect: 1 → 30 сек, сброс при успехе
-- Параллельный dial в ConnectToPeerWithFallback
-- ANNOUNCE TTL 5 → 8 мин, удаление disconnected сразу
-
-### Исправлено
-- Логи: обрезка длинных строк (4KB max)
-- Извлечение PeerID из multiaddr в configure
+- E2E 4.1–4.4: ключи, Recipient, Ed25519+X25519, isotope_contacts.json, box.Seal, подпись
+- Backoff reconnect
+- Параллельный dial
+- ANNOUNCE TTL 5 → 8 мин
 
 ### Коммиты
 - e54d056, 9c2fc8b, dc82e81, f3aaeab, 3a3b859, 39c97c5
@@ -159,13 +189,9 @@
 ## v1.23.0 (2026-09-17)
 
 ### Добавлено
-- Multi-address ANNOUNCE (Слой A)
-- Relay-circuit (Слой B)
-- Flush on reconnect (три уровня)
-
-### Изменено
-- VPS PeerID: QmNmr3Yq... → QmR8u5YF...
-- Условие отключения VPS
+- Multi-address ANNOUNCE
+- Relay-circuit
+- Flush on reconnect
 
 ### Коммиты
 - 9b5c6c2, 6b223c0
@@ -175,7 +201,7 @@
 ## v1.22.0 (2026-09-13)
 
 ### Добавлено
-- Foreground Service (Android)
+- Foreground Service
 - Battery Optimization Whitelist
 - Отображение пиров через libp2p
 
@@ -187,10 +213,10 @@
 ## v1.21.0 (2026-09-11)
 
 ### Исправлено
-- Дубликаты сообщений (единый ID из Go)
-- Бейдж непрочитанных + линия «Непрочитанные»
-- ANR на медленных телефонах
-- Reconnect loop + keepalive
+- Дубликаты сообщений
+- Бейдж непрочитанных
+- ANR
+- Reconnect loop
 
 ### Коммиты
 - ec0c59e, 919967d, c06d8a8
@@ -200,13 +226,9 @@
 ## v1.19.0 (2026-09-01)
 
 ### Добавлено
-- Рефакторинг ядра: package main → package core
-- main/main.go, mobile/mobile.go
-- libp2p через FFI (.aar 67 МБ)
+- Рефакторинг ядра
+- libp2p через FFI
 - Стабильный PeerID
-- Обработка смены сети
-- NodeInfo, heartbeat, dead-статус
-- Логирование Go → Flutter
 - NSD-обнаружение
 
 ---
@@ -214,88 +236,72 @@
 ## v1.18.1 (2026-08-28)
 
 ### Добавлено
-- Рефакторинг: package main → package core
-- Точка входа: node/main/main.go
-- Экспорт API: Config, NewNode, InitP2P, StartHTTP, StartMobile, Stop
+- package main → package core
+- Экспорт API
 
 ---
 
 ## v1.18 (2026-08-16)
 
 ### Добавлено
-- Каналы с весовыми уровнями (G4)
-- Пороги доступа: full=0.3, comment=0.5, vote=0.7
-- Эндпоинты: POST/GET /channels
+- Каналы с весовыми уровнями
 
 ---
 
 ## v1.17 (2026-08-16)
 
 ### Добавлено
-- Самоадаптация: node/adapt.go
-- Метрики: avgWeight, lowWeightRatio, highWeightRatio
-- Фоновая адаптация каждые 5 минут
+- Самоадаптация
 
 ---
 
 ## v1.16 (2026-08-16)
 
 ### Добавлено
-- Onion Routing v2: цепочка из 4-5 relay
-- Выбор relay по весу > 0.7
-- getPeerWeight
+- Onion Routing v2
 
 ---
 
 ## v1.15 (2026-08-16)
 
 ### Добавлено
-- Репликация на 2 случайных живых узла
-- Поля ReplicatedFrom, ReplicatedAt
-- Стабильный PeerID
+- Репликация
 
 ---
 
 ## v1.14 (2026-08-16)
 
 ### Добавлено
-- Голосовая стеганография: LSB в WAV
-- node/stego.go: embedLSB, extractLSB
-- Эндпоинт POST /send_stego
+- Голосовая стеганография
 
 ---
 
 ## v1.13 (2026-08-16)
 
 ### Добавлено
-- Обфускация: AES-GCM с префиксом [SHUF]
-- Случайные задержки 5-50 мс
-- Дедупликация
+- Обфускация AES-GCM
 
 ---
 
 ## v1.12 (2026-08-16)
 
 ### Добавлено
-- Селф-хилинг: heartbeat каждые 30 сек
-- Обнаружение мёртвых пиров: 5 сек без PONG
-- Автоперезапуск
+- Селф-хилинг
 
 ---
 
 ## v1.11 (2026-08-16)
 
 ### Добавлено
-- Исчезающие сообщения (TTL): вечно, 60 сек, 3600 сек
-- ExpiresAt в Message
-- Локальное шифрование state: AES-256-GCM
+- TTL
+- Локальное шифрование
 
 ---
 
 ## v1.10 (2026-08-15)
 
 ### Добавлено
-- Onion Routing v1: три режима анонимности
+- Onion Routing v1
 
 ---
 
@@ -303,9 +309,7 @@
 
 ### Добавлено
 - 5 узлов в docker-compose
-- Документация: три столпа ISOTOPE
-- README (EN + RU)
-- docs/FAQ.md: 20 вопросов
+- Документация
 
 ---
 
@@ -313,81 +317,67 @@
 
 ### Добавлено
 - Ассоциативная память
-- Децентрализованный bootstrap: mDNS, DHT, вручную через ENV
+- Децентрализованный bootstrap
 
 ---
 
 ## v1.7 (2026-08-14)
 
 ### Добавлено
-- WebSocket + TLS: трафик неотличим от HTTPS
-- Новый универсальный этический хеш: семь заповедей
+- WebSocket + TLS
+- Этический хеш
 
 ---
 
 ## v1.6 (2026-08-11)
 
 ### Добавлено
-- Priority Gossip: поле Priority в Message
-- TTL форвардинга зависит от приоритета
+- Priority Gossip
 
 ---
 
 ## v1.5 (2026-07-27)
 
 ### Добавлено
-- REST API для внешних клиентов
-- WebSocket для реального времени
-- Пагинация для /messages
-- CORS middleware
-- Мобильное приложение (Flutter, базовая версия)
-- Защита памяти (лимит 10 000 сообщений, архив)
+- REST API
+- WebSocket
+- Мобильное приложение
 
 ---
 
 ## v1.4 (2026-07-19)
 
 ### Добавлено
-- 100-мерные векторы (VectorDim = 100)
-- Биграммы в textToVector
-- Марковские цепочки для русских ответов
-- Кнопки preHash/antiHash в дашборде
-- Мониторинг здоровья сети
-- 55 автотестов (позже 67)
+- 100-мерные векторы
+- Биграммы
+- Мониторинг сети
 
 ---
 
 ## v1.3 (2026-07-19)
 
 ### Добавлено
-- Персональные фильтры: preHash и antiHash
-- Эндпоинты /setprehash и /setantihash
+- preHash / antiHash
 
 ---
 
 ## v1.2 (2026-07-19)
 
 ### Добавлено
-- Этическое обучение нейросети через лайки/дизлайки
+- Этическое обучение
 
 ---
 
 ## v1.1 (2026-07-19)
 
 ### Добавлено
-- Этический иммунитет: начальный вес зависит от близости к хешу
-- Семь заповедей как этический хеш
+- Этический иммунитет
 
 ---
 
 ## v1.0 (2026-07-16)
 
 ### Первый стабильный релиз
-- P2P-сеть на libp2p + mDNS (3 узла)
-- Нейросеть: 10 нейронов на слой
-- Взвешенная память
-- Чат с дашбордом
-- 37 успешных тестов
 
 ---
 

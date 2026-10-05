@@ -125,6 +125,22 @@ It is «I want this to stay between us and disappear».
 Deleting a contact is not blocking. It is quiet refusal.
 Blocking is coercion. Silence is freedom.
 
+**Single Source of Truth.**
+If a field can be derived from Message — it lives in Message.
+Status, ReadLocally, Refs — all in Message.
+No second sources. No drift.
+
+**Offline Queue — Sender's Responsibility.**
+VPS does not buffer. The sender holds pending until [DELIVERED].
+When the recipient appears, the sender resends.
+VPS is a courier, not a storage.
+
+**Migrations Are Mandatory.**
+Old data is never lost.
+messageStatus → Message.Status.
+_readSent → ReadLocally.
+Log every migration.
+
 ---
 
 ## Architectural Properties
@@ -220,7 +236,7 @@ Once a day — a single notification:
 
 ## Status
 
-**v1.28.0 — stable (right to be forgotten).**
+**v1.29.0 — stable (single source of truth).**
 
 Implemented:
 - P2P network: libp2p + mDNS + DHT + Gossip
@@ -316,17 +332,33 @@ Implemented:
 - Send timer (pending message)
 - AppBar — clean, only contact name
 
+**Single source of truth (v1.29):**
+- Single source of names — chatProvider.nameFor(peerID)
+- Batch [READ] — Message.Refs []string + fallback on Ref
+- Message.Status (migrated from MessageStatus)
+- Message.ReadLocally — single source of unread
+- _readSent removed. Migration: _readSent → markReadLocally, flag read_sent_migrated
+- Multiline input
+
+**Offline queue (v1.29):**
+- Pending until [DELIVERED]
+- replicateMessage — always enqueuePending for addressed
+- flushPending — only resends, doesn't remove
+- removePendingByRef(ref) — on [DELIVERED]
+- Triggers: ConnectedF (Notifiee) + announceLoop (4 min)
+- Verified: 10 messages, recipient offline → arrive instantly in batch
+
 **Deferred:**
 - BLE — unstable, disabled
 - Samsung Android 10 — crash
 - DHT Provide — falls with few peers
-- messageStatus growth — cleanup needed
 - [PROFILE_UPDATE]
+- TTL for tempContacts (5 min)
+- VPS reconnectLoop — disable on relay
 
 In development:
-- connect_screen — single name source
-- [PROFILE_UPDATE]
-- Batch [READ]
+- [PROFILE_UPDATE] (Type=9)
+- System notifications
 - Metadata protection — Onion (v2.0+)
 - ISOTOPE Enterprise (B2B data exchange)
 - ISOTOPE AI Mesh (distributed AI inference)
