@@ -66,9 +66,10 @@ type Message struct {
 	Type             MessageType `json:"type,omitempty"`         // 0 = обычное, 1-5 = служебные (контакт-протокол)
 	Ref              string      `json:"ref,omitempty"`          // msg_id для delivered/read; request_id для accept/reject
 	Refs             []string    `json:"refs,omitempty"`         // батч: массив msg_id для [READ]. Если пуст — читать Ref
-	ReadEnabled      *bool       `json:"read_enabled,omitempty"` // настройка отправителя; nil — не передано
-	TtlPeriodSeconds int         `json:"ttl_period_s,omitempty"` // период TTL в секундах; 0 — forever
-	TtlMode          string      `json:"ttl_mode,omitempty"`     // "after_read" | "hard" | ""
+	ReadEnabled      *bool         `json:"read_enabled,omitempty"` // настройка отправителя; nil — не передано
+	TtlPeriodSeconds int           `json:"ttl_period_s,omitempty"` // период TTL в секундах; 0 — forever
+	TtlMode          string        `json:"ttl_mode,omitempty"`     // "after_read" | "hard" | ""
+	Status           MessageStatus `json:"status,omitempty"`       // статус доставки/прочтения; 0 — неизвестен
 }
 
 // Memory — потокобезопасное хранилище сообщений (без лимита)
@@ -118,6 +119,31 @@ func (m *Memory) SetExpiresAt(id string, expiresAt time.Time) bool {
 			m.messages[i].ExpiresAt = expiresAt
 			return true
 		}
+	}
+	return false
+}
+
+// SetStatus — устанавливает статус сообщения по ID.
+// Не понижает статус и не перезаписывает терминальный hidden.
+// Возвращает true, если статус изменён.
+func (m *Memory) SetStatus(id string, status MessageStatus) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for i := range m.messages {
+		if m.messages[i].ID != id {
+			continue
+		}
+		cur := m.messages[i].Status
+		// hidden — терминальное состояние. Не повышается.
+		if cur == StatusHidden {
+			return false
+		}
+		// Не понижаем.
+		if cur >= status {
+			return false
+		}
+		m.messages[i].Status = status
+		return true
 	}
 	return false
 }

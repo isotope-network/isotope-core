@@ -18,14 +18,13 @@ import (
 
 // State — структура, которая сохраняется на диск.
 type State struct {
-	Layers        [][]float64              `json:"layers"`
-	MsgCount      int                      `json:"msgCount"`
-	Messages      []Message                `json:"messages"`
-	Seen          map[string]bool          `json:"seen"`
-	PreHash       string                   `json:"preHash"`
-	AntiHash      string                   `json:"antiHash"`
-	RoutingTable  []string                 `json:"routingTable"`
-	MessageStatus map[string]MessageStatus `json:"messageStatus,omitempty"`
+	Layers       [][]float64     `json:"layers"`
+	MsgCount     int             `json:"msgCount"`
+	Messages     []Message       `json:"messages"`
+	Seen         map[string]bool `json:"seen"`
+	PreHash      string          `json:"preHash"`
+	AntiHash     string          `json:"antiHash"`
+	RoutingTable []string        `json:"routingTable"`
 }
 
 // getEncryptionKey — возвращает 32-байтный ключ из пароля
@@ -97,13 +96,6 @@ func (n *Node) saveState() error {
 		_ = json.Unmarshal(data, &routingTable)
 	}
 
-	n.messageStatusMu.Lock()
-	statusCopy := make(map[string]MessageStatus, len(n.messageStatus))
-	for k, v := range n.messageStatus {
-		statusCopy[k] = v
-	}
-	n.messageStatusMu.Unlock()
-
 	// Не сохраняем истёкшие — они не должны возродиться после перезапуска.
 	now := time.Now()
 	allMsgs := n.memory.GetAll()
@@ -116,14 +108,13 @@ func (n *Node) saveState() error {
 	}
 
 	state := State{
-		Layers:        n.layers,
-		MsgCount:      n.msgCount,
-		Messages:      aliveMsgs,
-		Seen:          seen,
-		PreHash:       n.preHash,
-		AntiHash:      n.antiHash,
-		RoutingTable:  routingTable,
-		MessageStatus: statusCopy,
+		Layers:       n.layers,
+		MsgCount:     n.msgCount,
+		Messages:     aliveMsgs,
+		Seen:         seen,
+		PreHash:      n.preHash,
+		AntiHash:     n.antiHash,
+		RoutingTable: routingTable,
 	}
 
 	data, err := json.MarshalIndent(state, "", "  ")

@@ -189,12 +189,6 @@ type Node struct {
 	deletedFile string
 	deleted     *DeletedStore
 
-	// MESSAGE STATUS — статусы своих сообщений (отправлено/доставлено/прочитано).
-	// Ключ — msg_id. Обновляется при получении [DELIVERED]/[READ].
-	// Используется в UI (этап 1.5). Сейчас — только накапливается.
-	messageStatus   map[string]MessageStatus
-	messageStatusMu sync.Mutex
-
 	// myReadEnabled — настройка "делюсь ли я статусом прочтения".
 	// true (по умолчанию) — отправляю [READ] и вижу чужие [READ].
 	// false — не отправляю [READ], чужие не отображаю (✓✓🔒).
@@ -2471,6 +2465,16 @@ func (n *Node) loadState() error {
 	if err := json.Unmarshal(data, &state); err != nil {
 		return err
 	}
+	// Миграция: старые state хранили статусы в отдельном map.
+	// Переносим их в Message.Status (новый единый источник истины).
+	if len(state.MessageStatus) > 0 {
+		for i := range state.Messages {
+			if status, ok := state.MessageStatus[state.Messages[i].ID]; ok {
+				state.Messages[i].Status = status
+			}
+		}
+		log.Printf("[STATUS] migrated %d statuses to Message.Status", len(state.MessageStatus))
+	}
 	for i := range state.Messages {
 		state.Messages[i].Time = migrateTime(state.Messages[i].Time)
 	}
@@ -2482,18 +2486,6 @@ func (n *Node) loadState() error {
 	n.preHash = state.PreHash
 	n.antiHash = state.AntiHash
 	n.layersDirty = true
-
-	// Восстановление статусов сообщений.
-	n.messageStatusMu.Lock()
-	if n.messageStatus == nil {
-		n.messageStatus = make(map[string]MessageStatus)
-	}
-	for k, v := range state.MessageStatus {
-		n.messageStatus[k] = v
-	}
-	restoredCount := len(n.messageStatus)
-	n.messageStatusMu.Unlock()
-	log.Printf("[STATUS] restored %d message statuses from state", restoredCount)
 
 	if len(state.RoutingTable) > 0 {
 		if n.dhtNode != nil {
@@ -2570,14 +2562,6 @@ func (n *Node) InitP2P() error {
 	n.settingsStore = NewSettingsStore(settingsFile)
 	// Синхронизация кэша с загруженным значением.
 	n.myReadEnabled = n.settingsStore.GetMyReadEnabled()
-
-	// Инициализация map статусов сообщений — только если ещё нет.
-	// loadState() мог уже загрузить статусы из state.
-	n.messageStatusMu.Lock()
-	if n.messageStatus == nil {
-		n.messageStatus = make(map[string]MessageStatus)
-	}
-	n.messageStatusMu.Unlock()
 
 	var priv crypto.PrivKey
 	keyBytes, err := n.loadPrivateKey()
@@ -3427,35 +3411,18 @@ func (n *Node) sendContactControl(msgType MessageType, requestID, recipient stri
 }
 
 // setMessageStatus — устанавливает статус сообщения по ID.
-// Правила приоритета:
-//   - hidden (3) — терминальное. Не повышается (даже до read).
+// Правила приоритета (в Memory.SetStatus):
+//   - hidden (3) — терминальное. Не повышается.
 //   - остальные — не понижаются (только повышение).
 func (n *Node) setMessageStatus(id string, status MessageStatus) {
 	if id == "" {
 		return
 	}
-	n.messageStatusMu.Lock()
-	if n.messageStatus == nil {
-		n.messageStatus = make(map[string]MessageStatus)
+	if n.memory.SetStatus(id, status) {
+		log.Printf("[STATUS] %s → %d", id, status)
+		// Throttled save — статусы сохраняются раз в 5 сек.
+		n.scheduleSaveState()
 	}
-	if cur, ok := n.messageStatus[id]; ok {
-		// hidden — терминальное состояние. Не повышается.
-		if cur == StatusHidden {
-			n.messageStatusMu.Unlock()
-			return
-		}
-		// Не понижаем статус.
-		if cur >= status {
-			n.messageStatusMu.Unlock()
-			return
-		}
-	}
-	n.messageStatus[id] = status
-	n.messageStatusMu.Unlock()
-	log.Printf("[STATUS] %s → %d", id, status)
-
-	// Throttled save — статусы сохраняются раз в 5 сек.
-	n.scheduleSaveState()
 }
 
 // scheduleSaveState — отложенная запись state (throttle 5 сек).
@@ -3483,20 +3450,21 @@ func (n *Node) scheduleSaveState() {
 // getMessageStatus — возвращает статус сообщения по ID.
 // 0 — неизвестен.
 func (n *Node) getMessageStatus(id string) MessageStatus {
-	n.messageStatusMu.Lock()
-	defer n.messageStatusMu.Unlock()
-	return n.messageStatus[id]
+	if msg, ok := n.findMyMessageByID(id); ok {
+		return msg.Status
+	}
+	return 0
 }
 
-// GetMessageStatuses — возвращает копию map статусов для UI.
-// Формат: map[msg_id]status (1/2/3). Статус 0 не включается.
+// GetMessageStatuses — возвращает map статусов для UI.
+// Формат: map[msg_id]status (1/2/3/4). Статус 0 не включается.
+// Пробегает memory.GetAll() — статус теперь в Message.Status.
 func (n *Node) GetMessageStatuses() map[string]MessageStatus {
-	n.messageStatusMu.Lock()
-	defer n.messageStatusMu.Unlock()
-	result := make(map[string]MessageStatus, len(n.messageStatus))
-	for id, s := range n.messageStatus {
-		if s > 0 {
-			result[id] = s
+	all := n.memory.GetAll()
+	result := make(map[string]MessageStatus, len(all))
+	for _, msg := range all {
+		if msg.Status > 0 {
+			result[msg.ID] = msg.Status
 		}
 	}
 	return result
@@ -3732,15 +3700,11 @@ func (n *Node) RemoveContact(peerID string) error {
 	for _, m := range all {
 		if m.Sender == peerID || m.Recipient == peerID {
 			n.memory.Remove(m.ID)
-
-			// 4. Удаляем статус сообщения.
-			n.messageStatusMu.Lock()
-			delete(n.messageStatus, m.ID)
-			n.messageStatusMu.Unlock()
+			// Статус уходит вместе с сообщением (Message.Status).
 		}
 	}
 
-	// 5. Сохраняем state (messageStatus изменился).
+	// 4. Сохраняем state (messageStatus изменился).
 	n.scheduleSaveState()
 
 	log.Printf("[CONTACTS] removed %s + messages purged + added to deleted", peerID)
