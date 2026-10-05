@@ -83,11 +83,6 @@ class _ConnectScreenState extends State<ConnectScreen> {
   /// Заполняется при загрузке контактов из ядра.
   final Map<String, bool> _confirmedContacts = {};
 
-  /// Кеш имён контактов по PeerID.
-  /// name — локальное (как я называю). remoteName — представление контакта.
-  /// Приоритет отображения: name → remoteName → PeerID коротко.
-  final Map<String, ({String name, String remoteName})> _contactNames = {};
-
   /// PeerID, которым уже отправили [CONTACT_REQUEST] в этой сессии.
   /// Set в памяти (MVP). При перезапуске сбрасывается.
   final Set<String> _requestSent = {};
@@ -253,13 +248,13 @@ class _ConnectScreenState extends State<ConnectScreen> {
             final peerID = c['peerID'] as String? ?? '';
             final verified = c['verified'] as bool? ?? false;
             final confirmed = c['confirmed'] as bool? ?? false;
-            final name = c['name'] as String? ?? '';
-            final remoteName = c['remote_name'] as String? ?? '';
             if (peerID.isNotEmpty) {
               _verifiedContacts[peerID] = verified;
               _confirmedContacts[peerID] = confirmed;
-              _contactNames[peerID] = (name: name, remoteName: remoteName);
             }
+          }
+          if (mounted) {
+            await context.read<ChatProvider>().loadPeerNames();
           }
           setState(() {});
           LogService.log('ConnectScreen: загружено контактов из ядра: ${_verifiedContacts.length} (попытка ${attempt + 1})');
@@ -908,7 +903,6 @@ class _ConnectScreenState extends State<ConnectScreen> {
         _discoveredNodes.removeWhere((n) => n.peerID == peerID);
         _verifiedContacts.remove(peerID);
         _confirmedContacts.remove(peerID);
-        _contactNames.remove(peerID);
         _requestSent.remove(peerID);
         _deletedPeers.add(peerID); // фильтр — не показывать после перезапуска
       });
@@ -1393,13 +1387,9 @@ class _ConnectScreenState extends State<ConnectScreen> {
       if (peerID.isEmpty) {
         return node.currentAddress;
       }
-      final names = _contactNames[peerID];
-      if (names != null) {
-        if (names.name.isNotEmpty) return names.name;
-        if (names.remoteName.isNotEmpty) return names.remoteName;
-      }
-      final short = peerID.length > 12 ? peerID.substring(0, 12) : peerID;
-      return 'Контакт $short';
+      final name = context.read<ChatProvider>().nameFor(peerID);
+      if (name.isEmpty) return peerID;
+      return name;
     } catch (_) {
       return 'Контакт';
     }
