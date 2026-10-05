@@ -63,13 +63,10 @@ class ChatProvider extends ChangeNotifier {
   // Заполняется loadPeerNames() из Go-контактов.
   final Map<String, String> _peerNames = {};
 
-  // ID входящих сообщений, для которых уже отправили [READ].
-  // Сохраняется в SharedPreferences (последние _readSentMax IDs).
-  // При перезапуске — загружается, не сбрасывается.
-  final Set<String> _readSent = {};
-  static const String _readSentKey = 'read_sent_ids';
-  static const int _readSentMax = 1000;
-  bool _readSentLoaded = false;
+  // Флаг разовой миграции: перенос _readSent → ReadLocally (Go).
+  static const String _readSentKeyLegacy = 'read_sent_ids';
+  static const String _readSentMigratedKey = 'read_sent_migrated';
+  bool _readSentMigrated = false;
 
   // Статусы своих сообщений: msg_id → 1/2/3.
   // 1=sent, 2=delivered, 3=read. Заполняется из Go-ядра (этап 1.5).
@@ -323,13 +320,10 @@ class ChatProvider extends ChangeNotifier {
     for (final msg in _messagesMap.values) {
       if (msg.isOwn) continue;
       if (msg.sender != peerID) continue;
-      if (_readSent.contains(msg.id)) continue;
+      if (msg.readLocally) continue;
       refs.add(msg.id);
     }
     if (refs.isEmpty) return;
-    for (final id in refs) {
-      _readSent.add(id);
-    }
     // Локально — пометить прочитанными (источник истины — Go).
     LibP2PService.markReadLocally(refs: refs).then((r) {
       if (r.containsKey('error')) {
@@ -346,14 +340,12 @@ class ChatProvider extends ChangeNotifier {
     }).catchError((e) {
       LogService.log('P2P: sendReadBatch exception for $peerID: $e');
     });
-    _saveReadSent();
   }
 
   void initialize({String bootstrapPeers = ''}) {
     LogService.log('ChatProvider: initialize() CALLED');
     try {
       _loadOwnMessageIds();
-      _loadReadSent();
       _loadSendDelay();
       _loadDrafts();
       _startLibP2P(bootstrapPeers: bootstrapPeers);
@@ -444,31 +436,31 @@ class ChatProvider extends ChangeNotifier {
     }
   }
 
-  Future<void> _loadReadSent() async {
-    if (_readSentLoaded) return;
+  /// Разовая миграция _readSent (Dart, SharedPreferences) → ReadLocally (Go).
+  /// Выполняется после старта libp2p и loadMessages.
+  /// Помечает все ранее прочитанные ID как ReadLocally=true в Go.
+  Future<void> _migrateReadSentIfNeeded() async {
+    if (_readSentMigrated) return;
     try {
       final prefs = await SharedPreferences.getInstance();
-      final ids = prefs.getStringList(_readSentKey) ?? [];
-      _readSent.addAll(ids);
-      _readSentLoaded = true;
-      LogService.log('ChatProvider: _readSent загружено: ${ids.length}');
+      if (prefs.getBool(_readSentMigratedKey) == true) {
+        _readSentMigrated = true;
+        return;
+      }
+      final legacy = prefs.getStringList(_readSentKeyLegacy) ?? [];
+      if (legacy.isNotEmpty) {
+        final r = await LibP2PService.markReadLocally(refs: legacy);
+        if (r.containsKey('error')) {
+          LogService.log('ChatProvider: migration markReadLocally failed: ${r['error']}');
+        } else {
+          LogService.log('ChatProvider: migrated ${legacy.length} read_sent → ReadLocally');
+        }
+        await prefs.remove(_readSentKeyLegacy);
+      }
+      await prefs.setBool(_readSentMigratedKey, true);
+      _readSentMigrated = true;
     } catch (e) {
-      LogService.log('ChatProvider: _loadReadSent ERROR: $e');
-    }
-  }
-
-  Future<void> _saveReadSent() async {
-    try {
-      final prefs = await SharedPreferences.getInstance();
-      // Ограничиваем — последние _readSentMax ID.
-      // Set не сохраняет порядок — берём .toList().sublist.
-      final list = _readSent.toList();
-      final trimmed = list.length > _readSentMax
-          ? list.sublist(list.length - _readSentMax)
-          : list;
-      await prefs.setStringList(_readSentKey, trimmed);
-    } catch (e) {
-      LogService.log('ChatProvider: _saveReadSent ERROR: $e');
+      LogService.log('ChatProvider: _migrateReadSentIfNeeded ERROR: $e');
     }
   }
 
@@ -682,6 +674,8 @@ class ChatProvider extends ChangeNotifier {
 
       _subscribeToMessages();
       await loadMessages();
+      await _migrateReadSentIfNeeded();
+      // После миграции — пересчитать имена (и, возможно, бейджи).
       await loadPeerNames();
 
       _startStatusPolling();
@@ -990,8 +984,7 @@ class ChatProvider extends ChangeNotifier {
     if (msg.sender == '🌐 Сеть') return;
     if (msg.sender.isEmpty) return;
     if (msg.sender != _currentOpenPeerID) return;       // не текущий чат
-    if (_readSent.contains(msg.id)) return;
-    _readSent.add(msg.id);
+    if (msg.readLocally) return;
     // Fire-and-forget: не блокируем UI.
     LibP2PService.sendRead(ref: msg.id, recipient: msg.sender).then((r) {
       if (r.containsKey('error')) {
@@ -1000,8 +993,6 @@ class ChatProvider extends ChangeNotifier {
     }).catchError((e) {
       LogService.log('P2P: sendRead exception for ${msg.id}: $e');
     });
-    // Сохраняем _readSent (последние 1000).
-    _saveReadSent();
   }
 
   void deleteMessage(String id) {
@@ -1102,7 +1093,7 @@ class ChatProvider extends ChangeNotifier {
       } else {
         int alive = 0;
         for (final m in _messagesMap.values) {
-          if (m.sender == peerID && !_readSent.contains(m.id)) {
+          if (m.sender == peerID && !m.readLocally) {
             alive++;
           }
         }
