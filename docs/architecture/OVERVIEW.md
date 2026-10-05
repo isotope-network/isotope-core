@@ -13,7 +13,7 @@ ISOTOPE — инфраструктура для этичного, неуязви
 
 ---
 
-## Структура ядра (v1.27.0)
+## Структура ядра (v1.28.0)
 
 Ядро ISOTOPE — **библиотека** (пакет `core`).
 
@@ -47,7 +47,8 @@ func ConnectToPeer(node *Node, addr string) error
 
 func (n *Node) SendMessage(text string, ttl int) (string, error)
 func (n *Node) SendToPeer(recipient, text string, ttl int) (string, error)
-func (n *Node) AddContact(peerID, ed25519Pub, x25519Pub, signature, name string) error
+func (n *Node) AddContact(...) error
+func (n *Node) RemoveContact(peerID string) error
 func (n *Node) RenameContact(peerID, localName string) error
 func (n *Node) GetMessages() []Message
 func (n *Node) GetPeers() []string
@@ -58,49 +59,51 @@ func (n *Node) GetStatus() string
 
 ## Мобильная обёртка (mobile.go)
 
-**Статус:** работает (v1.27.0)
+**Статус:** работает (v1.28.0)
 
 ### Методы (возвращают JSON-строки)
 
 | Метод | Описание |
 |-------|----------|
 | Start(stateFile string) | Запуск узла, восстановление PeerID |
-| Send(text string, ttl int) | Отправка (broadcast) |
+| Send(text, ttl) | Отправка (broadcast) |
 | SendToPeer(recipient, text, ttl) | Отправка контакту (E2E) |
 | GetMessages() | Список сообщений |
 | GetPeers() | Список пиров |
 | GetWeight() | Вес узла |
 | GetStatus() | JSON-статус |
 | GetMultiaddrs() | Список адресов узла |
-| ConnectToPeer(addr string) | Подключение к пиру |
+| ConnectToPeer(addr) | Подключение к пиру |
 | ConnectToPeerWithFallback(addrs) | Подключение с перебором |
 | Announce(json) | Публикация адресов |
-| FindPeerByID(peerID string) | Поиск пира по PeerID |
+| FindPeerByID(peerID) | Поиск пира |
 | AddContact(...) | Добавить контакт |
-| RenameContact(peerID, name) | Переименовать контакт |
-| SendContactRequest(peerID, name) | Отправить запрос |
-| AcceptRequestByID(id) | Принять запрос |
-| RejectRequestByID(id) | Отклонить запрос |
+| RemoveContact(peerID) | Удалить контакт |
+| RenameContact(peerID, name) | Переименовать |
+| SendContactRequest(peerID, name) | Запрос |
+| AcceptRequestByID(id) | Принять |
+| RejectRequestByID(id) | Отклонить |
 | GetRequests() | Список запросов |
-| SetMyDisplayName(name) | Представление по умолчанию |
+| SetMyDisplayName(name) | Представление |
+| SetTtl(period, mode) | TTL |
 | GetMyQRData() | QR-данные |
 
 ### Ключевые особенности
 
-- **libp2p через FFI:** .aar, MethodChannel во Flutter
-- **Non-blocking вызовы:** все Mobile.* обёрнуты в Thread + runOnUiThread
-- **Стабильный PeerID:** приватный ключ в isotope_state.json.key
-- **Смена сети:** connectivity_plus, debounce 10 сек
-- **Reconnect loop:** с exponential backoff (1 → 30 сек)
-- **Flush on reconnect:** три уровня (Notifiee, markPeerAlive, reconnectLoop)
-- **NodeInfo:** PeerID, multiaddrs, lastSeen, status
-- **Логирование:** Go → Flutter, обрезка 4KB
-- **Порты:** динамический поиск (8081+), через NSD
+- libp2p через FFI (.aar)
+- Non-blocking вызовы
+- Стабильный PeerID
+- Смена сети (connectivity_plus)
+- Reconnect loop (exponential backoff)
+- Flush on reconnect (три уровня)
+- Логирование Go → Flutter
+- Динамический поиск порта
+- NSD-обнаружение
 
 ### Архитектурное ограничение (Android)
 
-- InterfaceListenAddresses недоступен (permission denied)
-- Получение IP через Go невозможно. Только через Dart.
+- InterfaceListenAddresses недоступен
+- Получение IP — только через Dart
 - Обход: QR через PeerID + ключи
 
 ---
@@ -109,17 +112,13 @@ func (n *Node) GetStatus() string
 
 ### Ключи
 
-Три ключа в системе:
-
 | Ключ | Назначение | Тип | Файл |
 |------|------------|-----|------|
-| PeerID | Идентификация в libp2p | RSA 2048 | isotope_state.json.key |
-| Ed25519 | Подпись контакта | Ed25519 (64/32 байта) | isotope_state.json.ed25519.key |
-| X25519 | Шифрование E2E | X25519 (32 байта) | isotope_state.json.x25519.key |
+| PeerID | Идентификация | RSA 2048 | isotope_state.json.key |
+| Ed25519 | Подпись | Ed25519 | isotope_state.json.ed25519.key |
+| X25519 | Шифрование E2E | X25519 | isotope_state.json.x25519.key |
 
-Публичные ключи не хранятся — вычисляются из приватных:
-- X25519: curve25519.X25519(priv, Basepoint)
-- Ed25519: priv.Public()
+Публичные ключи вычисляются из приватных.
 
 ### QR-формат (v1)
 
@@ -133,35 +132,30 @@ func (n *Node) GetStatus() string
   "read_enabled": true
 }
 
-QR.v — версия формата QR. Message.Version — версия формата сообщения.
-
 ### Шифрование
 
 - box.Seal (X25519 + XSalsa20-Poly1305)
-- Формат payload: nonce(24) || ciphertext
-- Version = 2 — E2E-сообщения
-- Version = 0 — история (без E2E)
+- Формат: nonce(24) || ciphertext
+- Version = 2 — E2E
+- Version = 0 — история
 
-### Подпись (v1.24)
+### Подпись
 
-- Ed25519 подпись над peerID || x25519_pub
-- Проверка при добавлении контакта
-- Флаг verified: сигнал UI, не пропуск
-- verified: false — контакт не проверен, отправка разрешена (если есть x25519)
-- Нет x25519 — отправка блокируется
+- Ed25519 над peerID || x25519_pub
+- verified — сигнал UI, не пропуск
 
 ### Контакты
 
-Файл: isotope_contacts.json (рядом со state)
+Файл: isotope_contacts.json
 
 {
   "v": 1,
   "contacts": [
     {
       "peerID": "QmX...",
-      "ed25519_pub": "base64...",
-      "x25519_pub": "base64...",
-      "signature": "",
+      "ed25519_pub": "...",
+      "x25519_pub": "...",
+      "signature": "...",
       "name": "Пётр (ремонт)",
       "remote_name": "Пётр, о ремонте в 17:30",
       "verified": false,
@@ -172,28 +166,32 @@ QR.v — версия формата QR. Message.Version — версия фор
   ]
 }
 
-### PlainText (v1.26)
+### PlainText
 
 - Message.PlainText — открытый текст для UI
 - Свои E2E: Text = шифротекст, PlainText = открытый
-- Входящие: расшифровка на лету
 - UI показывает PlainText для isOwn && Version == 2
-- Автоочистка: удаление своих E2E без PlainText при первом запуске (.e2e_cleanup флаг)
 
 ---
 
 ## Контакт-протокол (v1.27)
 
+Контакт — это не добавление в список. Это взаимное обещание слышать.
+Ты предлагаешь. Я принимаю. Или отклоняю.
+Без принуждения. Без навязывания.
+
+Bootstrap-handshake — это не технический ритуал.
+Это социальный акт: приветствие, подтверждение, запрос, согласие.
+Сеть не решает за нас — она лишь хранит наше согласие.
+
 ### Bootstrap-handshake
 
-Четыре шага:
+1. [CONTACT_HELLO] — открытый. PeerID A + публичные ключи A.
+2. [CONTACT_HELLO_ACK] — открытый. PeerID B + публичные ключи B.
+3. [CONTACT_REQUEST] — E2E. Полный payload.
+4. [CONTACT_ACCEPT] — E2E. Подтверждение + представление B.
 
-1. **[CONTACT_HELLO]** — открытый. PeerID A + публичные ключи A.
-2. **[CONTACT_HELLO_ACK]** — открытый. PeerID B + публичные ключи B.
-3. **[CONTACT_REQUEST]** — E2E. Полный payload: имя, ключи, подпись, read_enabled.
-4. **[CONTACT_ACCEPT]** — E2E. Подтверждение + представление B.
-
-### Разделение транспортов по назначению
+### Разделение транспортов
 
 | Тип сообщения | Транспорт |
 |---------------|-----------|
@@ -202,63 +200,63 @@ QR.v — версия формата QR. Message.Version — версия фор
 
 ### tempContacts
 
-Временные контакты в памяти:
+- Создаются при [CONTACT_HELLO], если B не знает A
+- Нужны только для расшифровки [CONTACT_REQUEST]
+- Удаляются после requests.Add
+- Не сохраняются на диск, не в UI
 
-- Создаются при `[CONTACT_HELLO]`, если B не знает A.
-- Нужны только для расшифровки `[CONTACT_REQUEST]`.
-- Удаляются после `requests.Add`.
-- Не сохраняются на диск. Не попадают в UI.
+### Симметрия
 
-### Symmetry
-
-- Обе стороны `confirmed: true`.
-- Через `[CONTACT_ACCEPT]` — обе стороны знают друг друга.
+- Обе стороны confirmed: true
+- Через [CONTACT_ACCEPT]
 
 ### Push через messageHook
 
-- Go уведомляет Dart о событиях.
-- UI реагирует. Не polling.
-- События: `[CONTACT_REQUEST]`, `[CONTACT_ACCEPT]`, `[DELIVERED]`, `[READ]`.
+- Go уведомляет Dart о событиях
+- UI реагирует, не polling
+
+### Удаление контакта — тихий отказ
+
+Удаление — это не блокировка. Это тихий отказ.
+Блокировка — принуждение. Тишина — свобода.
+
+- RemoveContact — полная чистка
+- isotope_deleted.json — удалённые не возвращаются
+- B не знает о факте удаления
 
 ---
 
 ## Система имён (v1.27)
 
+PeerID — моя техническая суть.
+RemoteName — моё представление для других.
+Name — моё имя для себя.
+
+Три уровня — три свободы: быть собой, быть понятым, быть узнанным.
+Имя — это не идентификатор. Это то, как я хочу быть услышанным.
+
 ### Два поля у контакта
 
 | Поле | Кто задаёт | Передаётся | Приоритет |
 |------|------------|------------|-----------|
-| `Name` (локальное) | Я | Нет | Высший |
-| `RemoteName` (представление) | Контакт | Да | Средний |
-| — | — | — | Fallback: PeerID коротко |
+| Name | Я | Нет | Высший |
+| RemoteName | Контакт | Да | Средний |
+| — | — | — | Fallback: PeerID |
 
-**UI показывает:** `Name` → `RemoteName` → PeerID.
+UI: Name → RemoteName → PeerID.
 
 ### MyDisplayName
 
-- В `Settings`, файл `isotope_settings.json`.
-- По умолчанию — пусто. Используется PeerID.
-- В QR — включается как `display_name`.
-- В запросах — диалог «Как вас представить?» (предзаполнено + выделено).
-
-### Диалог «Как вас представить?»
-
-- Появляется при отправке запроса и при показе QR (если пусто).
-- Предзаполнено `MyDisplayName` (или PeerID).
-- Текст выделен (`selectAll`).
-- Можно оставить, дополнить или заменить.
-- Разово. `MyDisplayName` не меняется.
+- В Settings
+- QR содержит display_name
+- Диалог «Как вас представить?» (предзаполнено + выделено)
+- Разово. MyDisplayName не меняется
 
 ### Переименование
 
-- Долгий тап на контакте → bottom sheet.
-- «Переименовать» → диалог с текущим `Name`.
-- Меняет только `Name`. Никуда не передаётся.
-
-### Удаление контакта
-
-- Только у меня. У собеседника — остаётся.
-- Предупреждение: «Удалить контакт? Он останется у собеседника.»
+- Долгий тап → bottom sheet
+- Меняет только Name
+- Никуда не передаётся
 
 ---
 
@@ -275,53 +273,108 @@ QR.v — версия формата QR. Message.Version — версия фор
 
 ### read_enabled
 
-- В контакте (`read_enabled`).
-- В `Settings` (`my_read_enabled`).
-- Передаётся с каждым сообщением.
-- В QR.
+- В контакте
+- В Settings (my_read_enabled)
+- Передаётся с каждым сообщением
+- В QR
 
 ### hidden — терминальное
 
-- Замок = «прочтения не будет».
-- Не откатывается.
-- Повторный `[READ]` не повышает `hidden` → `read`.
+- Замок = «прочтения не будет»
+- Не откатывается
+
+---
+
+## TTL — право на забвение (v1.28)
+
+Сообщение не «удаляется». Оно отпускается.
+Как отпускают прошлое — без сожаления.
+Забвение — это не потеря. Это освобождение.
+
+### Периоды
+
+10s / 30s / 1m / 5m / 15m / 30m / 1h / 4h / 24h / never
+
+Дефолт: never («Не удаляются»).
+
+### Режимы
+
+«После прочтения» — уважение к получателю.
+«Жёсткий» — контроль отправителя.
+Два режима — два выбора. Не навязано — предложено.
+
+**hard:**
+- Таймер от получения
+- Отправитель: от [DELIVERED]
+- Получатель: от получения
+
+**after_read:**
+- Таймер от прочтения
+- Оба делятся → синхронно
+- Получатель не делится → авто-hard + [TTL_UPDATE]
+- Отправитель не делится → авто-hard + [TTL_UPDATE]
+
+### Fallback 48 часов
+
+Fallback — честность. Если получатель не делится — сеть решает сама.
+Не тайна. Не сюрприз. Просто честность.
+
+### [TTL_UPDATE] (Type=8)
+
+- Version = 0
+- Payload: expires_in_seconds
+- При авто-hard
+
+### FLAG_SECURE — право на тишину
+
+Секрет — защита.
+Длинное — не секрет.
+
+Короткие TTL (10с – 1 мин) — запрет скриншотов.
+Это право на тишину.
+Не «я не хочу, чтобы ты видел».
+А «я хочу, чтобы это осталось между нами и исчезло».
+
+Тишина — это тоже свобода.
+
+### Бейдж + превью
+
+Живут ровно столько, сколько сообщение.
+Всё вместе.
 
 ---
 
 ## Таймер отправки (v1.26)
 
-- Задержка 0/3/5/10 сек. Настройка в Личные → Сообщения.
-- Сообщение появляется сразу с круговым прогрессом.
-- Кнопка «Отмена» — возврат в поле.
-- Свайп — удаление.
-- Back — черновик (📝).
-- Home — таймер продолжается.
+- Задержка 0/3/5/10 сек
+- Сообщение сразу с круговым прогрессом
+- Кнопка «Отмена»
+- Back — черновик
+- Home — таймер продолжается
 
 ---
 
 ## Relay-circuit (v1.23+)
 
-**Проблема:** узлы за NAT (мобильные, CGNAT) не могут принимать входящие соединения.
+**Проблема:** узлы за NAT не могут принимать входящие.
 
 **Решение:** relay через VPS.
 
-- Узел резервирует слот на VPS (client.Reserve)
-- VPS форвардит трафик
-- Не хранит, только маршрутизирует
+- Узел резервирует слот (client.Reserve)
+- VPS форвардит, не хранит
 - ANNOUNCE автоматически добавляет relay-адрес
 - FIND fallback — relay-адрес
 
 **Обновление резервации (v1.25):**
-- Notifiee ConnectedF — немедленный refresh при reconnect
-- relayLoop — каждые 30 секунд с проверкой существования
-- Exponential backoff 2 → 30 сек для retry
+- Notifiee ConnectedF — при reconnect
+- relayLoop 30 секунд
+- Exponential backoff
 
 **Условие отключения VPS:**
 
-VPS отключается, когда одновременно выполнены три условия:
 1. DHT покрывает 15+ узлов
 2. Hole punching работает для большинства NAT
-3. Есть 2-3 независимых relay-узла в сети
+3. 2-3 независимых relay-узла
 
 ---
 
@@ -332,27 +385,25 @@ VPS отключается, когда одновременно выполнен
 
 ### Технический иммунитет
 
-- Три уровня защиты: Notifiee ConnectedF, markPeerAlive, reconnectLoop
+- Три уровня защиты
 - Репликация: на 2+ живых узла
-- Селф-хилинг: heartbeat каждые 30 сек
-- Автоматический fallback: локальный IP → relay
-- Exponential backoff для reconnect
+- Селф-хилинг: heartbeat
+- Fallback: локальный IP → relay
+- Exponential backoff
 
 ### Социальный иммунитет
 
-- Каждое сообщение получает вес от этического хеша
-- Лайки поднимают вес. Дизлайки опускают
-- Время размывает даже сильные сигналы
-- Когда вес падает ниже порога — сообщение уходит в архив
-- Ниже — удаляется навсегда
+- Вес от этического хеша
+- Лайки/дизлайки
+- Время размывает
+- Архив → удаление
 
-### Единство двух сторон
+### Единство
 
-Технический иммунитет держит сеть живой.
-Социальный иммунитет держит её чистой.
-Вместе — неубиваемая сеть.
+Технический держит сеть живой.
+Социальный — чистой.
 
-### Иммунитет — функция масштаба
+### Масштаб
 
 | Узлов | Технический | Социальный |
 |-------|-------------|------------|
@@ -369,69 +420,66 @@ VPS отключается, когда одновременно выполнен
 ### 1. P2P-сеть (libp2p)
 
 - Транспорт: TCP + WebSocket + TLS
-- Обнаружение: mDNS + DHT Kademlia + NSD
-- Синхронизация: Gossip-протокол
+- Обнаружение: mDNS + DHT + NSD
+- Синхронизация: Gossip
 - Маршрутизация: Onion Routing v2
-- Relay-circuit: для узлов за NAT
-- Маскировка: WebSocket + TLS + обфускация AES-GCM
-- Reconnect: exponential backoff
-- Flush: три уровня
+- Relay-circuit
+- Маскировка
+- Reconnect, Flush
 
-### 2. Этический движок (нейросеть)
+### 2. Этический движок
 
 - Вектор: 100 измерений
-- Слои: растут каждые 20 сообщений
-- Обучение: градиентный спуск
-- Хеш: семь универсальных заповедей
+- Слои: каждые 20 сообщений
+- Хеш: 7 заповедей
 
 ### 3. Память
 
-- Тип: взвешенная, FIFO с архивом
-- Вес: от этического хеша + preHash/antiHash + оценки
-- Старение: -0.01/час
-- Исчезновение: TTL (60 сек, 3600 сек, вечно)
-- Шифрование: AES-256-GCM
-- PlainText: открытый текст для UI
+- Взвешенная, FIFO с архивом
+- Вес, старение, архив
+- TTL
+- Шифрование AES-256-GCM
+- PlainText
 
 ### 4. Каналы
 
-- Channel, ChannelStore
 - Пороги: full=0.3, comment=0.5, vote=0.7
 
 ### 5. Безопасность
 
-- Анонимность: Onion Routing v2
-- Маскировка: WebSocket + TLS + обфускация
-- Стеганография: LSB в WAV
+- Onion Routing v2
+- Маскировка
+- Стеганография
+- Селф-хилинг
 - E2E: X25519 + box.Seal
 - Подпись: Ed25519
+- FLAG_SECURE
 
-### 6. Весовая модель доступа
+### 6. Весовая модель
 
 | Вес | Права |
 |-----|-------|
-| 0–0.3 | Читать (тизер) |
+| 0–0.3 | Читать |
 | 0.3–0.5 | Полный доступ |
-| 0.5–0.7 | Комментировать, модерировать |
-| 0.7–1.0 | Голосовать, relay, реплики |
+| 0.5–0.7 | Комментировать |
+| 0.7–1.0 | Голосовать, relay |
 
 ### 7. Самоадаптация
 
 - node/adapt.go
 - avgWeight, lowWeightRatio, highWeightRatio
-- Фоновая адаптация каждые 5 минут
+- Фоновая адаптация
 
-### 8. ИИ-слой (ISOTOPE AI Mesh)
+### 8. ИИ-слой
 
 - Статус: v3.0+
 
 ### 9. API
 
 - REST: /send, /messages, /status, /health, /feedback
-- Каналы: /channels
 - WebSocket: /ws
-- Фильтры: /setprehash, /setantihash
-- Стего: /send_stego
+- Фильтры
+- Стего
 
 ---
 
@@ -440,10 +488,10 @@ VPS отключается, когда одновременно выполнен
 | Уровень | Что защищено | Статус |
 |---------|--------------|--------|
 | Обфускация | Маскировка трафика | ✅ v1.13 |
-| E2E-шифрование | Содержимое (от relay) | ✅ v1.24 |
-| Подпись | Подлинность отправителя | ✅ v1.24 |
-| Метаданные | Кто с кем общается | 🔜 v2.0+ (Onion) |
-| Временны́е паттерны | Тайминг, объём | 🔜 Padding, mixing |
+| E2E-шифрование | Содержимое | ✅ v1.24 |
+| Подпись | Подлинность | ✅ v1.24 |
+| Метаданные | Кто с кем | 🔜 v2.0+ |
+| Временны́е паттерны | Тайминг | 🔜 |
 
 ---
 
@@ -453,53 +501,55 @@ VPS отключается, когда одновременно выполнен
 
 - IP: 186.246.31.176
 - PeerID: QmR8u5YFdcKpM2onQvk7KV5qioai87aysi9JWLdV1LX1bi
-- Bootstrap multiaddr: /ip4/186.246.31.176/tcp/9001/ws/p2p/QmR8u5YFdcKpM2onQvk7KV5qioai87aysi9JWLdV1LX1bi
+- Bootstrap: /ip4/186.246.31.176/tcp/9001/ws/p2p/QmR8u5YFdcKpM2onQvk7KV5qioai87aysi9JWLdV1LX1bi
 - Порты: 9000 (TCP), 9001 (WS), 8081 (HTTP API)
 
-НЕ удалять /root/isotope/state/ — PeerID изменится, телефоны потеряют связь.
+НЕ удалять /root/isotope/state/
 
 ### Обновление VPS
 
-cd /root/isotope-core && git pull && cd node && go build -o isotope-node ./main
-# Ctrl+C в окне VPS, затем:
-cd /root/isotope && NODE_ID=bootstrap ISOTOPE_PORT=9000 ISOTOPE_HTTP_PORT=8081 ISOTOPE_ENABLE_RELAY=true /root/isotope-core/node/isotope-node
+pkill -f isotope-node
+sleep 1
+cd /root/isotope-core && git pull
+cd /root/isotope-core/node && go build -o isotope-node ./main
+nohup env NODE_ID=bootstrap ISOTOPE_PORT=9000 ISOTOPE_HTTP_PORT=8081 ISOTOPE_ENABLE_RELAY=true ./isotope-node > isotope.log 2>&1 &
 
 ### Сборка .aar
 
-cd D:\isotope\node
+cd /d D:\isotope\node
 del isotope.aar
 gomobile bind -target=android -androidapi 21 -ldflags "-checklinkname=0" -o isotope.aar ./mobile
 copy /y isotope.aar D:\isotope\mobile\android\app\libs\
 
 ### Сборка APK
 
-cd D:\isotope\mobile
-flutter clean
-flutter pub get
+cd /d D:\isotope\mobile
 flutter build apk --debug
 
 ---
 
 ## Принципы
 
-1. **Децентрализация.** Нет сервера, нет единой точки отказа
-2. **Этический иммунитет.** Сеть отличает добро от зла математически
-3. **Самообучение.** Сообщество учит сеть через оценки
-4. **Приватность.** Данные не покидают устройство без согласия
-5. **Неуязвимость.** Сеть нельзя заблокировать, отключить или взломать
-6. **Унификация.** Каждый механизм — кирпич для множества применений
-7. **Правка в корне.** Не костыли, а исправление причины
-8. **Открытость без наивности.** Публичное — для сообщества, внутреннее — для команды
-9. **Эмерджентное доверие.** Verified — сигнал, не пропуск
-10. **Приватность по умолчанию.** E2E для каждого сообщения
-11. **Пользователь не гадает.** Видит факт, не догадку
+1. Децентрализация. Нет сервера
+2. Этический иммунитет
+3. Самообучение
+4. Приватность
+5. Неуязвимость
+6. Унификация
+7. Правка в корне
+8. Открытость без наивности
+9. Эмерджентное доверие
+10. Приватность по умолчанию
+11. Пользователь не гадает
+12. Право на забвение (TTL)
+13. Право на тишину (FLAG_SECURE)
+14. Тихий отказ
 
 ---
 
 ## Масштаб и иммунитет
 
-Иммунная система ISOTOPE включается при 15+ узлах.
-До этого сеть работает как защищённый P2P-протокол.
+Иммунная система включается при 15+ узлах.
 
 [Шкала иммунитета →](IMMUNITY_SCALE.md)
 

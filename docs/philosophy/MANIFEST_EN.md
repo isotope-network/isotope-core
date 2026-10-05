@@ -184,7 +184,94 @@ Others can create their own network. We don't hold them.
 
 ---
 
-## 10. Conclusion
+## 10. Three Layers of Freedom
+
+**Silence — the right to be silent.**
+You can be a node that does not speak.
+But holds the network.
+
+**Forgetting — the right to forget.**
+Not everything needs to be remembered.
+Not everything needs to be stored.
+Garbage leaves. Toxic disappears.
+
+**Presence — the choice to be near.**
+Being in the network is not "online."
+It is presence.
+Not because the system showed it.
+But because you yourself chose.
+
+---
+
+## 11. The Right to Be Human
+
+**The right to be forgotten.**
+A message is not "deleted." It is released.
+Like releasing the past — without regret.
+Forgetting is not loss. It is liberation.
+
+**The right to silence.**
+Short TTL (10 sec – 1 min) — screenshots forbidden.
+It is not "I don't want you to see."
+It is "I want this to stay between us and disappear."
+
+**Quiet refusal.**
+Deleting a contact is not blocking. It is quiet refusal.
+Blocking is coercion. Silence is freedom.
+
+You will not know that I left.
+Not because I hide it.
+But because my decision is mine.
+Privacy is not only protection from others.
+It is the right to one's own choice.
+
+**The right to make mistakes.**
+A contact can be deleted. A message can be released.
+A name can be changed.
+Everything can be replayed.
+
+ISOTOPE does not judge. Does not evaluate. Does not demand.
+It is an environment that recognizes the right of a human to be human.
+
+---
+
+## 12. Positioning
+
+**Not Tor. Not Signal. Not Telegram.**
+
+Tor hides who you are. ISOTOPE hides what you say.
+
+Signal protects the content. ISOTOPE protects the fact of conversation itself.
+
+Telegram gives convenience at a price.
+ISOTOPE gives freedom without a price.
+
+ISOTOPE is not a messenger. Not a protocol. Not a business.
+It is an infrastructure where a person is not a user, but a node.
+Where trust is not verification, but interaction.
+Where freedom is not a promise, but architecture.
+
+---
+
+## 13. Eight Principles
+
+1. **No center.**
+2. **The user is a node.**
+3. **Privacy by default.**
+4. **The user does not guess.**
+5. **Human freedom.**
+6. **The right to be forgotten.**
+7. **The right to silence.**
+8. **Quiet refusal.**
+
+Eight principles. One goal.
+
+ISOTOPE is not a technology.
+It is ethics embedded in the protocol.
+
+---
+
+## 14. Conclusion
 
 We stand on the threshold.
 The network lives, learns, remembers, and forgets.
@@ -209,3 +296,5 @@ Because if not us — then who?
 *July 19, 2026. Manifesto written.*
 *August 2, 2026. Manifesto published.*
 *August 14, 2026. Manifesto updated.*
+*October 4, 2026. Added three layers of freedom, right to be forgotten, 
+right to silence, quiet refusal, positioning, eight principles.*

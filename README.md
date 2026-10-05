@@ -8,6 +8,21 @@ in a single decentralized network.
 
 ---
 
+## Not Tor. Not Signal. Not Telegram.
+
+**Tor** hides who you are. ISOTOPE hides what you say.
+
+**Signal** protects the content. ISOTOPE protects the fact of conversation itself.
+
+**Telegram** gives convenience at a price. ISOTOPE gives freedom without a price.
+
+ISOTOPE is not a messenger. Not a protocol. Not a business.
+It is an infrastructure where a person is not a user, but a node.
+Where trust is not verification, but interaction.
+Where freedom is not a promise, but architecture.
+
+---
+
 ## Three Pillars of ISOTOPE
 
 **Data.**
@@ -95,6 +110,20 @@ The key belongs only to the sender and the recipient.
 Verified is a signal, not a pass.
 Weight is earned, not proven.
 Trust grows from interaction, not from authority.
+
+**Right to Be Forgotten.**
+Messages are not «deleted». They are released.
+Like releasing the past — without regret.
+Forgetting is not loss. It is liberation.
+
+**Right to Silence.**
+Short TTL (10 sec – 1 min) — screenshots forbidden.
+It is not «I don't want you to see».
+It is «I want this to stay between us and disappear».
+
+**Quiet Refusal.**
+Deleting a contact is not blocking. It is quiet refusal.
+Blocking is coercion. Silence is freedom.
 
 ---
 
@@ -191,7 +220,7 @@ Once a day — a single notification:
 
 ## Status
 
-**v1.27.0 — stable (contacts and identity).**
+**v1.28.0 — stable (right to be forgotten).**
 
 Implemented:
 - P2P network: libp2p + mDNS + DHT + Gossip
@@ -249,7 +278,7 @@ Implemented:
 - Long tap on contact → bottom sheet: Open / Rename / Delete
 - Security warning on request
 
-**Statuses (v1.26):**
+**Message statuses (v1.26):**
 - ✓ / ✓✓ / ✓🔒 / ✓✓ (colored)
 - Hidden is terminal
 - read_enabled — symmetric
@@ -259,16 +288,44 @@ Implemented:
 - Draft on back
 - Cancel button
 
+**TTL — Right to Be Forgotten (v1.28):**
+- Periods: 10s / 30s / 1m / 5m / 15m / 30m / 1h / 4h / 24h / never
+- Modes: hard / after_read
+- Fallback 48 hours
+- [TTL_UPDATE] (Type=8) — auto-hard notification
+- DeleteExpired in cleanupLoop (1 min timer)
+- FLAG_SECURE: TTL 10s–1m — screenshots forbidden
+
+**Contact deletion (v1.28):**
+- RemoveContact — full cleanup
+- isotope_deleted.json — deleted don't return
+- Quiet refusal — B doesn't know
+
+**Per-chat / per-peer (v1.28):**
+- Messages per chat
+- Drafts per chat
+- Unread per chat
+- [READ] only for current chat
+
+**UI (v1.28):**
+- Settings → Messages (TTL: periods + modes)
+- Settings → Privacy (read_enabled)
+- Profile (MyDisplayName)
+- Orange periods 10s / 30s / 1m
+- Smart time format (today / yesterday / date)
+- Send timer (pending message)
+- AppBar — clean, only contact name
+
 **Deferred:**
 - BLE — unstable, disabled
 - Samsung Android 10 — crash
 - DHT Provide — falls with few peers
 - messageStatus growth — cleanup needed
-- TTL for tempContacts (5 min)
 - [PROFILE_UPDATE]
 
 In development:
-- Circuit direct when 15+ peers
+- connect_screen — single name source
+- [PROFILE_UPDATE]
 - Batch [READ]
 - Metadata protection — Onion (v2.0+)
 - ISOTOPE Enterprise (B2B data exchange)

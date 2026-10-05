@@ -1,5 +1,62 @@
 # История изменений ISOTOPE
 
+## v1.28.0 (2026-10-04)
+
+«Право на забвение»
+
+### Добавлено
+- TTL — полностью:
+  - Settings.TtlPeriod / Settings.TtlMode
+  - Message.TtlPeriodSeconds / TtlMode / ExpiresAt
+  - Периоды: 10s / 30s / 1m / 5m / 15m / 30m / 1h / 4h / 24h / never
+  - «forever» → «never» (обратная совместимость)
+  - Режимы: hard / after_read
+  - [TTL_UPDATE] (Type=8) — новый тип для авто-hard
+  - Fallback 48 часов — принудительное удаление
+  - DeleteExpired в cleanupLoop (тикер 1 мин)
+  - Фильтрация истёкших в saveState / loadState / Memory.Add / GetMessages
+- FLAG_SECURE:
+  - TTL от 10 сек до 1 мин — скриншоты запрещены
+  - Оптимизация _lastSecureFlag
+  - Снятие при dispose
+- Удаление контакта:
+  - RemoveContact — полная чистка (контакт, сообщения, статусы, черновики, unread)
+  - isotope_deleted.json — удалённые не возвращаются
+  - Тихий отказ — B не знает
+- Per-chat / per-peer:
+  - messagesFor(peerID)
+  - Черновики — Map<peerID, String>
+  - Непрочитанные — Map<peerID, int>
+  - [READ] — только для текущего чата
+- UI:
+  - Настройки → Сообщения (TTL: периоды + режимы)
+  - Настройки → Приватность (read_enabled)
+  - Профиль (MyDisplayName)
+  - Оранжевые периоды 10s / 30s / 1m
+  - Умный формат времени (сегодня / вчера / дата)
+  - Таймер отправки (pending-сообщение)
+  - AppBar — чисто, только имя контакта
+  - Диалог «Как вас представить?»
+
+### Исправлено
+- Абракадабра в превью — displayText вместо text
+- «Свой контакт» артефакт — isSelf фильтр
+- Имя входящего в чате — ChatProvider.nameFor(peerID)
+- [CONTACT_REQUEST] — дедупликация по peerID
+- Бейдж + превью — синхронно с TTL
+
+### Коммиты
+- d482dfc — HEAD (TTL финальный)
+- 27ca05c — TTL механизм
+
+### Следующий шаг
+- connect_screen — единый источник имени
+- [PROFILE_UPDATE] (Type=9)
+- Батч [READ]
+- Документация v1.29+
+
+---
+
 ## v1.27.0 (2026-10-01)
 
 «Контакты и идентификация»
@@ -7,16 +64,17 @@
 ### Добавлено
 - Контакт-протокол (bootstrap-handshake):
   - [CONTACT_HELLO] → [CONTACT_HELLO_ACK] → [CONTACT_REQUEST] → [CONTACT_ACCEPT]
-  - Все шаги через bootstrap (открытые — всегда через bootstrap)
-  - tempContacts: временные контакты в памяти для расшифровки [CONTACT_REQUEST]
-  - Push-события в UI через messageHook (не polling)
+  - Открытые сервисные (HELLO, ACK) — всегда через bootstrap
+  - E2E (REQUEST, ACCEPT) — circuit → bootstrap fallback
+  - tempContacts — временные в памяти для расшифровки
+  - Push через messageHook (не polling)
   - Симметрия: обе стороны confirmed: true
 - Система имён:
   - Name (локальное) / RemoteName (представление) / PeerID (fallback)
   - UI: Name → RemoteName → PeerID
-  - MyDisplayName в Settings — представление по умолчанию
+  - MyDisplayName в Settings
   - QR содержит display_name
-  - Диалог «Как вас представить?» при отправке запроса (предзаполнено + выделено)
+  - Диалог «Как вас представить?» (предзаполнено + выделено)
   - Профиль в настройках → «Ваше имя»
   - Долгий тап на контакте → bottom sheet: Открыть / Переименовать / Удалить
   - Предупреждение о безопасности при запросе
@@ -29,20 +87,12 @@
 - Логи: убраны STATUS POLL, [MULTIADDR], [DIAG], [DHT] Provide
 
 ### Коммиты
-- 6896800 — [CONTACT_ACCEPT] payload (ключи B, read_enabled)
-- bead650 — bootstrap-handshake
-- 692418d — [CONTACT_HELLO] с ключами A, tempContact
-- 67778cd — Type в processMessageInternal, фильтр Type=6
-- a2004db — push [CONTACT_REQUEST] через hook
-- d083997 — relay throttle fix
-- 849c388 — [CONTACT_HELLO] / ACK через bootstrap
-- 36a6af6, 0cb9de2, 2a9083a — viaBootstrap параметр
-- 196af37 — [CONTACT_ACCEPT] push → UI
-- 156fe0a — чистка логов
+- 6896800, bead650, 692418d, 67778cd, a2004db, d083997
+- 849c388, 36a6af6, 0cb9de2, 2a9083a, 196af37, 156fe0a
 - 8e6280c — HEAD (имена, диалоги, переименование, безопасность)
 
 ### Следующий шаг
-- [PROFILE_UPDATE] — для смены MyDisplayName
+- [PROFILE_UPDATE]
 - Батч [READ]
 - Circuit direct при 15+ узлах
 - TTL для tempContacts (5 минут)
@@ -67,12 +117,7 @@
 - Upsert nodes on alive-event — статус меняется с unknown на alive
 
 ### Коммиты
-- d0e9744 — own QR blocked, PlainText for own E2E messages, auto-cleanup
-- 3235060 — relay: refresh reservation on reconnect + 30s loop check
-- 882c998 — relay: exponential backoff for reservation retry
-- abc5f01 — UI: display plainText for own E2E messages
-- 6e1d1b9 — UI: retry loading contacts from core
-- 2f35fb1 — UI: upsert nodes on alive-event
+- d0e9744, 3235060, 882c998, abc5f01, 6e1d1b9, 2f35fb1
 
 ---
 
@@ -84,9 +129,7 @@
 - UI 1.3 — пустое состояние с кнопкой действия
 
 ### Коммиты
-- 5ebe222 — UI 1.1: remove technical terms from UI
-- 4940998 — UI 1.2: single add-contact entry, settings bottom sheet
-- 988fe17 — UI 1.3: empty state with action button
+- 5ebe222, 4940998, 988fe17
 
 ---
 
