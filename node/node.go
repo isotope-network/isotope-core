@@ -1570,30 +1570,38 @@ func (n *Node) handleServiceMessage(m Message) {
 		}
 
 	case TypeRead:
-		// Если я не делюсь статусом прочтения — не показываю чужой [READ].
-		// Иконка становится ✓✓🔒 (StatusHidden), а не ✓✓ (цвет).
-		if !n.myReadEnabled {
-			n.setMessageStatus(m.Ref, StatusHidden)
-			log.Printf("[SERVICE] read ack (hidden, myReadEnabled=false) ref=%s from=%s", m.Ref, m.Sender)
-		} else {
-			n.setMessageStatus(m.Ref, StatusRead)
-			log.Printf("[SERVICE] read ack ref=%s from=%s", m.Ref, m.Sender)
+		// Батч (Refs не пуст) — обрабатываем циклом.
+		// Одиночный (Refs пуст, Ref заполнен) — как раньше.
+		refs := m.Refs
+		if len(refs) == 0 && m.Ref != "" {
+			refs = []string{m.Ref}
 		}
+		for _, ref := range refs {
+			// Если я не делюсь статусом прочтения — не показываю чужой [READ].
+			// Иконка становится ✓✓🔒 (StatusHidden), а не ✓✓ (цвет).
+			if !n.myReadEnabled {
+				n.setMessageStatus(ref, StatusHidden)
+				log.Printf("[SERVICE] read ack (hidden, myReadEnabled=false) ref=%s from=%s", ref, m.Sender)
+			} else {
+				n.setMessageStatus(ref, StatusRead)
+				log.Printf("[SERVICE] read ack ref=%s from=%s", ref, m.Sender)
+			}
 
-		// Режим after_read: сообщение получателя прочитано — запускаем
-		// таймер удаления на отправителе (у нас). Если ExpiresAt ещё не
-		// установлен — ставим now + ttlPeriodSeconds.
-		if msg, ok := n.findMyMessageByID(m.Ref); ok {
-			if msg.TtlMode == "after_read" && msg.ExpiresAt.IsZero() && msg.TtlPeriodSeconds > 0 {
-				expiresAt := time.Now().Add(time.Duration(msg.TtlPeriodSeconds) * time.Second)
-				if n.memory.SetExpiresAt(m.Ref, expiresAt) {
-					log.Printf("[TTL] after_read: set ExpiresAt for %s (+%ds)", m.Ref, msg.TtlPeriodSeconds)
-					n.scheduleSaveState()
-					// Push в Dart: сообщаем об обновлении ExpiresAt.
-					if updated, ok := n.findMyMessageByID(m.Ref); ok {
-						if data, err := json.Marshal(updated); err == nil {
-							if n.messageHook != nil {
-								n.messageHook(string(data))
+			// Режим after_read: сообщение получателя прочитано — запускаем
+			// таймер удаления на отправителе (у нас). Если ExpiresAt ещё не
+			// установлен — ставим now + ttlPeriodSeconds.
+			if msg, ok := n.findMyMessageByID(ref); ok {
+				if msg.TtlMode == "after_read" && msg.ExpiresAt.IsZero() && msg.TtlPeriodSeconds > 0 {
+					expiresAt := time.Now().Add(time.Duration(msg.TtlPeriodSeconds) * time.Second)
+					if n.memory.SetExpiresAt(ref, expiresAt) {
+						log.Printf("[TTL] after_read: set ExpiresAt for %s (+%ds)", ref, msg.TtlPeriodSeconds)
+						n.scheduleSaveState()
+						// Push в Dart: сообщаем об обновлении ExpiresAt.
+						if updated, ok := n.findMyMessageByID(ref); ok {
+							if data, err := json.Marshal(updated); err == nil {
+								if n.messageHook != nil {
+									n.messageHook(string(data))
+								}
 							}
 						}
 					}
@@ -3110,6 +3118,67 @@ func (n *Node) SendRead(ref, recipient string) error {
 		}
 	}
 	return n.sendConfirmation(TypeRead, ref, recipient)
+}
+
+// SendReadBatch — отправляет батч подтверждений прочтения.
+// Одно сообщение [READ] с массивом Refs вместо N отдельных.
+// Version=0, Type=TypeRead, Refs=msg_ids. Отправка — через bootstrap.
+// Локально у получателя — TTL after_read для каждого ref (как в SendRead).
+// Если !myReadEnabled — не отправляем.
+func (n *Node) SendReadBatch(refs []string, recipient string) error {
+	if n.host == nil {
+		return fmt.Errorf("node not started")
+	}
+	if recipient == "" {
+		return fmt.Errorf("recipient is required")
+	}
+	if len(refs) == 0 {
+		return nil
+	}
+	// [READ] отправляется только если делюсь статусом прочтения.
+	if !n.myReadEnabled {
+		return nil
+	}
+
+	// Локальный TTL after_read — для каждого входящего.
+	for _, ref := range refs {
+		if msg, ok := n.findMyMessageByID(ref); ok {
+			if msg.TtlMode == "after_read" && msg.ExpiresAt.IsZero() && msg.TtlPeriodSeconds > 0 {
+				expiresAt := time.Now().Add(time.Duration(msg.TtlPeriodSeconds) * time.Second)
+				if n.memory.SetExpiresAt(ref, expiresAt) {
+					log.Printf("[TTL] after_read (recipient batch): set ExpiresAt for %s (+%ds)", ref, msg.TtlPeriodSeconds)
+					n.scheduleSaveState()
+					if updated, ok := n.findMyMessageByID(ref); ok {
+						if data, err := json.Marshal(updated); err == nil {
+							if n.messageHook != nil {
+								n.messageHook(string(data))
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+
+	id := generateMsgID(fmt.Sprintf("read-batch:%d", len(refs)))
+	readEnabled := n.myReadEnabled
+	msg := Message{
+		ID:          id,
+		Text:        "",
+		Sender:      n.host.ID().String(),
+		Recipient:   recipient,
+		Type:        TypeRead,
+		Refs:        refs,
+		Version:     0,
+		Time:        time.Now().UTC().Format("2006-01-02T15:04:05"),
+		ReadEnabled: &readEnabled,
+	}
+	if err := n.sendServiceViaBootstrap(msg); err != nil {
+		log.Printf("[CONFIRM] relay read-batch (%d refs) to %s failed: %v", len(refs), recipient, err)
+		return err
+	}
+	log.Printf("[CONFIRM] relay read-batch (%d refs) to %s", len(refs), recipient)
+	return nil
 }
 
 // sendConfirmation — общая логика отправки [DELIVERED]/[READ].

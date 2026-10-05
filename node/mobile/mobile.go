@@ -694,6 +694,35 @@ func SendRead(ref, recipient string) string {
 	return `{"status":"ok"}`
 }
 
+// SendReadBatch — отправляет батч подтверждений прочтения.
+// Принимает JSON-массив msg_id и peerID получателя.
+// Одно сообщение [READ] вместо N отдельных.
+func SendReadBatch(refsJSON, recipient string) string {
+	nodeMu.Lock()
+	defer nodeMu.Unlock()
+
+	if node == nil {
+		return errorJSON("node not started")
+	}
+	if recipient == "" {
+		return errorJSON("recipient is required")
+	}
+
+	var refs []string
+	if err := json.Unmarshal([]byte(refsJSON), &refs); err != nil {
+		return errorJSON("invalid JSON: " + err.Error())
+	}
+	if len(refs) == 0 {
+		return `{"status":"ok"}`
+	}
+
+	if err := node.SendReadBatch(refs, recipient); err != nil {
+		return errorJSON(err.Error())
+	}
+	addLog("[READ] batch sent: %d refs to %s", len(refs), recipient)
+	return `{"status":"ok"}`
+}
+
 // GetMessageStatuses — возвращает JSON со статусами всех сообщений.
 // Формат: {"<msg_id>": 1|2|3, ...}. 0 — неизвестен (не включается).
 // 1 — отправлено, 2 — доставлено, 3 — прочитано.

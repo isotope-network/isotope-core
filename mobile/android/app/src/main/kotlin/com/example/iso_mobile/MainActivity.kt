@@ -293,6 +293,14 @@ class MainActivity : FlutterActivity() {
                             runOnUiThread { result.success(response) }
                         }.start()
                     }
+                    "sendReadBatch" -> {
+                        val refsJson = call.argument<String>("refs") ?: "[]"
+                        val recipient = call.argument<String>("recipient") ?: ""
+                        Thread {
+                            val response = Mobile.sendReadBatch(refsJson, recipient)
+                            runOnUiThread { result.success(response) }
+                        }.start()
+                    }
                     "getContacts" -> {
                         Thread {
                             val response = Mobile.getContacts()

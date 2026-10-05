@@ -300,20 +300,44 @@ class ChatProvider extends ChangeNotifier {
   }
 
   /// Открывает/закрывает чат с указанным peerID.
-  /// При открытии — снимок непрочитанных, сброс счётчика, отправка [READ].
+  /// При открытии — снимок непрочитанных, сброс счётчика,
+  /// один батч [READ] со всеми непрочитанными от этого peerID.
   void setChatOpen(bool open, String peerID) {
     if (open) {
       _currentOpenPeerID = peerID;
       _unreadSnapshotByPeer[peerID] = _unreadByPeer[peerID] ?? 0;
       _unreadByPeer[peerID] = 0;
-      // [READ] — только для текущего peerID.
-      for (final msg in _messagesMap.values) {
-        _sendReadFor(msg);
-      }
+      _sendReadBatchFor(peerID);
     } else {
       _currentOpenPeerID = null;
     }
     _safeNotify();
+  }
+
+  /// Собирает все непрочитанные msg_id от указанного peerID
+  /// и отправляет одним батчем [READ]. Помечает их в _readSent.
+  void _sendReadBatchFor(String peerID) {
+    if (peerID.isEmpty) return;
+    final refs = <String>[];
+    for (final msg in _messagesMap.values) {
+      if (msg.isOwn) continue;
+      if (msg.sender != peerID) continue;
+      if (_readSent.contains(msg.id)) continue;
+      refs.add(msg.id);
+    }
+    if (refs.isEmpty) return;
+    for (final id in refs) {
+      _readSent.add(id);
+    }
+    // Fire-and-forget: не блокируем UI.
+    LibP2PService.sendReadBatch(refs: refs, recipient: peerID).then((r) {
+      if (r.containsKey('error')) {
+        LogService.log('P2P: sendReadBatch failed for $peerID: ${r['error']}');
+      }
+    }).catchError((e) {
+      LogService.log('P2P: sendReadBatch exception for $peerID: $e');
+    });
+    _saveReadSent();
   }
 
   void initialize({String bootstrapPeers = ''}) {

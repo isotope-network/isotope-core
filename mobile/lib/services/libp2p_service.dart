@@ -589,6 +589,23 @@ class LibP2PService {
     }
   }
 
+  /// Отправляет батч подтверждений прочтения одним сообщением [READ].
+  /// refs — список msg_id. recipient — PeerID отправителя этих сообщений.
+  static Future<Map<String, dynamic>> sendReadBatch({
+    required List<String> refs,
+    required String recipient,
+  }) async {
+    try {
+      final response = await _channel.invokeMethod<String>('sendReadBatch', {
+        'refs': jsonEncode(refs),
+        'recipient': recipient,
+      });
+      return _safeDecode(response);
+    } on PlatformException catch (e) {
+      return {'error': e.message ?? 'platform_error', 'operation': 'send_read_batch'};
+    }
+  }
+
   static Future<Map<String, dynamic>> joinDHT(String bootstrapPeers) async {
     try {
       final response = await _channel.invokeMethod<String>('joinDHT', {

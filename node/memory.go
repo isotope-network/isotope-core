@@ -65,6 +65,7 @@ type Message struct {
 	Version          int         `json:"version,omitempty"`      // 0 = история/broadcast, 2 = E2E
 	Type             MessageType `json:"type,omitempty"`         // 0 = обычное, 1-5 = служебные (контакт-протокол)
 	Ref              string      `json:"ref,omitempty"`          // msg_id для delivered/read; request_id для accept/reject
+	Refs             []string    `json:"refs,omitempty"`         // батч: массив msg_id для [READ]. Если пуст — читать Ref
 	ReadEnabled      *bool       `json:"read_enabled,omitempty"` // настройка отправителя; nil — не передано
 	TtlPeriodSeconds int         `json:"ttl_period_s,omitempty"` // период TTL в секундах; 0 — forever
 	TtlMode          string      `json:"ttl_mode,omitempty"`     // "after_read" | "hard" | ""
