@@ -3209,7 +3209,14 @@ func (n *Node) MarkReadLocally(refs []string) int {
 	changed := n.memory.MarkReadLocally(refs)
 	if changed > 0 {
 		log.Printf("[READ] marked %d messages as read locally", changed)
-		n.scheduleSaveState()
+		// Немедленное сохранение — отметка прочтения должна выжить
+		// при убийстве приложения Android. scheduleSaveState (5 сек)
+		// не успевает — окно потери.
+		go func() {
+			if err := n.saveState(); err != nil {
+				log.Printf("[STATE] save failed: %v", err)
+			}
+		}()
 	}
 	return changed
 }

@@ -966,6 +966,11 @@ class ChatProvider extends ChangeNotifier {
           expiresAt: Message.parseExpiresAt(map['expiresAt']),
           recipient: map['recipient'] ?? '',
           readLocally: map['read_locally'] ?? false,
+          mediaType: map['media_type'] ?? '',
+          duration: map['duration'] ?? 0,
+          mediaData: map['media_data'] ?? '',
+          fileName: map['file_name'] ?? '',
+          fileSize: map['file_size'] ?? 0,
         );
       }).toList();
     } catch (_) {
@@ -1106,6 +1111,16 @@ class ChatProvider extends ChangeNotifier {
     if (msg.sender.isEmpty) return;
     if (msg.sender != _currentOpenPeerID) return;       // не текущий чат
     if (msg.readLocally) return;
+    // Локально — пометить прочитанным (источник истины — Go).
+    // Без этого readLocally не выставляется при новом сообщении в
+    // открытом чате → при перезапуске появляется бейдж.
+    LibP2PService.markReadLocally(refs: [msg.id]).then((r) {
+      if (r.containsKey('error')) {
+        LogService.log('P2P: markReadLocally failed for ${msg.id}: ${r['error']}');
+      }
+    }).catchError((e) {
+      LogService.log('P2P: markReadLocally exception for ${msg.id}: $e');
+    });
     // Fire-and-forget: не блокируем UI.
     LibP2PService.sendRead(ref: msg.id, recipient: msg.sender).then((r) {
       if (r.containsKey('error')) {
