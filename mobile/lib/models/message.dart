@@ -24,6 +24,23 @@ class Message {
   /// Источник истины — Go. Восстанавливается при старте.
   final bool readLocally;
 
+  /// Тип медиа: '' | 'text' | 'voice' | 'file'.
+  /// '' — старое текстовое (обратная совместимость).
+  final String mediaType;
+
+  /// Длительность голосового (секунды). 0 — не голосовое.
+  final int duration;
+
+  /// Медиа-данные (base64). Не используем сейчас — Text уже содержит.
+  /// Оставлено для совместимости с Go-JSON.
+  final String mediaData;
+
+  /// Имя файла (для файлов). Пока не используем.
+  final String fileName;
+
+  /// Размер файла (байты). Пока не используем.
+  final int fileSize;
+
   Message({
     required this.id,
     required this.text,
@@ -44,6 +61,11 @@ class Message {
     this.expiresAt,
     this.recipient = '',
     this.readLocally = false,
+    this.mediaType = '',
+    this.duration = 0,
+    this.mediaData = '',
+    this.fileName = '',
+    this.fileSize = 0,
   });
 
   /// Копия с обновлённым expiresAt.
@@ -68,6 +90,11 @@ class Message {
       expiresAt: expiresAt ?? this.expiresAt,
       recipient: recipient,
       readLocally: readLocally,
+      mediaType: mediaType,
+      duration: duration,
+      mediaData: mediaData,
+      fileName: fileName,
+      fileSize: fileSize,
     );
   }
 
@@ -93,6 +120,11 @@ class Message {
       expiresAt: expiresAt,
       recipient: recipient,
       readLocally: readLocally,
+      mediaType: mediaType,
+      duration: duration,
+      mediaData: mediaData,
+      fileName: fileName,
+      fileSize: fileSize,
     );
   }
 
@@ -118,6 +150,11 @@ class Message {
       expiresAt: expiresAt,
       recipient: recipient,
       readLocally: readLocally,
+      mediaType: mediaType,
+      duration: duration,
+      mediaData: mediaData,
+      fileName: fileName,
+      fileSize: fileSize,
     );
   }
 
@@ -142,6 +179,11 @@ class Message {
       expiresAt: Message.parseExpiresAt(json['expiresAt']),
       recipient: json['recipient'] ?? '',
       readLocally: json['read_locally'] ?? false,
+      mediaType: json['media_type'] ?? '',
+      duration: json['duration'] ?? 0,
+      mediaData: json['media_data'] ?? '',
+      fileName: json['file_name'] ?? '',
+      fileSize: json['file_size'] ?? 0,
     );
   }
 
@@ -177,6 +219,11 @@ class Message {
       'ttlMode': ttlMode,
       'expiresAt': expiresAt?.toIso8601String(),
       'recipient': recipient,
+      'media_type': mediaType,
+      'duration': duration,
+      'media_data': mediaData,
+      'file_name': fileName,
+      'file_size': fileSize,
     };
   }
 
@@ -296,6 +343,19 @@ class Message {
     if (isOwn) return 'own';
     if (sender == '🌐 Сеть') return 'network';
     return 'peer';
+  }
+
+  /// Голосовое сообщение?
+  bool get isVoice => mediaType == 'voice';
+
+  /// Файл?
+  bool get isFile => mediaType == 'file';
+
+  /// Base64-данные медиа: у своих — PlainText, у входящих — Text.
+  /// Для голосовых — base64 Opus/Ogg.
+  String get mediaBase64 {
+    if (isOwn && plainText.isNotEmpty) return plainText;
+    return text;
   }
 
   /// TTL-метка

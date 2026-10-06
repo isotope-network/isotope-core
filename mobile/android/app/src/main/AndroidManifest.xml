@@ -19,6 +19,9 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC"/>
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
+
+    <!-- Микрофон (голосовые сообщения) -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO"/>
     
     <!-- BLE feature -->
     <uses-feature android:name="android.hardware.bluetooth_le" android:required="true"/>

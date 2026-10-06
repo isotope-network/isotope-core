@@ -243,6 +243,33 @@ func SendToPeer(peerID string, text string, period string, mode string) string {
 	return fmt.Sprintf(`{"status":"ok","id":"%s"}`, id)
 }
 
+// SendVoice — отправляет голосовое сообщение.
+// mediaData — base64 Opus/Ogg. duration — секунды.
+// period: "10s" | "30s" | "1m" | ... | "never".
+// mode: "" (при never) | "after_read" | "hard".
+func SendVoice(peerID string, mediaData string, duration int, period string, mode string) string {
+	nodeMu.Lock()
+	defer nodeMu.Unlock()
+
+	if node == nil {
+		return errorJSON("node not started")
+	}
+	if peerID == "" {
+		return errorJSON("peerID is required")
+	}
+	if mediaData == "" {
+		return errorJSON("mediaData is required")
+	}
+
+	id, err := node.SendVoice(peerID, mediaData, duration, period, mode)
+	if err != nil {
+		return errorJSON(err.Error())
+	}
+
+	addLog("[MEDIA] voice sent to %s (id=%s, %ds)", peerID, id, duration)
+	return fmt.Sprintf(`{"status":"ok","id":"%s"}`, id)
+}
+
 // GetPeers — возвращает список пиров
 func GetPeers() string {
 	nodeMu.Lock()

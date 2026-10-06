@@ -857,6 +857,84 @@ class ChatProvider extends ChangeNotifier {
     }
   }
 
+  /// Отправляет голосовое сообщение текущему контакту (E2E).
+  /// mediaData — base64 Opus/Ogg. duration — секунды.
+  /// Требует открытый чат (_currentNodeIp — PeerID получателя).
+  Future<bool> sendVoice({
+    required String mediaData,
+    required int duration,
+  }) async {
+    if (_currentNodeIp.isEmpty || !_currentNodeIp.startsWith('Qm')) {
+      _error = 'Нет получателя — откройте чат';
+      _safeNotify();
+      return false;
+    }
+    if (mediaData.isEmpty) {
+      _error = 'Пустое голосовое';
+      _safeNotify();
+      return false;
+    }
+
+    final response = await LibP2PService.sendVoice(
+      peerID: _currentNodeIp,
+      mediaData: mediaData,
+      duration: duration,
+      period: _ttlPeriod,
+      mode: _ttlMode,
+    );
+
+    if (response.containsKey('error')) {
+      _error = 'Ошибка отправки голосового: ${response['error']}';
+      _safeNotify();
+      return false;
+    }
+
+    final msgId = response['id'];
+    if (msgId == null || msgId.toString().isEmpty) {
+      _error = 'Ошибка: Go-ядро не вернуло ID голосового';
+      _safeNotify();
+      return false;
+    }
+
+    _ownMessageIds.add(msgId.toString());
+    await _saveOwnMessageIds();
+
+    final now = DateTime.now().toUtc().toIso8601String();
+    final ttlSec = _ttlPeriodSeconds(_ttlPeriod);
+
+    final msg = Message(
+      id: msgId.toString(),
+      text: mediaData,
+      plainText: mediaData,
+      sender: 'Вы',
+      time: now,
+      isOwn: true,
+      score: 0,
+      weight: 0.5,
+      archived: false,
+      channel: _activeChannel,
+      ttlPeriodSeconds: ttlSec,
+      ttlMode: _ttlMode,
+      expiresAt: (ttlSec > 0 && _ttlMode == 'hard')
+          ? DateTime.now().add(Duration(seconds: ttlSec))
+          : null,
+      recipient: _currentNodeIp,
+      mediaType: 'voice',
+      duration: duration,
+    );
+
+    _addMessage(msg);
+    _messageStatuses[msg.id] = 1;
+
+    p2p?.saveOwnMessage(_currentNodeIp, msg);
+
+    if (_currentNodeIp.isNotEmpty) {
+      _peerSeenController.add(_currentNodeIp);
+    }
+
+    return true;
+  }
+
   Future<List<Message>> getMessagesViaLibP2P() async {
     if (!_libp2pStarted) return [];
     try {

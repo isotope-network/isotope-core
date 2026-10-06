@@ -190,6 +190,17 @@ class MainActivity : FlutterActivity() {
                             runOnUiThread { result.success(response) }
                         }.start()
                     }
+                    "sendVoice" -> {
+                        val peerID = call.argument<String>("peerID") ?: ""
+                        val mediaData = call.argument<String>("mediaData") ?: ""
+                        val duration = (call.argument<Int>("duration") ?: 0).toLong()
+                        val period = call.argument<String>("period") ?: "forever"
+                        val mode = call.argument<String>("mode") ?: ""
+                        Thread {
+                            val response = Mobile.sendVoice(peerID, mediaData, duration, period, mode)
+                            runOnUiThread { result.success(response) }
+                        }.start()
+                    }
                     "getMessages" -> {
                         Thread {
                             val response = Mobile.getMessages()

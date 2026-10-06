@@ -86,6 +86,29 @@ class LibP2PService {
     }
   }
 
+  /// Отправляет голосовое сообщение конкретному пиру (E2E).
+  /// mediaData — base64 Opus/Ogg. duration — секунды.
+  static Future<Map<String, dynamic>> sendVoice({
+    required String peerID,
+    required String mediaData,
+    required int duration,
+    String period = 'never',
+    String mode = '',
+  }) async {
+    try {
+      final response = await _channel.invokeMethod<String>('sendVoice', {
+        'peerID': peerID,
+        'mediaData': mediaData,
+        'duration': duration,
+        'period': period,
+        'mode': mode,
+      });
+      return _safeDecode(response);
+    } on PlatformException catch (e) {
+      return {'error': e.message ?? 'platform_error', 'operation': 'send_voice'};
+    }
+  }
+
   /// Отправляет сообщение конкретному пиру (E2E-шифрованное).
   /// Требует контакт с x25519_pub.
   static Future<Map<String, dynamic>> sendToPeer({

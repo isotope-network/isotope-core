@@ -72,6 +72,16 @@ type Message struct {
 	Status           MessageStatus `json:"status,omitempty"`       // статус доставки/прочтения; 0 — неизвестен
 	ReadLocally      bool          `json:"read_locally,omitempty"` // я прочитал это входящее; false — не прочитано
 	SenderName       string        `json:"sender_name,omitempty"`  // имя отправителя (Name → RemoteName); runtime, не сохраняется в state
+
+	// Медиа (голосовые, файлы)
+	MediaType  string `json:"media_type,omitempty"`  // "" | "text" | "voice" | "file"
+	MediaData  string `json:"media_data,omitempty"`  // base64 (голосовые)
+	FileName   string `json:"file_name,omitempty"`   // для файлов
+	FileSize   int64  `json:"file_size,omitempty"`   // для файлов
+	Duration   int    `json:"duration,omitempty"`    // секунды, для голосовых
+	MediaID    string `json:"media_id,omitempty"`    // для чанков файла
+	ChunkIndex int    `json:"chunk_index,omitempty"` // 0, 1, 2, ...
+	ChunkTotal int    `json:"chunk_total,omitempty"` // общее число чанков
 }
 
 // Memory — потокобезопасное хранилище сообщений (без лимита)

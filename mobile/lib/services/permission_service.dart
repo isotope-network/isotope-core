@@ -45,6 +45,11 @@ class PermissionService {
         'android.permission.CAMERA',
       ];
 
+  /// Разрешения для микрофона (голосовые сообщения).
+  static List<String> get microphone => [
+        'android.permission.RECORD_AUDIO',
+      ];
+
   /// Разрешения для «Найти рядом» (BLE + Wi-Fi + локация).
   static List<String> get nearby => [
         'android.permission.BLUETOOTH_SCAN',

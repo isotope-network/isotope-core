@@ -1,6 +1,10 @@
 import 'dart:async';
+import 'dart:convert';
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:record/record.dart';
+import 'package:path_provider/path_provider.dart';
 import '../models/message.dart';
 import '../providers/chat_provider.dart';
 import '../utils/time_format.dart';
@@ -9,6 +13,7 @@ import '../services/ws_service.dart';
 import '../services/p2p_service.dart';
 import '../services/libp2p_service.dart';
 import '../services/log_service.dart';
+import '../services/permission_service.dart';
 import '../widgets/message_bubble.dart';
 
 class ChatScreen extends StatefulWidget {
@@ -41,6 +46,12 @@ class _ChatScreenState extends State<ChatScreen> {
   bool? _lastSecureFlag;
   // Сохраняем provider — context.read в dispose невалиден.
   ChatProvider? _provider;
+
+  // Запись голосовых.
+  final AudioRecorder _audioRecorder = AudioRecorder();
+  bool _isRecording = false;
+  int _recordSeconds = 0;
+  Timer? _recordTimer;
 
   @override
   void initState() {
@@ -190,6 +201,10 @@ class _ChatScreenState extends State<ChatScreen> {
     _draftThrottleTimer?.cancel();
     _flushDraft();
 
+    // Останавливаем запись, если шла.
+    _recordTimer?.cancel();
+    _audioRecorder.dispose();
+
     final provider = _provider;
     if (provider != null && _providerListener != null) {
       provider.removeListener(_providerListener!);
@@ -238,6 +253,127 @@ class _ChatScreenState extends State<ChatScreen> {
 
     // Отправляем через provider (с учётом задержки).
     provider.sendMessage(text);
+  }
+
+  /// Начинает запись голосового.
+  /// Запрашивает разрешение RECORD_AUDIO (per-action).
+  Future<void> _startRecording() async {
+    if (_isRecording) return;
+
+    final granted = await PermissionService.request(PermissionService.microphone);
+    if (!granted) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Нет доступа к микрофону'),
+            action: SnackBarAction(
+              label: 'Настройки',
+              onPressed: PermissionService.openAppSettings,
+            ),
+          ),
+        );
+      }
+      return;
+    }
+
+    try {
+      final dir = await getTemporaryDirectory();
+      final path = '${dir.path}/voice_${DateTime.now().millisecondsSinceEpoch}.m4a';
+      await _audioRecorder.start(
+        const RecordConfig(encoder: AudioEncoder.aacLc, bitRate: 64000),
+        path: path,
+      );
+      if (!mounted) return;
+      setState(() {
+        _isRecording = true;
+        _recordSeconds = 0;
+      });
+      _recordTimer = Timer.periodic(const Duration(seconds: 1), (_) {
+        if (!mounted) return;
+        setState(() => _recordSeconds++);
+        if (_recordSeconds >= 300) {
+          _stopAndSendRecording();
+        }
+      });
+    } catch (e) {
+      LogService.log('VOICE: start failed: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Ошибка записи: $e')),
+        );
+      }
+    }
+  }
+
+  /// Останавливает запись и отправляет голосовое.
+  Future<void> _stopAndSendRecording() async {
+    if (!_isRecording) return;
+    _recordTimer?.cancel();
+    final seconds = _recordSeconds;
+    String? path;
+    try {
+      path = await _audioRecorder.stop();
+    } catch (e) {
+      LogService.log('VOICE: stop failed: $e');
+    }
+    if (!mounted) return;
+    setState(() {
+      _isRecording = false;
+      _recordSeconds = 0;
+    });
+
+    if (path == null || seconds < 1) {
+      // Слишком короткое — отменяем.
+      try {
+        if (path != null) File(path).deleteSync();
+      } catch (_) {}
+      return;
+    }
+
+    try {
+      final file = File(path);
+      final bytes = await file.readAsBytes();
+      final b64 = base64Encode(bytes);
+      final provider = _provider;
+      if (provider == null) return;
+      final ok = await provider.sendVoice(mediaData: b64, duration: seconds);
+      if (!ok && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(provider.error ?? 'Ошибка отправки голосового')),
+        );
+      }
+      try {
+        file.deleteSync();
+      } catch (_) {}
+    } catch (e) {
+      LogService.log('VOICE: send failed: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Ошибка голосового: $e')),
+        );
+      }
+    }
+  }
+
+  /// Отменяет запись (свайп / крестик).
+  Future<void> _cancelRecording() async {
+    if (!_isRecording) return;
+    _recordTimer?.cancel();
+    try {
+      final path = await _audioRecorder.stop();
+      if (path != null) {
+        try {
+          File(path).deleteSync();
+        } catch (_) {}
+      }
+    } catch (e) {
+      LogService.log('VOICE: cancel failed: $e');
+    }
+    if (!mounted) return;
+    setState(() {
+      _isRecording = false;
+      _recordSeconds = 0;
+    });
   }
 
   /// Строка для pending-сообщения: бабл с кругом и «Отмена».
@@ -339,6 +475,108 @@ class _ChatScreenState extends State<ChatScreen> {
           ),
         ),
       ),
+    );
+  }
+
+  /// Панель ввода (обычный режим). TextField + кнопка отправки/микрофон.
+  Widget _buildInputRow() {
+    return Row(
+      children: [
+        Expanded(
+          child: Consumer<ChatProvider>(
+            builder: (_, provider, __) {
+              final blocked = provider.hasPending;
+              return ConstrainedBox(
+                constraints: const BoxConstraints(maxHeight: 140),
+                child: TextField(
+                  controller: _controller,
+                  enabled: !blocked,
+                  keyboardType: TextInputType.multiline,
+                  textInputAction: TextInputAction.newline,
+                  minLines: 1,
+                  maxLines: null,
+                  onChanged: (_) => setState(() {}),
+                  decoration: InputDecoration(
+                    hintText: blocked ? 'Подождите…' : 'Сообщение...',
+                    filled: true,
+                    fillColor: Colors.grey.shade100,
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(24),
+                      borderSide: BorderSide.none,
+                    ),
+                    contentPadding: const EdgeInsets.symmetric(
+                      horizontal: 16,
+                      vertical: 10,
+                    ),
+                  ),
+                ),
+              );
+            },
+          ),
+        ),
+        const SizedBox(width: 8),
+        Consumer<ChatProvider>(
+          builder: (_, provider, __) {
+            final blocked = provider.hasPending;
+            final hasText = _controller.text.trim().isNotEmpty;
+            if (blocked) {
+              return const CircleAvatar(
+                backgroundColor: Colors.grey,
+                child: Icon(Icons.hourglass_empty, color: Colors.white, size: 20),
+              );
+            }
+            if (hasText) {
+              return CircleAvatar(
+                backgroundColor: Colors.green,
+                child: IconButton(
+                  icon: const Icon(Icons.send, color: Colors.white, size: 20),
+                  onPressed: _sendMessage,
+                ),
+              );
+            }
+            return CircleAvatar(
+              backgroundColor: Colors.green,
+              child: IconButton(
+                icon: const Icon(Icons.mic, color: Colors.white, size: 22),
+                onPressed: _startRecording,
+              ),
+            );
+          },
+        ),
+      ],
+    );
+  }
+
+  /// Панель записи. Красный кружок + таймер + Отмена + Стоп.
+  Widget _buildRecordingPanel() {
+    final mm = (_recordSeconds ~/ 60).toString();
+    final ss = (_recordSeconds % 60).toString().padLeft(2, '0');
+    return Row(
+      children: [
+        const SizedBox(width: 4),
+        const Icon(Icons.fiber_manual_record, color: Colors.red, size: 16),
+        const SizedBox(width: 8),
+        Text(
+          '$mm:$ss',
+          style: const TextStyle(
+            fontSize: 16,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+        const Spacer(),
+        TextButton(
+          onPressed: _cancelRecording,
+          child: const Text('Отмена', style: TextStyle(color: Colors.grey)),
+        ),
+        const SizedBox(width: 4),
+        CircleAvatar(
+          backgroundColor: Colors.red,
+          child: IconButton(
+            icon: const Icon(Icons.stop, color: Colors.white, size: 22),
+            onPressed: _stopAndSendRecording,
+          ),
+        ),
+      ],
     );
   }
 
@@ -496,54 +734,7 @@ class _ChatScreenState extends State<ChatScreen> {
               border: Border(top: BorderSide(color: Colors.grey.shade200)),
             ),
             child: SafeArea(
-              child: Row(
-                children: [
-                  Expanded(
-                    child: Consumer<ChatProvider>(
-                      builder: (_, provider, __) {
-                        final blocked = provider.hasPending;
-                        return ConstrainedBox(
-                          constraints: const BoxConstraints(maxHeight: 140),
-                          child: TextField(
-                            controller: _controller,
-                            enabled: !blocked,
-                            keyboardType: TextInputType.multiline,
-                            textInputAction: TextInputAction.newline,
-                            minLines: 1,
-                            maxLines: null,
-                            decoration: InputDecoration(
-                              hintText: blocked ? 'Подождите…' : 'Сообщение...',
-                              filled: true,
-                              fillColor: Colors.grey.shade100,
-                              border: OutlineInputBorder(
-                                borderRadius: BorderRadius.circular(24),
-                                borderSide: BorderSide.none,
-                              ),
-                              contentPadding: const EdgeInsets.symmetric(
-                                horizontal: 16,
-                                vertical: 10,
-                              ),
-                            ),
-                          ),
-                        );
-                      },
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  Consumer<ChatProvider>(
-                    builder: (_, provider, __) {
-                      final blocked = provider.hasPending;
-                      return CircleAvatar(
-                        backgroundColor: blocked ? Colors.grey : Colors.green,
-                        child: IconButton(
-                          icon: const Icon(Icons.send, color: Colors.white, size: 20),
-                          onPressed: blocked ? null : _sendMessage,
-                        ),
-                      );
-                    },
-                  ),
-                ],
-              ),
+              child: _isRecording ? _buildRecordingPanel() : _buildInputRow(),
             ),
           ),
         ],
