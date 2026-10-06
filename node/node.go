@@ -2148,11 +2148,16 @@ func (n *Node) replicateMessage(msg Message) {
 	}
 
 	if msg.Recipient != "" {
-		// Адресное сообщение: всегда кладём в pending.
-		// Удаление — только при получении [DELIVERED] от получателя.
-		// Успешная отправка на relay ≠ доставка получателю.
+		// Адресное сообщение.
 		n.sendToRecipient(msg, data)
-		n.enqueuePending(msg)
+		// В offline-очередь — только НЕ-сервисные.
+		// Сервисные ([CONTACT_*], [DELIVERED], [READ], [TTL_UPDATE])
+		// переотправлять нельзя: получатель их не подтверждает через
+		// [DELIVERED], они остаются в очереди навсегда и вызывают
+		// бесконечный цикл handshake.
+		if !n.isServiceType(msg.Type) {
+			n.enqueuePending(msg)
+		}
 		return
 	}
 
