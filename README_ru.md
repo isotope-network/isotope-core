@@ -134,12 +134,20 @@ Status, ReadLocally, Refs — всё в Message.
 VPS не буферизует. Отправитель держит pending до [DELIVERED].
 Когда получатель появляется — отправитель переотправляет.
 VPS — курьер, не хранилище.
+Сервисные сообщения не в очереди — только TypeMessage.
 
 **Миграции обязательны.**
 Старые данные не теряются.
 messageStatus → Message.Status.
 _readSent → ReadLocally.
 Каждая миграция логируется.
+
+**Разрешения — per-action.**
+Не всё сразу при старте.
+Камера — при сканировании QR.
+Bluetooth и локация — при поиске рядом.
+Уведомления — при старте.
+Контекст — это понимание.
 
 ---
 
@@ -182,8 +190,7 @@ _readSent → ReadLocally.
 | Метаданные | Кто с кем общается | 🔜 v2.0+ (Onion) |
 | Временны́е паттерны | Тайминг, объём | 🔜 Padding, mixing |
 
-**Что работает сейчас:** содержимое сообщения защищено от relay и от перехвата. Подлинность отправителя проверяется. 
-Relay видит только шифротекст.
+**Что работает сейчас:** содержимое сообщения защищено от relay и от перехвата. Подлинность отправителя проверяется. Relay видит только шифротекст.
 
 **Что будет позже:** защита метаданных (Onion-маршрутизация), защита временны́х паттернов (padding, mixing).
 
@@ -240,7 +247,7 @@ Relay видит только шифротекст.
 
 ## Статус
 
-**v1.29.0 — стабильная (единый источник истины).**
+**v1.30.0 — стабильная (уведомления и пробуждение).**
 
 Реализовано:
 - P2P-сеть: libp2p + mDNS + DHT + Gossip
@@ -282,21 +289,20 @@ Relay видит только шифротекст.
 
 **Контакт-протокол (v1.27):**
 - Bootstrap-handshake: [CONTACT_HELLO] → [CONTACT_HELLO_ACK] → [CONTACT_REQUEST] → [CONTACT_ACCEPT]
-- Открытые сервисные (HELLO, ACK) — всегда через bootstrap
-- E2E (REQUEST, ACCEPT) — circuit → bootstrap fallback
-- tempContacts: временные контакты в памяти для расшифровки
-- Push-события в UI через messageHook (не polling)
-- Симметрия: обе стороны confirmed: true
+- Открытые сервисные — всегда через bootstrap
+- E2E — circuit → bootstrap fallback
+- tempContacts
+- Push через messageHook
+- Симметрия: confirmed: true
 
 **Идентификация и имена (v1.27):**
-- Name (локальное) / RemoteName (представление) / PeerID (fallback)
-- UI: Name → RemoteName → PeerID
+- Name / RemoteName / PeerID
 - MyDisplayName в Settings
 - QR содержит display_name
 - Диалог «Как вас представить?»
-- Профиль в настройках → «Ваше имя»
-- Долгий тап на контакте → bottom sheet: Открыть / Переименовать / Удалить
-- Предупреждение о безопасности при запросе
+- Профиль → «Ваше имя»
+- Долгий тап → Открыть / Переименовать / Удалить
+- Предупреждение о безопасности
 
 **Статусы (v1.26):**
 - ✓ / ✓✓ / ✓🔒 / ✓✓ (цвет)
@@ -312,14 +318,14 @@ Relay видит только шифротекст.
 - Периоды: 10s / 30s / 1m / 5m / 15m / 30m / 1h / 4h / 24h / never
 - Режимы: hard / after_read
 - Fallback 48 часов
-- [TTL_UPDATE] (Type=8) — авто-hard
+- [TTL_UPDATE] (Type=8)
 - DeleteExpired в cleanupLoop (1 мин)
-- FLAG_SECURE: TTL 10s–1m — скриншоты запрещены
+- FLAG_SECURE: TTL 10s–1m
 
 **Удаление контакта (v1.28):**
 - RemoveContact — полная чистка
-- isotope_deleted.json — удалённые не возвращаются
-- Тихий отказ — B не знает
+- isotope_deleted.json
+- Тихий отказ
 
 **Per-chat / per-peer (v1.28):**
 - Сообщения по чату
@@ -328,41 +334,66 @@ Relay видит только шифротекст.
 - [READ] только для текущего
 
 **UI (v1.28):**
-- Настройки → Сообщения (TTL: периоды + режимы)
+- Настройки → Сообщения (TTL)
 - Настройки → Приватность (read_enabled)
 - Профиль (MyDisplayName)
-- Оранжевые периоды 10s / 30s / 1m
+- Оранжевые периоды
 - Умный формат времени
 - Таймер отправки
 - AppBar чистый
 
 **Единый источник истины (v1.29):**
-- Единый источник имён — chatProvider.nameFor(peerID)
-- Батч [READ] — Message.Refs []string + fallback на Ref
-- Message.Status (перенос из MessageStatus)
-- Message.ReadLocally — единый источник непрочитанных
-- _readSent удалён. Миграция: _readSent → markReadLocally, флаг read_sent_migrated
+- Single source of names
+- Batch [READ] — Message.Refs
+- Message.Status
+- Message.ReadLocally
+- _readSent удалён. Миграция
 - Multiline input
 
 **Offline-очередь (v1.29):**
 - Pending до [DELIVERED]
-- replicateMessage — всегда enqueuePending для адресных
-- flushPending — только переотправка, не удаление
-- removePendingByRef(ref) — по [DELIVERED]
-- Триггеры: ConnectedF (Notifiee) + announceLoop (4 мин)
-- Проверено: 10 сообщений, получатель оффлайн → приходят мгновенно пачкой
+- removePendingByRef(ref)
+- Триггеры: ConnectedF + announceLoop (4 мин)
+
+**Offline-очередь fix (v1.30):**
+- Только для не-сервисных (!isServiceType)
+- Причина: сервисные не имеют [DELIVERED] → бесконечный handshake
+
+**Уведомления (v1.30):**
+- Message.SenderName
+- nameForPeer(peerID)
+- Kotlin onMessage — если !isForeground
+- Канал isotope_messages, importance HIGH
+- Тап → Intent → MethodChannel → Dart
+
+**Разрешения per-action (v1.30):**
+- permission_service.dart
+- POST_NOTIFICATIONS — при старте
+- CAMERA — при QR
+- BLUETOOTH_*, FINE_LOCATION, NEARBY_WIFI_DEVICES — при «Найти рядом»
+- Батарея — диалог с инструкцией
+- SnackBar при отказе — «Настройки»
+- CAMERA добавлен в манифест явно
+
+**ShowNotificationContent (v1.30):**
+- Settings.ShowNotificationContent bool
+- Дефолт true
+- Privacy toggle
+
+**WakeLock (v1.30):**
+- IsotopeService.kt — PARTIAL_WAKE_LOCK
+- Go-рутины libp2p не замерзают в фоне
 
 **Отложено:**
 - BLE — нестабилен
 - Samsung Android 10 — краш
 - DHT Provide — падает
-- [PROFILE_UPDATE]
-- TTL для tempContacts (5 минут)
-- VPS reconnectLoop — отключить на relay
+- BOTTOM OVERFLOWED — UI-баг
+- 6-10 минут подключения Xiaomi — диагностика
 
 В разработке:
-- [PROFILE_UPDATE] (Type=9)
-- Уведомления системы
+- Голосовые сообщения (E2E, стеганография в WAV)
+- Файлы (E2E)
 - Защита метаданных — Onion (v2.0+)
 - ISOTOPE Enterprise
 - ISOTOPE AI Mesh

@@ -2,9 +2,9 @@
 
 ## Текущий статус
 
-**Версия:** v1.29.0 (единый источник истины)
+**Версия:** v1.30.0 (уведомления и пробуждение)
 
-Ядро — библиотека. Контакт-протокол. Система имён. TTL. Batch [READ]. Message.Status. Message.ReadLocally. Offline-очередь до [DELIVERED]. Multiline input.
+Ядро — библиотека. Контакт-протокол. Система имён. TTL. Batch [READ]. Message.Status. Message.ReadLocally. Offline-очередь до [DELIVERED]. Уведомления системы. Разрешения per-action. WakeLock.
 
 ---
 
@@ -31,7 +31,6 @@
 
 ### Рефакторинг (v1.18.1)
 - package main → package core
-- Точка входа: node/main/main.go
 
 ### Мобильная версия (v1.19.0)
 - libp2p через FFI
@@ -91,7 +90,6 @@
 - FLAG_SECURE
 - Удаление контакта: тихий отказ
 - Per-chat / per-peer
-- UI: настройки TTL
 
 ### Единый источник истины (v1.29.0)
 - Single source of names
@@ -101,36 +99,72 @@
 - Offline-очередь: pending до [DELIVERED]
 - Multiline input
 
+### Уведомления и пробуждение (v1.30.0)
+- Уведомления системы (Message.SenderName, nameForPeer)
+- Канал isotope_messages, importance HIGH
+- Тап → Intent → MethodChannel → Dart
+- Разрешения per-action
+- permission_service.dart
+- CAMERA в манифесте явно
+- Батарея — диалог с инструкцией
+- SnackBar при отказе
+- ShowNotificationContent (Settings)
+- WakeLock (PARTIAL_WAKE_LOCK)
+- Offline-очередь fix (только не-сервисные)
+
+---
+
+## СЛЕДУЮЩИЙ ШАГ — ГОЛОСОВЫЕ И ФАЙЛЫ
+
+**Голосовые сообщения:**
+
+- Запись голоса (Flutter / Kotlin).
+- E2E-шифрование аудио.
+- Отправка через SendToPeer.
+- Отображение в UI (плеер).
+- Опционально — стеганография в WAV (v1.14 — фундамент есть).
+
+**Файлы:**
+
+- Выбор файла (image_picker / file_picker).
+- E2E-шифрование.
+- Отправка через SendToPeer.
+- Чанки для больших файлов.
+- Прогресс загрузки.
+
 ---
 
 ## В работе / Ближайшие задачи
 
-### Приоритет 1 (сейчас)
-- 🔜 **[PROFILE_UPDATE]** (Type=9) — смена read_enabled / display_name без QR
-- 🔜 **TTL для tempContacts** (5 минут)
-- 🔜 **VPS reconnectLoop** — отключить на relay-сервере
-- 🔜 **Уведомления системы**
+### Приоритет 1 (следующий шаг)
+- 🔜 **Голосовые сообщения**
+- 🔜 **Файлы**
+- 🔜 BOTTOM OVERFLOWED — UI-баг в connect_screen
+- 🔜 Samsung Android 10 — диагностика
+- 🔜 6-10 минут подключения Xiaomi — диагностика (GOLOG_LOG_LEVEL=debug)
 
 ### Приоритет 2
-- 🔜 Circuit direct при 15+ узлах
-- 🔜 Foreground service — разное поведение Xiaomi / Huawei
-- 🔜 Полупрозрачность pending-сообщения
-- 🔜 TTL в настройках — перенести из chat_screen
-- 🔜 Черновик UI — тап по 📝 → возврат в поле
+- 🔜 Удаление сообщений вручную (долгий тап)
+- 🔜 Настройки → «Данные»: очистить, экспорт / импорт ключей
+- 🔜 О программе
+- 🔜 Поиск по сообщениям
+- 🔜 Закреплённые контакты
+- 🔜 Архив контактов
+- 🔜 Группы контактов
 
 ### Приоритет 3
-- 🔜 DHT Provide — падает при малом числе пиров
-- 🔜 Samsung Android 10 — краш
-- 🔜 ANNOUNCE TTL expired — эпизодически
-- 🔜 VPS memory:66 — мусор
+- 🔜 Группировка уведомлений
+- 🔜 Звук / вибрация (настройки)
+- 🔜 Circuit direct при 15+ узлах
+- 🔜 Foreground service — стабильность Xiaomi / Huawei
 
 ### Приоритет 4 (v2.0+)
-- 🔜 **Onion-маршрутизация** — защита метаданных
-- 🔜 **Обфускация трафика** — после onion
-- 🔜 **Padding, mixing** — временны́е паттерны
-- 🔜 **BLE** — возрождение
-- 🔜 **Hole punching** через /p2p-circuit/
-- 🔜 **DHT на мобильном** (при 15+ узлах)
+- 🔜 Onion-маршрутизация — защита метаданных
+- 🔜 Обфускация трафика — финальная
+- 🔜 Padding, mixing — временны́е паттерны
+- 🔜 BLE — возрождение
+- 🔜 Hole punching через /p2p-circuit/
+- 🔜 DHT на мобильном (при 15+ узлах)
 
 ---
 
@@ -183,8 +217,9 @@
 - IPFS для сайта — заблокирован
 - Samsung Android 10 — краш
 - DHT Provide — при малом числе пиров
-- Уведомления системы
-- Оптимизация ANNOUNCE
+- TTL для tempContacts (5 мин) — отклонено Хранителем
+- [PROFILE_UPDATE] — отклонено (фишинг)
+- 6-10 минут подключения Xiaomi — отложено
 
 ---
 
@@ -195,13 +230,14 @@
 - PeerID: QmR8u5YFdcKpM2onQvk7KV5qioai87aysi9JWLdV1LX1bi
 - Bootstrap: /ip4/186.246.31.176/tcp/9001/ws/p2p/QmR8u5YFdcKpM2onQvk7KV5qioai87aysi9JWLdV1LX1bi
 - Порты: 9000 (TCP), 9001 (WS), 8081 (HTTP API)
-- Роль: временная инфраструктура (relay для узлов за NAT)
+- Роль: временная инфраструктура
 
 ### Телефоны (тестовые)
-- Xiaomi: QmTtUkwXmx9vnUSTLCfdPZn6MNaPkFbxTMHjofFzHMfUz5
-- Huawei: QmWyqjGzRQS2T2j4vGtet2j1M4hqDhJD99BPoG6QvKZBv6
+- Xiaomi: QmT4HDmccPSnFw6qngNsAZQ9KGvhbHWR6CmSEHW4HfYeKH (Wi-Fi)
+- Huawei: QmYdhBT4wmXcbJYADd3z7aGka3Xcc8k1m2eagmSg876yJ (Wi-Fi / LTE)
 
 ### Обновление VPS
+
 pkill -f isotope-node
 sleep 1
 pgrep -f isotope-node          # пусто
@@ -215,12 +251,14 @@ curl -s http://127.0.0.1:8081/status
 НЕ удалять /root/isotope/state/.
 
 ### Сборка .aar
+
 cd /d D:\isotope\node
 del isotope.aar
 gomobile bind -target=android -androidapi 21 -ldflags "-checklinkname=0" -o isotope.aar ./mobile
 copy /y isotope.aar D:\isotope\mobile\android\app\libs\
 
 ### Сборка APK
+
 cd /d D:\isotope\mobile
 flutter build apk --debug
 
@@ -235,10 +273,13 @@ flutter build apk --debug
 3. **Контакты и идентификация** — v1.27 (закрыто)
 4. **Право на забвение** — v1.28 (закрыто)
 5. **Единый источник истины** — v1.29 (закрыто)
-6. **Мелкие UX + инфраструктура** — сейчас
-7. **Onion, padding, mixing** — v2.0+
-8. **AI Mesh** — v3.0
-9. **Полная автономия** — v4.0
+6. **Уведомления и пробуждение** — v1.30 (закрыто)
+7. **Голосовые и файлы** — сейчас
+8. **UX-долг** — после
+9. **Инфраструктура** — после
+10. **Onion, padding, mixing** — v2.0+
+11. **AI Mesh** — v3.0
+12. **Полная автономия** — v4.0
 
 Каждый этап — новый уровень децентрализации.
 VPS отключается, когда DHT и hole punching закроют его роль.

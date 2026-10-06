@@ -134,12 +134,20 @@ No second sources. No drift.
 VPS does not buffer. The sender holds pending until [DELIVERED].
 When the recipient appears, the sender resends.
 VPS is a courier, not a storage.
+Service messages are not queued — only TypeMessage.
 
 **Migrations Are Mandatory.**
 Old data is never lost.
 messageStatus → Message.Status.
 _readSent → ReadLocally.
 Log every migration.
+
+**Permissions — Per Action.**
+Not all at once at startup.
+Camera — when scanning QR.
+Bluetooth and location — when searching nearby.
+Notifications — at startup.
+Context is understanding.
 
 ---
 
@@ -236,7 +244,7 @@ Once a day — a single notification:
 
 ## Status
 
-**v1.29.0 — stable (single source of truth).**
+**v1.30.0 — stable (notifications and wake lock).**
 
 Implemented:
 - P2P network: libp2p + mDNS + DHT + Gossip
@@ -348,17 +356,46 @@ Implemented:
 - Triggers: ConnectedF (Notifiee) + announceLoop (4 min)
 - Verified: 10 messages, recipient offline → arrive instantly in batch
 
+**Offline queue fix (v1.30):**
+- enqueuePending — only for non-service (!isServiceType)
+- Reason: service messages have no [DELIVERED] → infinite handshake loop
+
+**Notifications (v1.30):**
+- Message.SenderName
+- nameForPeer(peerID) — priority: own → MyDisplayName; contact → Name → RemoteName; else empty
+- Kotlin onMessage — if !isForeground → showMessageNotification
+- Channel isotope_messages, importance HIGH
+- Tap → Intent EXTRA_PEER_ID → onNewIntent → MethodChannel → Dart openChatStream
+
+**Permissions per-action (v1.30):**
+- permission_service.dart
+- ActivityCompat.requestPermissions in Kotlin
+- POST_NOTIFICATIONS — at startup
+- CAMERA — when scanning QR
+- BLUETOOTH_*, FINE_LOCATION, NEARBY_WIFI_DEVICES — when searching nearby
+- Battery — dialog with instruction
+- SnackBar on denial — «Settings» button
+- AndroidManifest.xml — CAMERA added explicitly
+
+**ShowNotificationContent (v1.30):**
+- Settings.ShowNotificationContent bool
+- Default true
+- Privacy toggle
+
+**WakeLock (v1.30):**
+- IsotopeService.kt — PARTIAL_WAKE_LOCK (isotope:network)
+- Go routines of libp2p don't freeze in background
+
 **Deferred:**
 - BLE — unstable, disabled
 - Samsung Android 10 — crash
 - DHT Provide — falls with few peers
-- [PROFILE_UPDATE]
-- TTL for tempContacts (5 min)
-- VPS reconnectLoop — disable on relay
+- BOTTOM OVERFLOWED — UI bug in connect_screen
+- 6-10 minutes Xiaomi connection — diagnosis needed
 
 In development:
-- [PROFILE_UPDATE] (Type=9)
-- System notifications
+- Voice messages (E2E, steganography in WAV)
+- Files (E2E, via relay or direct)
 - Metadata protection — Onion (v2.0+)
 - ISOTOPE Enterprise (B2B data exchange)
 - ISOTOPE AI Mesh (distributed AI inference)

@@ -13,7 +13,7 @@ ISOTOPE — инфраструктура для этичного, неуязви
 
 ---
 
-## Структура ядра (v1.29.0)
+## Структура ядра (v1.30.0)
 
 Ядро ISOTOPE — **библиотека** (пакет `core`).
 
@@ -22,47 +22,13 @@ node/
 ├── main/main.go      # package main (точка входа для десктопа)
 └── mobile/mobile.go  # package mobile (обёртка gomobile)
 
-### Экспортированный API ядра
-
-package core
-
-type Config struct {
-    EthHash    string
-    Transports []string
-    Bootstrap  []string
-    Port       int
-    ListenIP   string
-}
-
-func NewNode(config Config) *Node
-func InitP2P(node *Node) error
-func StartHTTP(node *Node) error
-func StartMobile(node *Node) error
-func Stop(node *Node) error
-func HashText(text string) string
-func GetMultiaddrs(node *Node) []string
-func ConnectToPeer(node *Node, addr string) error
-
-### Методы Node
-
-func (n *Node) SendMessage(text string, ttl int) (string, error)
-func (n *Node) SendToPeer(recipient, text string, ttl int) (string, error)
-func (n *Node) SendReadBatch(refs []string, recipient string) error
-func (n *Node) MarkReadLocally(refs []string) error
-func (n *Node) AddContact(...) error
-func (n *Node) RemoveContact(peerID string) error
-func (n *Node) RenameContact(peerID, localName string) error
-func (n *Node) GetMessages() []Message
-func (n *Node) GetPeers() []string
-func (n *Node) GetWeight() float64
-func (n *Node) GetStatus() string
-
 ### Структура Message
 
 type Message struct {
     ID               string
     Recipient        string
     Sender           string
+    SenderName       string       // v1.30 — для уведомлений
     Text             string
     PlainText        string
     TTL              int
@@ -80,11 +46,24 @@ type Message struct {
     ReadEnabled      *bool
 }
 
+### Методы Node (основные)
+
+func (n *Node) SendMessage(text string, ttl int) (string, error)
+func (n *Node) SendToPeer(recipient, text string, ttl int) (string, error)
+func (n *Node) SendReadBatch(refs []string, recipient string) error
+func (n *Node) MarkReadLocally(refs []string) error
+func (n *Node) AddContact(...) error
+func (n *Node) RemoveContact(peerID string) error
+func (n *Node) RenameContact(peerID, localName string) error
+func (n *Node) GetMessages() []Message
+func (n *Node) GetPeers() []string
+func (n *Node) nameForPeer(peerID string) string  // v1.30
+
 ---
 
 ## Мобильная обёртка (mobile.go)
 
-**Статус:** работает (v1.29.0)
+**Статус:** работает (v1.30.0)
 
 ### Методы (возвращают JSON-строки)
 
@@ -112,12 +91,16 @@ type Message struct {
 | RejectRequestByID(id) | Отклонить |
 | GetRequests() | Список запросов |
 | SetMyDisplayName(name) | Представление |
+| GetMyDisplayName() | Получить представление |
 | SetTtl(period, mode) | TTL |
+| GetTtl() | Получить TTL |
+| GetShowNotificationContent() | Настройка уведомлений |
+| SetShowNotificationContent(bool) | Настройка уведомлений |
 | GetMyQRData() | QR-данные |
 
 ---
 
-## E2E-шифрование (v1.24)
+## Е2Е-шифрование (v1.24)
 
 ### Ключи
 
@@ -151,28 +134,6 @@ type Message struct {
 - Ed25519 над peerID || x25519_pub
 - verified — сигнал UI, не пропуск
 
-### Контакты
-
-Файл: isotope_contacts.json
-
-{
-  "v": 1,
-  "contacts": [
-    {
-      "peerID": "QmX...",
-      "ed25519_pub": "...",
-      "x25519_pub": "...",
-      "signature": "...",
-      "name": "Пётр (ремонт)",
-      "remote_name": "Пётр, о ремонте в 17:30",
-      "verified": false,
-      "confirmed": false,
-      "read_enabled": true,
-      "added_at": "..."
-    }
-  ]
-}
-
 ---
 
 ## Единый источник истины (v1.29)
@@ -183,41 +144,32 @@ type Message struct {
 
 **Было:** `MessageStatus` — отдельный map в Node и State.
 
-**Проблема:** второй источник истины. Четыре пути удаления сообщений не чистили map.
-
 **Стало:** `Message.Status`.
 
 - Удаляется сообщение → уходит статус.
-- Автоматически, во всех путях.
-- `Memory.SetStatus(id, status)` — по образцу `SetExpiresAt`.
+- `Memory.SetStatus(id, status)`.
 - Миграция: при `loadState` старый `messageStatus` → `Message.Status`.
-- Лог: `[STATUS] migrated N statuses to Message.Status`.
 
 ### Message.ReadLocally (v1.29)
 
-**Было:** `_readSent` в Dart (Set<String> в SharedPreferences).
-
-**Проблема:** второй источник истины. При перезапуске — теряется.
+**Было:** `_readSent` в Dart.
 
 **Стало:** `Message.ReadLocally bool`.
 
 - `Memory.MarkReadLocally(refs)`.
 - Dart: `_sendReadBatchFor` → `markReadLocally` перед `sendReadBatch`.
-- При `loadMessages` — пересчёт `_unreadByPeer` для `readLocally == false`.
 - Миграция: `_readSent` → `markReadLocally`, флаг `read_sent_migrated`.
 
 ### Message.Refs (v1.29)
 
-**Было:** `[READ]` по одному на сообщение.
+**Было:** `[READ]` по одному.
 
-**Стало:** `Message.Refs []string` — массив.
+**Стало:** `Message.Refs []string`.
 
 - `Ref` — одиночная ссылка.
 - `Refs` — батч.
-- Обратная совместимость: если `Refs` пуст — читаем `Ref`.
-- Version 0. Обратная совместимость через содержимое поля.
+- Обратная совместимость: `Refs` пуст → читаем `Ref`.
 - `SendReadBatch(refs, recipient)`.
-- `handleServiceMessage` case `TypeRead` — цикл по `Refs`.
 
 ---
 
@@ -228,24 +180,70 @@ type Message struct {
 **Решение:** pending до `[DELIVERED]`.
 
 - `replicateMessage` — при адресном всегда `enqueuePending`.
-- `flushPending` — не удаляет из очереди, только переотправляет.
-- `removePendingByRef(ref)` — удаление по `[DELIVERED]`.
-- `case TypeDelivered` → `removePendingByRef(m.Ref)`.
+- `flushPending` — не удаляет, только переотправляет.
+- `removePendingByRef(ref)` — по `[DELIVERED]`.
 - Триггеры: `ConnectedF` (Notifiee) + `announceLoop` (4 мин).
 
-**Проверено:** 10 сообщений подряд, получатель оффлайн → при появлении приходят мгновенно пачкой.
-
-**VPS — курьер, не хранилище.**
+**Fix (v1.30):** `enqueuePending` — только для не-сервисных (`!isServiceType`).
+Причина: сервисные не имеют `[DELIVERED]` → бесконечный цикл handshake.
 
 ---
 
-## Миграции (v1.29)
+## Уведомления системы (v1.30)
 
-**Обязательны. Старые данные не теряются.**
+### Message.SenderName
 
-- `messageStatus` → `Message.Status`.
-- `_readSent` → `ReadLocally`.
-- Каждая миграция логируется.
+- Поле `SenderName` в `Message`.
+- Заполняется в 4 местах создания входящего.
+- `nameForPeer(peerID)` — приоритет: свой → `MyDisplayName`; контакт → `Name` → `RemoteName`; иначе пусто.
+
+### Kotlin onMessage
+
+- Если `!isForeground` → `showMessageNotification`.
+- Канал `isotope_messages`, importance HIGH.
+- Тап → Intent `EXTRA_PEER_ID` → `onNewIntent` → MethodChannel → Dart `openChatStream`.
+
+### ShowNotificationContent
+
+- `Settings.ShowNotificationContent bool`.
+- Дефолт `true`.
+- Privacy toggle в настройках.
+
+---
+
+## Разрешения per-action (v1.30)
+
+- `permission_service.dart` — новый файл.
+- `ActivityCompat.requestPermissions` в Kotlin, `onRequestPermissionsResult` → результат в Dart.
+
+**Запросы:**
+
+- `POST_NOTIFICATIONS` — при старте.
+- `CAMERA` — при QR-скане.
+- `BLUETOOTH_*`, `FINE_LOCATION`, `NEARBY_WIFI_DEVICES` — при «Найти рядом».
+- Батарея — диалог с инструкцией + `openAppSettings`.
+
+**При отказе:** SnackBar с кнопкой «Настройки».
+
+**AndroidManifest.xml:** `CAMERA` добавлен явно.
+
+---
+
+## WakeLock (v1.30)
+
+- `IsotopeService.kt` — `PARTIAL_WAKE_LOCK` (`isotope:network`).
+- `acquireWakeLock` в `onCreate`, `releaseWakeLock` в `onDestroy`.
+- **Зачем:** Foreground Service сам по себе не предотвращает сон CPU. Без WakeLock Go-рутины libp2p замораживаются в фоне.
+
+---
+
+## Multiline input (v1.30)
+
+- `chat_screen.dart` — `TextField` в `ConstrainedBox(maxHeight: 140)`.
+- `maxLines: null`, `minLines: 1`.
+- `keyboardType: TextInputType.multiline`.
+- `textInputAction: TextInputAction.newline`.
+- `onSubmitted` убран. Отправка — только через кнопку.
 
 ---
 
@@ -274,12 +272,6 @@ type Message struct {
 - Создаются при `[CONTACT_HELLO]`, если B не знает A.
 - Нужны только для расшифровки `[CONTACT_REQUEST]`.
 - Удаляются после `requests.Add`.
-- Не сохраняются на диск, не в UI.
-
-### Симметрия
-
-- Обе стороны `confirmed: true`.
-- Через `[CONTACT_ACCEPT]`.
 
 ### Удаление контакта — тихий отказ
 
@@ -314,7 +306,6 @@ UI: `Name` → `RemoteName` → PeerID.
 
 - Убран `_contactNames` из `connect_screen`.
 - `_displayName` делегирует в `chatProvider.nameFor(peerID)`.
-- `_loadContactsFromCore` вызывает `loadPeerNames()`.
 
 ---
 
@@ -351,7 +342,7 @@ UI: `Name` → `RemoteName` → PeerID.
 
 ### Периоды
 
-10s / 30s / 1m / 5m / 15m / 30m / 1h / 4h / 24h / never
+10s / 30s / 1m / 5m / 15m / 30m / 1h / 4h / 24h / never.
 
 Дефолт: `never` («Не удаляются»).
 
@@ -359,7 +350,6 @@ UI: `Name` → `RemoteName` → PeerID.
 
 «После прочтения» — уважение к получателю.
 «Жёсткий» — контроль отправителя.
-Два режима — два выбора. Не навязано — предложено.
 
 **hard:**
 - Таймер от получения.
@@ -384,8 +374,7 @@ Fallback — честность. Если получатель не делитс
 
 ### FLAG_SECURE — право на тишину
 
-Секрет — защита.
-Длинное — не секрет.
+Секрет — защита. Длинное — не секрет.
 
 Короткие TTL (10с – 1 мин) — запрет скриншотов.
 Это право на тишину.
@@ -408,11 +397,13 @@ Fallback — честность. Если получатель не делитс
 
 ---
 
-## Multiline input (v1.29)
+## Миграции (v1.29)
 
-- `TextField`: `maxLines: null`, `minLines: 1`.
-- `keyboardType: multiline`, `textInputAction: newline`.
-- `ConstrainedBox(maxHeight: 140)` — рост до ~5 строк, потом скролл.
+**Обязательны. Старые данные не теряются.**
+
+- `messageStatus` → `Message.Status`.
+- `_readSent` → `ReadLocally`.
+- Каждая миграция логируется.
 
 ---
 
@@ -502,8 +493,7 @@ Fallback — честность. Если получатель не делитс
 - TTL.
 - Шифрование AES-256-GCM.
 - PlainText.
-- Status (v1.29).
-- ReadLocally (v1.29).
+- Status, ReadLocally.
 
 ### 4. Каналы
 
@@ -570,6 +560,10 @@ Fallback — честность. Если получатель не делитс
 
 НЕ удалять /root/isotope/state/.
 
+### Телефоны (тестовые)
+- Xiaomi: QmT4HDmccPSnFw6qngNsAZQ9KGvhbHWR6CmSEHW4HfYeKH
+- Huawei: QmYdhBT4wmXcbJYADd3z7aGka3Xcc8k1m2eagmSg876yJ
+
 ### Обновление VPS
 
 pkill -f isotope-node
@@ -611,6 +605,7 @@ flutter build apk --debug
 15. Единый источник истины (v1.29).
 16. Offline-очередь — ответственность отправителя (v1.29).
 17. Миграции обязательны (v1.29).
+18. Разрешения — per-action (v1.30).
 
 ---
 

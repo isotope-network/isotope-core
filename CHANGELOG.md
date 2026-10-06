@@ -1,5 +1,87 @@
 # История изменений ISOTOPE
 
+## v1.30.0 (2026-10-06)
+
+«Уведомления и пробуждение»
+
+### Добавлено
+- Уведомления системы:
+  - Message.SenderName (json:"sender_name,omitempty")
+  - nameForPeer(peerID) — приоритет: свой → MyDisplayName; контакт → Name → RemoteName; иначе пусто
+  - Заполнение в 4 местах создания входящего
+  - Kotlin onMessage — если !isForeground → showMessageNotification
+  - Канал isotope_messages, importance HIGH
+  - Тап → Intent EXTRA_PEER_ID → onNewIntent → MethodChannel → Dart openChatStream
+- Разрешения per-action:
+  - permission_service.dart — новый файл
+  - ActivityCompat.requestPermissions в Kotlin, onRequestPermissionsResult → результат в Dart
+  - POST_NOTIFICATIONS — при старте
+  - CAMERA — при QR-скане
+  - BLUETOOTH_*, FINE_LOCATION, NEARBY_WIFI_DEVICES — при «Найти рядом»
+  - Батарея — диалог с инструкцией + openAppSettings
+  - SnackBar при отказе — кнопка «Настройки»
+  - AndroidManifest.xml — CAMERA добавлен явно
+- Настройка ShowNotificationContent:
+  - Settings.ShowNotificationContent bool
+  - Дефолт true
+  - Методы: Go GetShowNotificationContent / SetShowNotificationContent
+  - mobile.go, libp2p_service.dart, MainActivity.kt, privacy_settings_screen.dart
+- WakeLock:
+  - IsotopeService.kt — PARTIAL_WAKE_LOCK (isotope:network)
+  - acquireWakeLock в onCreate, releaseWakeLock в onDestroy
+  - Go-рутины libp2p не замерзают в фоне
+
+### Изменено
+- Единый источник истины — три рефакторинга:
+  - MessageStatus → Message.Status
+  - _readSent (Dart) → Message.ReadLocally (Go)
+  - _contactNames (Dart) → ChatProvider.nameFor(peerID)
+- Batch [READ] — новый формат:
+  - Message.Refs []string
+  - SendReadBatch(refs, recipient)
+  - handleServiceMessage case TypeRead — цикл по Refs
+  - Version 0. Обратная совместимость через содержимое
+  - MarkReadLocally(refs)
+- Offline queue — pending до [DELIVERED]:
+  - replicateMessage — при адресном всегда enqueuePending
+  - flushPending — только переотправка, не удаление
+  - removePendingByRef(ref) — удаление по [DELIVERED]
+  - Триггеры: ConnectedF + announceLoop (4 мин)
+- Offline queue fix — сервисные не в pending:
+  - enqueuePending — только для не-сервисных (!isServiceType)
+  - Причина: сервисные не имеют [DELIVERED] → бесконечный цикл handshake
+- Multiline input:
+  - TextField в ConstrainedBox(maxHeight: 140)
+  - maxLines: null, minLines: 1, keyboardType: multiline
+  - textInputAction: newline, onSubmitted убран
+
+### Проверено
+- Уведомления (имя + превью, тап → чат)
+- Разрешения (камера, BLE/nearby, батарея)
+- Privacy toggle
+- Offline queue (pending до [DELIVERED])
+- Batch [READ]
+- ReadLocally (бейдж после перезапуска)
+- Multiline input
+- WakeLock (фоновое подключение)
+
+### Технические данные
+- HEAD: 60e537e
+- VPS: 4ef7fb5
+
+### Телефоны (актуальные)
+- Xiaomi: QmT4HDmccPSnFw6qngNsAZQ9KGvhbHWR6CmSEHW4HfYeKH (Wi-Fi)
+- Huawei: QmYdhBT4wmXcbJYADd3z7aGka3Xcc8k1m2eagmSg876yJ (Wi-Fi / LTE)
+
+### Следующий шаг
+- Голосовые сообщения (E2E, стеганография в WAV)
+- Файлы (E2E, через relay или напрямую)
+- BOTTOM OVERFLOWED — UI-баг в connect_screen
+- Samsung Android 10 — диагностика
+- 6-10 минут подключения Xiaomi — диагностика (GOLOG_LOG_LEVEL=debug)
+
+---
+
 ## v1.29.0 (2026-10-05)
 
 «Единый источник истины»
@@ -17,7 +99,7 @@
 - Message.Status (перенос из MessageStatus):
   - Поле Status MessageStatus в Message
   - Удалены n.messageStatus, n.messageStatusMu, State.MessageStatus
-  - Memory.SetStatus(id, status) — по образцу SetExpiresAt
+  - Memory.SetStatus(id, status)
   - Миграция: при loadState старый messageStatus → Message.Status
 - Message.ReadLocally:
   - Поле ReadLocally bool в Go + Dart
@@ -35,25 +117,14 @@
 - Multiline input:
   - TextField в chat_screen.dart: maxLines: null, minLines: 1
   - keyboardType: multiline, textInputAction: newline
-  - ConstrainedBox(maxHeight: 140) — рост до ~5 строк
+  - ConstrainedBox(maxHeight: 140)
 
 ### Проверено
 - 10 сообщений подряд, получатель оффлайн → при появлении приходят мгновенно пачкой
 - Бейдж переживает перезапуск. Не теряется, не двоится
 
 ### Коммиты
-- 011d719 — single source of names
-- a36c617 — batch [READ]
-- 9a19879 — MessageStatus → Message.Status
-- 212f8f3 — multiline input
-- 6a9fac6 — offline queue: pending до [DELIVERED]
-- 64e1d8b, 4353842 — ReadLocally
-
-### Следующий шаг
-- [PROFILE_UPDATE] (Type=9)
-- TTL для tempContacts (5 минут)
-- VPS reconnectLoop — отключить на relay
-- Уведомления системы
+- 011d719, a36c617, 9a19879, 212f8f3, 6a9fac6, 64e1d8b, 4353842
 
 ---
 
@@ -66,20 +137,19 @@
   - Settings.TtlPeriod / Settings.TtlMode
   - Message.TtlPeriodSeconds / TtlMode / ExpiresAt
   - Периоды: 10s / 30s / 1m / 5m / 15m / 30m / 1h / 4h / 24h / never
-  - «forever» → «never» (обратная совместимость)
+  - «forever» → «never»
   - Режимы: hard / after_read
-  - [TTL_UPDATE] (Type=8) — новый тип для авто-hard
-  - Fallback 48 часов — принудительное удаление
+  - [TTL_UPDATE] (Type=8)
+  - Fallback 48 часов
   - DeleteExpired в cleanupLoop (тикер 1 мин)
-  - Фильтрация истёкших в saveState / loadState / Memory.Add / GetMessages
 - FLAG_SECURE:
   - TTL от 10 сек до 1 мин — скриншоты запрещены
   - Оптимизация _lastSecureFlag
   - Снятие при dispose
 - Удаление контакта:
   - RemoveContact — полная чистка
-  - isotope_deleted.json — удалённые не возвращаются
-  - Тихий отказ — B не знает
+  - isotope_deleted.json
+  - Тихий отказ
 - Per-chat / per-peer:
   - messagesFor(peerID)
   - Черновики — Map<peerID, String>
@@ -95,16 +165,8 @@
   - AppBar — чисто, только имя контакта
   - Диалог «Как вас представить?»
 
-### Исправлено
-- Абракадабра в превью — displayText вместо text
-- «Свой контакт» артефакт — isSelf фильтр
-- Имя входящего в чате — ChatProvider.nameFor(peerID)
-- [CONTACT_REQUEST] — дедупликация по peerID
-- Бейдж + превью — синхронно с TTL
-
 ### Коммиты
-- d482dfc — HEAD (TTL финальный)
-- 27ca05c — TTL механизм
+- d482dfc, 27ca05c
 
 ---
 
@@ -115,7 +177,7 @@
 ### Добавлено
 - Контакт-протокол (bootstrap-handshake):
   - [CONTACT_HELLO] → [CONTACT_HELLO_ACK] → [CONTACT_REQUEST] → [CONTACT_ACCEPT]
-  - Открытые сервисные — всегда через bootstrap
+  - Открытые сервисные — через bootstrap
   - E2E — circuit → bootstrap fallback
   - tempContacts
   - Push через messageHook
@@ -129,15 +191,9 @@
   - Долгий тап → Открыть / Переименовать / Удалить
   - Предупреждение о безопасности
 
-### Изменено
-- Разделение транспортов по назначению
-- Type в processMessageInternal — с рождения
-- Логи: убраны STATUS POLL, [MULTIADDR], [DIAG], [DHT] Provide
-
 ### Коммиты
 - 6896800, bead650, 692418d, 67778cd, a2004db, d083997
-- 849c388, 36a6af6, 0cb9de2, 2a9083a, 196af37, 156fe0a
-- 8e6280c — HEAD
+- 849c388, 36a6af6, 0cb9de2, 2a9083a, 196af37, 156fe0a, 8e6280c
 
 ---
 
