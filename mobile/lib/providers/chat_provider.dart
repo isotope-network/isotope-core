@@ -197,6 +197,11 @@ class ChatProvider extends ChangeNotifier {
             ttlMode: m.ttlMode,
             expiresAt: m.expiresAt,
             recipient: m.recipient,
+            mediaType: m.mediaType,
+            duration: m.duration,
+            mediaData: m.mediaData,
+            fileName: m.fileName,
+            fileSize: m.fileSize,
           );
         })
         .toList();
@@ -1045,6 +1050,11 @@ class ChatProvider extends ChangeNotifier {
       expiresAt: Message.parseExpiresAt(data['expiresAt']),
       recipient: data['recipient'] ?? '',
       readLocally: data['read_locally'] ?? false,
+      mediaType: data['media_type'] ?? '',
+      duration: data['duration'] ?? 0,
+      mediaData: data['media_data'] ?? '',
+      fileName: data['file_name'] ?? '',
+      fileSize: data['file_size'] ?? 0,
     );
     _addMessage(msg);
   }

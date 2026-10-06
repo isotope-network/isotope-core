@@ -1465,6 +1465,12 @@ class _ConnectScreenState extends State<ConnectScreen> {
             return 'Недоступен';
         }
       }
+      if (last.isVoice) {
+        return '🎤 Голосовое';
+      }
+      if (last.isFile) {
+        return '📎 ${last.fileName.isNotEmpty ? last.fileName : "Файл"}';
+      }
       final raw = last.displayText;
       final text = raw.length > 40 ? '${raw.substring(0, 40)}...' : raw;
       return text;
