@@ -320,7 +320,10 @@ class _VoicePlayerState extends State<_VoicePlayer> {
       if (_playing) {
         await _player!.pause();
       } else {
-        await _player!.play();
+        // play() возвращает Future, который завершается только при
+        // остановке/завершении. await заблокировал бы _toggle → пауза
+        // не срабатывала бы. Fire-and-forget.
+        unawaited(_player!.play());
       }
     } catch (e) {
       if (mounted) setState(() => _error = e.toString());
@@ -383,13 +386,27 @@ class _VoicePlayerState extends State<_VoicePlayer> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                LinearProgressIndicator(
-                  value: progress,
-                  minHeight: 3,
-                  backgroundColor: Colors.grey.shade300,
-                  valueColor: const AlwaysStoppedAnimation<Color>(Color(0xFF4CAF50)),
+                SliderTheme(
+                  data: SliderTheme.of(context).copyWith(
+                    trackHeight: 3,
+                    thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 6),
+                    overlayShape: const RoundSliderOverlayShape(overlayRadius: 12),
+                    activeTrackColor: const Color(0xFF4CAF50),
+                    inactiveTrackColor: Colors.grey.shade300,
+                    thumbColor: const Color(0xFF4CAF50),
+                    overlayColor: const Color(0x334CAF50),
+                  ),
+                  child: Slider(
+                    value: progress.clamp(0.0, 1.0),
+                    onChanged: (v) async {
+                      if (_player == null) return;
+                      final seekTo = Duration(
+                        milliseconds: (v * total).round(),
+                      );
+                      await _player!.seek(seekTo);
+                    },
+                  ),
                 ),
-                const SizedBox(height: 4),
                 Text(
                   _playing || _position.inSeconds > 0
                       ? '${_fmt(_position)} / ${_fmt(_duration)}'
