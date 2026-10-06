@@ -9,6 +9,7 @@ import android.content.Context
 import android.content.Intent
 import android.os.Build
 import android.os.IBinder
+import android.os.PowerManager
 import androidx.core.app.NotificationCompat
 import android.util.Log
 
@@ -20,6 +21,8 @@ import android.util.Log
  * Reconnect в Go-ядре работает и в свёрнутом состоянии.
  */
 class IsotopeService : Service() {
+
+    private var wakeLock: PowerManager.WakeLock? = null
 
     companion object {
         private const val TAG = "IsotopeService"
@@ -53,6 +56,7 @@ class IsotopeService : Service() {
         Log.d(TAG, "onCreate()")
         createNotificationChannel()
         startForeground(NOTIFICATION_ID, buildNotification())
+        acquireWakeLock()
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -62,7 +66,37 @@ class IsotopeService : Service() {
 
     override fun onDestroy() {
         Log.d(TAG, "onDestroy()")
+        releaseWakeLock()
         super.onDestroy()
+    }
+
+    private fun acquireWakeLock() {
+        if (wakeLock != null) return
+        try {
+            val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
+            wakeLock = pm.newWakeLock(
+                PowerManager.PARTIAL_WAKE_LOCK,
+                "isotope:network"
+            ).apply {
+                setReferenceCounted(false)
+                acquire()
+            }
+            Log.d(TAG, "wakeLock acquired")
+        } catch (e: Exception) {
+            Log.e(TAG, "wakeLock acquire failed: ${e.message}")
+        }
+    }
+
+    private fun releaseWakeLock() {
+        try {
+            wakeLock?.let {
+                if (it.isHeld) it.release()
+            }
+            wakeLock = null
+            Log.d(TAG, "wakeLock released")
+        } catch (e: Exception) {
+            Log.e(TAG, "wakeLock release failed: ${e.message}")
+        }
     }
 
     private fun createNotificationChannel() {
