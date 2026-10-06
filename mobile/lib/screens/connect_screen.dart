@@ -15,6 +15,7 @@ import '../services/log_service.dart';
 import '../services/ethics_service.dart';
 import '../services/identity_service.dart';
 import '../services/network_service.dart';
+import '../services/permission_service.dart';
 import '../providers/chat_provider.dart';
 import '../utils/time_format.dart';
 import '../widgets/requests_section.dart';
@@ -393,9 +394,12 @@ class _ConnectScreenState extends State<ConnectScreen> {
         builder: (ctx) => AlertDialog(
           title: const Text('Фоновая работа'),
           content: const Text(
-            'ISOTOPE — это P2P-сеть. Чтобы принимать сообщения, когда приложение свёрнуто, '
+            'ISOTOPE — это P2P-сеть. Чтобы сообщения приходили, когда приложение свёрнуто, '
             'разрешите работу в фоне.\n\n'
-            'Это откроет системные настройки — выберите «Разрешить» или «Не оптимизировать».',
+            'Если системное окно не открылось — зайдите в:\n'
+            'Настройки → Батарея → Запуск приложений → ISOTOPE\n'
+            'и включите «Автозапуск» + «Работа в фоне».\n\n'
+            'Или нажмите «Настройки приложения» ниже.',
           ),
           actions: [
             TextButton(
@@ -407,11 +411,18 @@ class _ConnectScreenState extends State<ConnectScreen> {
             ),
             TextButton(
               onPressed: () async {
-                await prefs.setBool('battery_opt_asked', true);
                 if (ctx.mounted) Navigator.pop(ctx);
                 await LibP2PService.requestIgnoreBatteryOptimizations();
               },
               child: const Text('Разрешить'),
+            ),
+            TextButton(
+              onPressed: () async {
+                await prefs.setBool('battery_opt_asked', true);
+                if (ctx.mounted) Navigator.pop(ctx);
+                await PermissionService.openAppSettings();
+              },
+              child: const Text('Настройки приложения'),
             ),
           ],
         ),
@@ -641,7 +652,23 @@ class _ConnectScreenState extends State<ConnectScreen> {
     }
   }
 
-  void _scanNearby() {
+  Future<void> _scanNearby() async {
+    final ok = await PermissionService.request(PermissionService.nearby);
+    if (!ok) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: const Text('Разрешите Bluetooth и геолокацию, чтобы искать рядом'),
+            action: SnackBarAction(
+              label: 'Настройки',
+              onPressed: () => PermissionService.openAppSettings(),
+            ),
+          ),
+        );
+      }
+      return;
+    }
+
     final p2p = context.read<P2PService>();
     setState(() {
       _scanning = true;
@@ -1114,6 +1141,22 @@ class _ConnectScreenState extends State<ConnectScreen> {
 
   Future<void> _scanQR() async {
     try {
+      final ok = await PermissionService.request(PermissionService.camera);
+      if (!ok) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: const Text('Разрешите камеру, чтобы сканировать QR'),
+              action: SnackBarAction(
+                label: 'Настройки',
+                onPressed: () => PermissionService.openAppSettings(),
+              ),
+            ),
+          );
+        }
+        return;
+      }
+
       final result = await Navigator.push(
         context,
         MaterialPageRoute(builder: (_) => const QRScanScreen()),

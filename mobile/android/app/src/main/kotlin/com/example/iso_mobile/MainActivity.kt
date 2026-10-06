@@ -83,6 +83,10 @@ class MainActivity : FlutterActivity() {
     private val NOTIFICATION_REQUEST_CODE = 2001
     private val NOTIFICATION_PERMISSION_REQUEST_CODE = 2002
 
+    // Общий запрос разрешений (permissions).
+    private var permissionResult: MethodChannel.Result? = null
+    private val GENERAL_PERMISSION_REQUEST_CODE = 2003
+
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
         nsdManager = getSystemService(Context.NSD_SERVICE) as NsdManager
@@ -536,6 +540,14 @@ class MainActivity : FlutterActivity() {
                             result.success("not_supported")
                         }
                     }
+                    "requestPermissions" -> {
+                        val permsList = call.argument<List<String>>("permissions") ?: emptyList()
+                        if (permsList.isEmpty()) {
+                            result.success(true)
+                        } else {
+                            requestRuntimePermissions(permsList.toTypedArray(), result)
+                        }
+                    }
                     else -> result.notImplemented()
                 }
             }
@@ -717,6 +729,32 @@ class MainActivity : FlutterActivity() {
         if (peerId.isEmpty()) return
         pendingOpenChat = peerId
         runCatching { messageEventSink?.success("{\"open_chat\":\"$peerId\"}") }
+    }
+
+    private fun requestRuntimePermissions(permissions: Array<String>, result: MethodChannel.Result) {
+        if (permissionResult != null) {
+            // Уже идёт запрос — отказ.
+            result.success(false)
+            return
+        }
+        permissionResult = result
+        ActivityCompat.requestPermissions(this, permissions, GENERAL_PERMISSION_REQUEST_CODE)
+    }
+
+    override fun onRequestPermissionsResult(
+        requestCode: Int,
+        permissions: Array<out String>,
+        grantResults: IntArray
+    ) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode == GENERAL_PERMISSION_REQUEST_CODE) {
+            val allGranted = grantResults.isNotEmpty() &&
+                grantResults.all { it == PackageManager.PERMISSION_GRANTED }
+            permissionResult?.success(allGranted)
+            permissionResult = null
+        } else if (requestCode == NOTIFICATION_PERMISSION_REQUEST_CODE) {
+            // Обрабатывается отдельно, если нужно.
+        }
     }
 
     private fun sendEvent(data: Map<String, Any>) {
