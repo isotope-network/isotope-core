@@ -1045,11 +1045,23 @@ class ChatProvider extends ChangeNotifier {
     try {
       final data = await LibP2PService.getMessages();
       final shortMyID = _libp2pPeerId.length > 8 ? _libp2pPeerId.substring(0, 8) : _libp2pPeerId;
-      return data.map((json) {
+      final result = <Message>[];
+      for (final json in data) {
         final map = json as Map<String, dynamic>;
         final sender = map['sender'] ?? '';
         final shortSender = sender.length > 8 ? sender.substring(0, 8) : sender;
-        return Message(
+        final mediaType = map['media_type'] ?? '';
+        final mediaId = map['media_id'] ?? '';
+        final chunkTotal = map['chunk_total'] ?? 0;
+
+        // Восстановление пути для собранного файла на диске.
+        String localPath = '';
+        if (mediaType == 'file' && chunkTotal > 0 && mediaId.toString().isNotEmpty) {
+          final p = await MediaStorage.getFilePath(mediaId.toString());
+          if (p != null) localPath = p;
+        }
+
+        result.add(Message(
           id: map['id'] ?? '',
           text: map['text'] ?? '',
           plainText: map['plainText'] ?? '',
@@ -1066,16 +1078,18 @@ class ChatProvider extends ChangeNotifier {
           expiresAt: Message.parseExpiresAt(map['expiresAt']),
           recipient: map['recipient'] ?? '',
           readLocally: map['read_locally'] ?? false,
-          mediaType: map['media_type'] ?? '',
+          mediaType: mediaType,
           duration: map['duration'] ?? 0,
           mediaData: map['media_data'] ?? '',
           fileName: map['file_name'] ?? '',
           fileSize: map['file_size'] ?? 0,
-          mediaId: map['media_id'] ?? '',
+          mediaId: mediaId,
           chunkIndex: map['chunk_index'] ?? 0,
-          chunkTotal: map['chunk_total'] ?? 0,
-        );
-      }).toList();
+          chunkTotal: chunkTotal,
+          localFilePath: localPath,
+        ));
+      }
+      return result;
     } catch (_) {
       return [];
     }
