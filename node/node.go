@@ -3271,12 +3271,21 @@ func (n *Node) SendReadBatch(refs []string, recipient string) error {
 		return nil
 	}
 
-	// Фильтр: файловые чанки не отправляют [READ].
+	// Фильтр: файловые чанки — оставляем только ПОСЛЕДНИЙ чанк каждого файла.
+	// Остальные отбрасываем, чтобы [READ] был один на файл.
+	seenMedia := make(map[string]bool)
 	filtered := make([]string, 0, len(refs))
 	for _, ref := range refs {
 		if msg, ok := n.findMyMessageByID(ref); ok {
 			if msg.MediaType == "file" && msg.ChunkTotal > 0 {
-				continue
+				// Оставляем только последний чанк.
+				if msg.ChunkIndex != msg.ChunkTotal-1 {
+					continue
+				}
+				if seenMedia[msg.MediaID] {
+					continue
+				}
+				seenMedia[msg.MediaID] = true
 			}
 		}
 		filtered = append(filtered, ref)

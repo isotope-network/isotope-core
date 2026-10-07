@@ -681,7 +681,9 @@ class ChatProvider extends ChangeNotifier {
           return;
         }
 
-        LogService.log('P2P: входящее от $sender: ${map['text']}');
+        final previewText = (map['text'] as String? ?? '');
+        final preview = previewText.length > 40 ? '${previewText.substring(0, 40)}…' : previewText;
+        LogService.log('P2P: входящее от $sender: $preview');
 
         // Увеличиваем непрочитанные только для НОВЫХ сообщений от ЧУЖИХ,
         // когда чат с ними не открыт. Иначе — дубликат или своё.
@@ -1193,7 +1195,7 @@ class ChatProvider extends ChangeNotifier {
 
   void _addMessage(Message msg) {
     if (msg.id.isEmpty) {
-      LogService.log('ADD SKIP: empty id, text="${msg.text}"');
+      LogService.log('ADD SKIP: empty id');
       return;
     }
     final existing = _messagesMap[msg.id];
@@ -1205,7 +1207,7 @@ class ChatProvider extends ChangeNotifier {
         LogService.log('ADD UPDATE id=${msg.id} expiresAt=${msg.expiresAt}');
         _safeNotify();
       } else {
-        LogService.log('ADD SKIP: id exists id=${msg.id} len=${msg.id.length} text="${msg.text}"');
+        LogService.log('ADD SKIP: id exists id=${msg.id}');
       }
       return;
     }
