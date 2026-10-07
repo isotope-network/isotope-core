@@ -300,6 +300,11 @@ class _FileRow extends StatelessWidget {
                       ),
                     ),
                   )
+                else if (message.isOwn)
+                  const Text(
+                    'Отправлено',
+                    style: TextStyle(fontSize: 12, color: Colors.black54),
+                  )
                 else
                   const Text(
                     'Ожидание…',

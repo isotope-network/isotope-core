@@ -226,6 +226,7 @@ class ChatProvider extends ChangeNotifier {
             mediaId: m.mediaId,
             chunkIndex: m.chunkIndex,
             chunkTotal: m.chunkTotal,
+            localFilePath: m.localFilePath,
           );
         })
         .toList();
