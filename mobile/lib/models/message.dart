@@ -41,6 +41,19 @@ class Message {
   /// Размер файла (байты). Пока не используем.
   final int fileSize;
 
+  /// MediaID — идентификатор файла (для чанков).
+  final String mediaId;
+
+  /// ChunkIndex — номер чанка (0, 1, 2, ...). 0 — если не чанк.
+  final int chunkIndex;
+
+  /// ChunkTotal — общее число чанков. 0 — если не чанк.
+  final int chunkTotal;
+
+  /// Локальный путь к собранному файлу. Только на устройстве.
+  /// В сеть не передаётся. Пусто — файл не собран.
+  final String localFilePath;
+
   Message({
     required this.id,
     required this.text,
@@ -66,6 +79,10 @@ class Message {
     this.mediaData = '',
     this.fileName = '',
     this.fileSize = 0,
+    this.mediaId = '',
+    this.chunkIndex = 0,
+    this.chunkTotal = 0,
+    this.localFilePath = '',
   });
 
   /// Копия с обновлённым expiresAt.
@@ -95,6 +112,10 @@ class Message {
       mediaData: mediaData,
       fileName: fileName,
       fileSize: fileSize,
+      mediaId: mediaId,
+      chunkIndex: chunkIndex,
+      chunkTotal: chunkTotal,
+      localFilePath: localFilePath,
     );
   }
 
@@ -125,6 +146,10 @@ class Message {
       mediaData: mediaData,
       fileName: fileName,
       fileSize: fileSize,
+      mediaId: mediaId,
+      chunkIndex: chunkIndex,
+      chunkTotal: chunkTotal,
+      localFilePath: localFilePath,
     );
   }
 
@@ -155,6 +180,44 @@ class Message {
       mediaData: mediaData,
       fileName: fileName,
       fileSize: fileSize,
+      mediaId: mediaId,
+      chunkIndex: chunkIndex,
+      chunkTotal: chunkTotal,
+      localFilePath: localFilePath,
+    );
+  }
+
+  /// Копия с обновлённым localFilePath.
+  Message withLocalFilePath(String path) {
+    return Message(
+      id: id,
+      text: text,
+      plainText: plainText,
+      version: version,
+      sender: sender,
+      time: time,
+      isOwn: isOwn,
+      score: score,
+      weight: weight,
+      archived: archived,
+      deliveryStatus: deliveryStatus,
+      messageStatus: messageStatus,
+      pendingState: pendingState,
+      channel: channel,
+      ttlPeriodSeconds: ttlPeriodSeconds,
+      ttlMode: ttlMode,
+      expiresAt: expiresAt,
+      recipient: recipient,
+      readLocally: readLocally,
+      mediaType: mediaType,
+      duration: duration,
+      mediaData: mediaData,
+      fileName: fileName,
+      fileSize: fileSize,
+      mediaId: mediaId,
+      chunkIndex: chunkIndex,
+      chunkTotal: chunkTotal,
+      localFilePath: path,
     );
   }
 
@@ -184,6 +247,10 @@ class Message {
       mediaData: json['media_data'] ?? '',
       fileName: json['file_name'] ?? '',
       fileSize: json['file_size'] ?? 0,
+      mediaId: json['media_id'] ?? '',
+      chunkIndex: json['chunk_index'] ?? 0,
+      chunkTotal: json['chunk_total'] ?? 0,
+      localFilePath: '', // локальное поле, не из Go
     );
   }
 
@@ -224,6 +291,9 @@ class Message {
       'media_data': mediaData,
       'file_name': fileName,
       'file_size': fileSize,
+      'media_id': mediaId,
+      'chunk_index': chunkIndex,
+      'chunk_total': chunkTotal,
     };
   }
 

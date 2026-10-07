@@ -9,6 +9,7 @@ import '../services/ws_service.dart';
 import '../services/p2p_service.dart';
 import '../services/ethics_service.dart';
 import '../services/libp2p_service.dart';
+import '../services/media_storage.dart';
 import '../services/log_service.dart';
 
 /// Событие получения [CONTACT_HELLO_ACK] от B.
@@ -167,9 +168,11 @@ class ChatProvider extends ChangeNotifier {
 
   /// Сообщения для конкретного чата (peerID).
   /// Свои: recipient == peerID. Входящие: sender == peerID.
+  /// Файловые чанки (mediaType=file, chunkTotal>0) группируются по mediaId —
+  /// в UI показывается одно сообщение на файл.
   List<Message> messagesFor(String peerID) {
     if (peerID.isEmpty) return allMessages;
-    final list = _messagesMap.values
+    final filtered = _messagesMap.values
         .where((m) => m.sender != '🌐 Сеть')
         .where((m) => !m.isExpired)
         .where((m) {
@@ -178,6 +181,24 @@ class ChatProvider extends ChangeNotifier {
           }
           return m.sender == peerID;
         })
+        .toList();
+
+    // Группировка файловых чанков по mediaId.
+    final fileGroups = <String, List<Message>>{};
+    final others = <Message>[];
+    for (final m in filtered) {
+      if (m.isFile && m.chunkTotal > 0) {
+        fileGroups.putIfAbsent(m.mediaId, () => []).add(m);
+      } else {
+        others.add(m);
+      }
+    }
+    for (final group in fileGroups.values) {
+      group.sort((a, b) => a.chunkIndex.compareTo(b.chunkIndex));
+      others.add(group.first);
+    }
+
+    final list = others
         .map((m) {
           return Message(
             id: m.id,
@@ -202,6 +223,9 @@ class ChatProvider extends ChangeNotifier {
             mediaData: m.mediaData,
             fileName: m.fileName,
             fileSize: m.fileSize,
+            mediaId: m.mediaId,
+            chunkIndex: m.chunkIndex,
+            chunkTotal: m.chunkTotal,
           );
         })
         .toList();
@@ -940,6 +964,82 @@ class ChatProvider extends ChangeNotifier {
     return true;
   }
 
+  /// Отправляет файл текущему контакту (E2E).
+  /// Go режет на чанки по 64 КБ, шифрует каждый, отправляет.
+  /// Локально храним одно сообщение (без mediaData) — метаданные.
+  Future<bool> sendFile({
+    required String fileBase64,
+    required String fileName,
+    required int fileSize,
+  }) async {
+    if (_currentNodeIp.isEmpty || !_currentNodeIp.startsWith('Qm')) {
+      _error = 'Нет получателя — откройте чат';
+      _safeNotify();
+      return false;
+    }
+    if (fileBase64.isEmpty) {
+      _error = 'Пустой файл';
+      _safeNotify();
+      return false;
+    }
+
+    final response = await LibP2PService.sendFile(
+      peerID: _currentNodeIp,
+      fileBase64: fileBase64,
+      fileName: fileName,
+      fileSize: fileSize,
+      period: _ttlPeriod,
+      mode: _ttlMode,
+    );
+
+    if (response.containsKey('error')) {
+      _error = 'Ошибка отправки файла: ${response['error']}';
+      _safeNotify();
+      return false;
+    }
+
+    final mediaId = response['id'];
+    if (mediaId == null || mediaId.toString().isEmpty) {
+      _error = 'Ошибка: Go-ядро не вернуло MediaID';
+      _safeNotify();
+      return false;
+    }
+
+    final now = DateTime.now().toUtc().toIso8601String();
+    final ttlSec = _ttlPeriodSeconds(_ttlPeriod);
+
+    final msg = Message(
+      id: mediaId.toString(),
+      text: '',
+      plainText: '',
+      sender: 'Вы',
+      time: now,
+      isOwn: true,
+      score: 0,
+      weight: 0.5,
+      archived: false,
+      channel: _activeChannel,
+      ttlPeriodSeconds: ttlSec,
+      ttlMode: _ttlMode,
+      expiresAt: (ttlSec > 0 && _ttlMode == 'hard')
+          ? DateTime.now().add(Duration(seconds: ttlSec))
+          : null,
+      recipient: _currentNodeIp,
+      mediaType: 'file',
+      mediaId: mediaId.toString(),
+      fileName: fileName,
+      fileSize: fileSize,
+    );
+
+    _addMessage(msg);
+
+    if (_currentNodeIp.isNotEmpty) {
+      _peerSeenController.add(_currentNodeIp);
+    }
+
+    return true;
+  }
+
   Future<List<Message>> getMessagesViaLibP2P() async {
     if (!_libp2pStarted) return [];
     try {
@@ -971,6 +1071,9 @@ class ChatProvider extends ChangeNotifier {
           mediaData: map['media_data'] ?? '',
           fileName: map['file_name'] ?? '',
           fileSize: map['file_size'] ?? 0,
+          mediaId: map['media_id'] ?? '',
+          chunkIndex: map['chunk_index'] ?? 0,
+          chunkTotal: map['chunk_total'] ?? 0,
         );
       }).toList();
     } catch (_) {
@@ -1060,6 +1163,9 @@ class ChatProvider extends ChangeNotifier {
       mediaData: data['media_data'] ?? '',
       fileName: data['file_name'] ?? '',
       fileSize: data['file_size'] ?? 0,
+      mediaId: data['media_id'] ?? '',
+      chunkIndex: data['chunk_index'] ?? 0,
+      chunkTotal: data['chunk_total'] ?? 0,
     );
     _addMessage(msg);
   }
@@ -1094,10 +1200,50 @@ class ChatProvider extends ChangeNotifier {
 
     LogService.log('ADD id=${msg.id} len=${msg.id.length} text="${msg.text}" sender=${msg.sender}');
 
+    // Файловый чанк — сохраняем на диск, при готовности собираем.
+    if (msg.isFile && msg.chunkTotal > 0) {
+      _handleFileChunk(msg);
+    }
+
     // [READ] отправляется при открытии чата (setChatOpen).
     // Если чат с этим sender открыт — отправим сразу.
     _sendReadFor(msg);
 
+    _safeNotify();
+  }
+
+  /// Сохраняет чанк файла на диск. Если все чанки собраны —
+  /// склеивает в файл и обновляет Message.localFilePath.
+  Future<void> _handleFileChunk(Message msg) async {
+    if (msg.mediaId.isEmpty) return;
+    final base64Data = msg.mediaBase64;
+    if (base64Data.isEmpty) return;
+
+    final ok = await MediaStorage.saveChunk(
+      mediaId: msg.mediaId,
+      chunkIndex: msg.chunkIndex,
+      chunkTotal: msg.chunkTotal,
+      fileName: msg.fileName,
+      fileSize: msg.fileSize,
+      base64Data: base64Data,
+    );
+    if (!ok) return;
+
+    final path = await MediaStorage.tryAssemble(msg.mediaId);
+    if (path == null) return;
+
+    // Все чанки собраны — обновляем ВСЕ Message этого mediaId (localFilePath).
+    final updates = <String, Message>{};
+    for (final m in _messagesMap.values) {
+      if (m.mediaId == msg.mediaId && m.localFilePath != path) {
+        updates[m.id] = m.withLocalFilePath(path);
+      }
+    }
+    if (updates.isEmpty) return;
+    for (final e in updates.entries) {
+      _messagesMap[e.key] = e.value;
+    }
+    LogService.log('MEDIA: file ready $path');
     _safeNotify();
   }
 

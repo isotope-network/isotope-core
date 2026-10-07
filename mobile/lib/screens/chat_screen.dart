@@ -5,6 +5,8 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:record/record.dart';
 import 'package:path_provider/path_provider.dart';
+import 'package:file_picker/file_picker.dart';
+import 'package:image_picker/image_picker.dart';
 import '../models/message.dart';
 import '../providers/chat_provider.dart';
 import '../utils/time_format.dart';
@@ -376,6 +378,144 @@ class _ChatScreenState extends State<ChatScreen> {
     });
   }
 
+  /// Открывает меню «прикрепить»: файл или фото с камеры.
+  void _showAttachMenu() {
+    showModalBottomSheet(
+      context: context,
+      builder: (ctx) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: const Icon(Icons.insert_drive_file),
+              title: const Text('Файл'),
+              onTap: () {
+                Navigator.pop(ctx);
+                _pickAndSendFile();
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.camera_alt),
+              title: const Text('Фото с камеры'),
+              onTap: () {
+                Navigator.pop(ctx);
+                _pickAndSendPhoto();
+              },
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// Выбор файла и отправка.
+  Future<void> _pickAndSendFile() async {
+    try {
+      final result = await FilePicker.platform.pickFiles(withData: true);
+      if (result == null || result.files.isEmpty) return;
+      final f = result.files.first;
+      final bytes = f.bytes;
+      if (bytes == null || bytes.isEmpty) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Не удалось прочитать файл')),
+          );
+        }
+        return;
+      }
+      final confirmed = await _confirmLargeFile(bytes.length);
+      if (!confirmed) return;
+      final b64 = base64Encode(bytes);
+      final provider = _provider;
+      if (provider == null) return;
+      final ok = await provider.sendFile(
+        fileBase64: b64,
+        fileName: f.name,
+        fileSize: bytes.length,
+      );
+      if (!ok && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(provider.error ?? 'Ошибка отправки файла')),
+        );
+      }
+    } catch (e) {
+      LogService.log('FILE: pick failed: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Ошибка выбора файла: $e')),
+        );
+      }
+    }
+  }
+
+  /// Фото с камеры и отправка.
+  Future<void> _pickAndSendPhoto() async {
+    try {
+      final picker = ImagePicker();
+      final file = await picker.pickImage(source: ImageSource.camera);
+      if (file == null) return;
+      final bytes = await file.readAsBytes();
+      if (bytes.isEmpty) return;
+      final confirmed = await _confirmLargeFile(bytes.length);
+      if (!confirmed) return;
+      final b64 = base64Encode(bytes);
+      final provider = _provider;
+      if (provider == null) return;
+      final ok = await provider.sendFile(
+        fileBase64: b64,
+        fileName: file.name,
+        fileSize: bytes.length,
+      );
+      if (!ok && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(provider.error ?? 'Ошибка отправки фото')),
+        );
+      }
+    } catch (e) {
+      LogService.log('FILE: photo failed: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Ошибка фото: $e')),
+        );
+      }
+    }
+  }
+
+  /// Мягкий лимит на размер файла.
+  /// < 10 МБ — без предупреждения.
+  /// 10–50 МБ — предупреждение.
+  /// 50+ МБ — предупреждение + подтверждение.
+  Future<bool> _confirmLargeFile(int bytes) async {
+    const mb10 = 10 * 1024 * 1024;
+    const mb50 = 50 * 1024 * 1024;
+    if (bytes < mb10) return true;
+
+    final mb = (bytes / (1024 * 1024)).toStringAsFixed(1);
+    final text = bytes < mb50
+        ? 'Файл $mb МБ. Отправка может занять несколько минут. Продолжить?'
+        : 'Файл $mb МБ. Это очень большой файл — отправка займёт много времени. Продолжить?';
+
+    if (!mounted) return false;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Большой файл'),
+        content: Text(text),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Отмена'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Продолжить'),
+          ),
+        ],
+      ),
+    );
+    return confirmed == true;
+  }
+
   /// Строка для pending-сообщения: бабл с кругом и «Отмена».
   /// Без полупрозрачности — текст должен быть читаем.
   Widget _buildPendingRow(Message msg, ChatProvider provider) {
@@ -478,10 +618,15 @@ class _ChatScreenState extends State<ChatScreen> {
     );
   }
 
-  /// Панель ввода (обычный режим). TextField + кнопка отправки/микрофон.
+  /// Панель ввода (обычный режим). Скрепка + TextField + кнопка отправки/микрофон.
   Widget _buildInputRow() {
     return Row(
       children: [
+        IconButton(
+          icon: const Icon(Icons.attach_file, color: Colors.grey),
+          onPressed: _showAttachMenu,
+          tooltip: 'Прикрепить',
+        ),
         Expanded(
           child: Consumer<ChatProvider>(
             builder: (_, provider, __) {

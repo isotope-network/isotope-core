@@ -270,6 +270,34 @@ func SendVoice(peerID string, mediaData string, duration int, period string, mod
 	return fmt.Sprintf(`{"status":"ok","id":"%s"}`, id)
 }
 
+// SendFile — отправляет файл конкретному пиру (E2E).
+// fileBase64 — base64 исходного файла. fileSize — размер в байтах.
+// period: "10s" | "30s" | "1m" | ... | "never".
+// mode: "" (при never) | "after_read" | "hard".
+// Возвращает {"status":"ok","id":"<MediaID>"}.
+func SendFile(peerID string, fileBase64 string, fileName string, fileSize int64, period string, mode string) string {
+	nodeMu.Lock()
+	defer nodeMu.Unlock()
+
+	if node == nil {
+		return errorJSON("node not started")
+	}
+	if peerID == "" {
+		return errorJSON("peerID is required")
+	}
+	if fileBase64 == "" {
+		return errorJSON("fileBase64 is required")
+	}
+
+	mediaID, err := node.SendFile(peerID, fileBase64, fileName, fileSize, period, mode)
+	if err != nil {
+		return errorJSON(err.Error())
+	}
+
+	addLog("[FILE] sent to %s (mediaID=%s, %s, %d bytes)", peerID, mediaID, fileName, fileSize)
+	return fmt.Sprintf(`{"status":"ok","id":"%s"}`, mediaID)
+}
+
 // GetPeers — возвращает список пиров
 func GetPeers() string {
 	nodeMu.Lock()

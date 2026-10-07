@@ -109,6 +109,33 @@ class LibP2PService {
     }
   }
 
+  /// Отправляет файл конкретному пиру (E2E).
+  /// fileBase64 — base64 исходного файла. fileSize — размер в байтах.
+  /// Go режет на чанки по 64 КБ.
+  /// Возвращает {"status":"ok","id":"<MediaID>"}.
+  static Future<Map<String, dynamic>> sendFile({
+    required String peerID,
+    required String fileBase64,
+    required String fileName,
+    required int fileSize,
+    String period = 'never',
+    String mode = '',
+  }) async {
+    try {
+      final response = await _channel.invokeMethod<String>('sendFile', {
+        'peerID': peerID,
+        'fileBase64': fileBase64,
+        'fileName': fileName,
+        'fileSize': fileSize,
+        'period': period,
+        'mode': mode,
+      });
+      return _safeDecode(response);
+    } on PlatformException catch (e) {
+      return {'error': e.message ?? 'platform_error', 'operation': 'send_file'};
+    }
+  }
+
   /// Отправляет сообщение конкретному пиру (E2E-шифрованное).
   /// Требует контакт с x25519_pub.
   static Future<Map<String, dynamic>> sendToPeer({

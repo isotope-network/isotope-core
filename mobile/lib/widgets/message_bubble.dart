@@ -1,11 +1,14 @@
+// mobile/lib/widgets/message_bubble.dart
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:just_audio/just_audio.dart';
 import 'package:path_provider/path_provider.dart';
+import 'package:open_file/open_file.dart';
 import '../models/message.dart';
 import '../utils/time_format.dart';
+import '../services/log_service.dart';
 
 class MessageBubble extends StatelessWidget {
   final Message message;
@@ -87,6 +90,8 @@ class MessageBubble extends StatelessWidget {
                     const SizedBox(height: 6),
                     if (message.isVoice)
                       _VoicePlayer(message: message)
+                    else if (message.isFile)
+                      _FileRow(message: message)
                     else
                       Text(
                         message.displayText,
@@ -225,6 +230,87 @@ class MessageBubble extends StatelessWidget {
       default:
         return '';
     }
+  }
+}
+
+/// Отображение файла: иконка + имя + размер + кнопка «Открыть».
+/// Пока файл не собран — «Ожидание…».
+class _FileRow extends StatelessWidget {
+  final Message message;
+
+  const _FileRow({required this.message});
+
+  String _fmtSize(int bytes) {
+    if (bytes < 1024) return '$bytes Б';
+    if (bytes < 1024 * 1024) return '${(bytes / 1024).toStringAsFixed(1)} КБ';
+    return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} МБ';
+  }
+
+  Future<void> _open() async {
+    final path = message.localFilePath;
+    if (path.isEmpty) return;
+    final result = await OpenFile.open(path);
+    LogService.log('FILE: open $path → ${result.type}');
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final name = message.fileName.isNotEmpty ? message.fileName : 'Файл';
+    final ready = message.localFilePath.isNotEmpty;
+
+    return SizedBox(
+      width: 220,
+      child: Row(
+        children: [
+          Container(
+            width: 36,
+            height: 36,
+            decoration: const BoxDecoration(
+              color: Color(0xFF4CAF50),
+              shape: BoxShape.circle,
+            ),
+            child: const Icon(Icons.insert_drive_file, color: Colors.white, size: 20),
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  name,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  _fmtSize(message.fileSize),
+                  style: const TextStyle(fontSize: 11, color: Colors.black54),
+                ),
+                const SizedBox(height: 4),
+                if (ready)
+                  GestureDetector(
+                    onTap: _open,
+                    child: const Text(
+                      'Открыть',
+                      style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                        color: Color(0xFF4CAF50),
+                      ),
+                    ),
+                  )
+                else
+                  const Text(
+                    'Ожидание…',
+                    style: TextStyle(fontSize: 12, color: Colors.black54),
+                  ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
   }
 }
 
@@ -421,3 +507,4 @@ class _VoicePlayerState extends State<_VoicePlayer> {
     );
   }
 }
+// mobile/lib/widgets/message_bubble.dart

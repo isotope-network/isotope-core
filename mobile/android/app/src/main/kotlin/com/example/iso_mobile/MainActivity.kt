@@ -201,6 +201,18 @@ class MainActivity : FlutterActivity() {
                             runOnUiThread { result.success(response) }
                         }.start()
                     }
+                    "sendFile" -> {
+                        val peerID = call.argument<String>("peerID") ?: ""
+                        val fileBase64 = call.argument<String>("fileBase64") ?: ""
+                        val fileName = call.argument<String>("fileName") ?: ""
+                        val fileSize = (call.argument<Int>("fileSize") ?: 0).toLong()
+                        val period = call.argument<String>("period") ?: "forever"
+                        val mode = call.argument<String>("mode") ?: ""
+                        Thread {
+                            val response = Mobile.sendFile(peerID, fileBase64, fileName, fileSize, period, mode)
+                            runOnUiThread { result.success(response) }
+                        }.start()
+                    }
                     "getMessages" -> {
                         Thread {
                             val response = Mobile.getMessages()

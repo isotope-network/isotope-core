@@ -6,6 +6,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'providers/chat_provider.dart';
 import 'services/p2p_service.dart';
 import 'services/log_service.dart';
+import 'services/media_storage.dart';
 import 'screens/connect_screen.dart';
 import 'screens/onboarding_screen.dart';
 
@@ -14,6 +15,8 @@ const String FIRST_LAUNCH_KEY = 'first_launch_seen';
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await _initLogService();
+  await MediaStorage.init();
+  MediaStorage.cleanupOld();
   runApp(const IsoApp());
 }
 
