@@ -1215,7 +1215,7 @@ class ChatProvider extends ChangeNotifier {
     // НЕ обновляем lastMessage, НЕ отправляем [READ], НЕ пушим в unread.
     final isFileChunk = msg.isFile && msg.chunkTotal > 0;
     if (isFileChunk) {
-      LogService.log('ADD chunk id=${msg.id} ${msg.chunkIndex}/${msg.chunkTotal} mediaId=${msg.mediaId}');
+      LogService.log('ADD chunk ${msg.chunkIndex + 1}/${msg.chunkTotal} mediaId=${msg.mediaId}');
       _handleFileChunk(msg);
       _safeNotify();
       return;

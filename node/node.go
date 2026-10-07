@@ -205,6 +205,11 @@ type Node struct {
 	// sendSem — глобальный семафор исходящих stream'ов (10 одновременно).
 	// Защита от перегруза libp2p при flushPending / SendFile.
 	sendSem chan struct{}
+
+	// Батч [DELIVERED] — буфер refs по отправителю.
+	// Копим msg_id чанков, отправляем одним [DELIVERED] с Refs.
+	pendingDelivered   map[string][]string
+	pendingDeliveredMu sync.Mutex
 }
 
 // NewNode — создаёт новый узел
@@ -231,6 +236,7 @@ func NewNode(cfg Config) *Node {
 		tempContacts:            make(map[string]Contact),
 		myReadEnabled:           true,
 		sendSem:                 make(chan struct{}, 10),
+		pendingDelivered:        make(map[string][]string),
 	}
 }
 
@@ -880,7 +886,6 @@ func (n *Node) sendToRecipient(msg Message, data []byte) bool {
 	for _, p := range n.host.Network().Peers() {
 		if p == targetID && !n.isPeerDead(p.String()) {
 			go n.sendReplicaToPeer(targetID, data)
-			log.Printf("[REPLICA] direct send to recipient %s", msg.Recipient)
 			return true
 		}
 	}
@@ -895,7 +900,6 @@ func (n *Node) sendToRecipient(msg Message, data []byte) bool {
 			continue
 		}
 		go n.sendReplicaToPeer(pi.ID, data)
-		log.Printf("[REPLICA] send via bootstrap %s for recipient %s", pi.ID, msg.Recipient)
 		return true
 	}
 
@@ -1372,13 +1376,8 @@ func (n *Node) handleStream(stream network.Stream) {
 					replicaMsg.Text = plaintext
 					replicaMsg.SenderName = n.nameForPeer(replicaMsg.Sender)
 					if n.memory.Add(replicaMsg) {
-						log.Printf("[REPLICA] decrypted message for us: %s", replicaMsg.ID)
-						// Подтверждаем доставку отправителю (напрямую или через relay).
-						go func(sender, msgID string) {
-							if err := n.SendDelivered(msgID, sender); err != nil {
-								log.Printf("[CONFIRM] delivered send failed: %v", err)
-							}
-						}(replicaMsg.Sender, replicaMsg.ID)
+						// Батч [DELIVERED] — копим refs, отправляем по таймеру/размеру.
+						n.queueDelivered(replicaMsg.Sender, replicaMsg.ID)
 						if n.messageHook != nil {
 							data, _ := json.Marshal(replicaMsg)
 							n.messageHook(string(data))
@@ -1388,10 +1387,7 @@ func (n *Node) handleStream(stream network.Stream) {
 				}
 				// Не нам.
 				if n.isRelay {
-					log.Printf("[REPLICA] relay forward (v2) to %s", replicaMsg.Recipient)
 					go n.replicateMessage(replicaMsg)
-				} else {
-					log.Printf("[REPLICA] not for us (v2, recipient=%s), dropping", replicaMsg.Recipient)
 				}
 				return
 			}
@@ -1553,44 +1549,17 @@ func (n *Node) isServiceType(t MessageType) bool {
 func (n *Node) handleServiceMessage(m Message) {
 	switch m.Type {
 	case TypeDelivered:
-		// Доставка состоялась — убираем из очереди pending.
-		n.removePendingByRef(m.Ref)
-
-		// Обновляем read_enabled контакта, если пришло в сообщении.
+		// Батч: обрабатываем все Refs. Одиночный: Ref.
+		refs := m.Refs
+		if len(refs) == 0 && m.Ref != "" {
+			refs = []string{m.Ref}
+		}
+		// Обновляем read_enabled контакта один раз на всё сообщение.
 		if m.ReadEnabled != nil && n.contacts != nil {
 			_ = n.SetContactReadEnabled(m.Sender, *m.ReadEnabled)
 		}
-		// Определяем, будет ли прочтение.
-		peerReadEnabled := n.getPeerReadEnabled(m.Sender)
-		if !n.myReadEnabled || !peerReadEnabled {
-			n.setMessageStatus(m.Ref, StatusHidden)
-			log.Printf("[SERVICE] delivered ack (hidden) ref=%s from=%s (my=%v, peer=%v)", m.Ref, m.Sender, n.myReadEnabled, peerReadEnabled)
-
-			// Авто-hard: прочтение не будет (я или получатель не делимся).
-			// Переходим на hard — ставим ExpiresAt от текущего момента.
-			if msg, ok := n.findMyMessageByID(m.Ref); ok {
-				if msg.TtlMode == "after_read" && msg.ExpiresAt.IsZero() && msg.TtlPeriodSeconds > 0 {
-					expiresAt := time.Now().Add(time.Duration(msg.TtlPeriodSeconds) * time.Second)
-					if n.memory.SetExpiresAt(m.Ref, expiresAt) {
-						log.Printf("[TTL] after_read → hard (hidden): set ExpiresAt for %s (+%ds)", m.Ref, msg.TtlPeriodSeconds)
-						n.scheduleSaveState()
-						if updated, ok := n.findMyMessageByID(m.Ref); ok {
-							if data, err := json.Marshal(updated); err == nil {
-								if n.messageHook != nil {
-									n.messageHook(string(data))
-								}
-							}
-						}
-						// Уведомляем получателя: перешли на hard.
-						if err := n.SendTtlUpdate(m.Ref, msg.TtlPeriodSeconds, m.Sender); err != nil {
-							log.Printf("[TTL_UPDATE] send failed ref=%s: %v", m.Ref, err)
-						}
-					}
-				}
-			}
-		} else {
-			n.setMessageStatus(m.Ref, StatusDelivered)
-			log.Printf("[SERVICE] delivered ack ref=%s from=%s", m.Ref, m.Sender)
+		for _, ref := range refs {
+			n.handleDeliveredRef(ref, m.Sender)
 		}
 
 	case TypeRead:
@@ -3100,6 +3069,112 @@ func (n *Node) SendToPeer(peerID string, text string, ttlPeriod string, ttlMode 
 // См. SendRead.
 func (n *Node) SendDelivered(ref, recipient string) error {
 	return n.sendConfirmation(TypeDelivered, ref, recipient)
+}
+
+// SendDeliveredBatch — отправляет батч подтверждений доставки.
+// Одно сообщение [DELIVERED] с массивом Refs вместо N отдельных.
+func (n *Node) SendDeliveredBatch(refs []string, recipient string) error {
+	if n.host == nil {
+		return fmt.Errorf("node not started")
+	}
+	if recipient == "" {
+		return fmt.Errorf("recipient is required")
+	}
+	if len(refs) == 0 {
+		return nil
+	}
+	id := generateMsgID(fmt.Sprintf("delivered-batch:%d", len(refs)))
+	readEnabled := n.myReadEnabled
+	msg := Message{
+		ID:          id,
+		Text:        "",
+		Sender:      n.host.ID().String(),
+		Recipient:   recipient,
+		Type:        TypeDelivered,
+		Refs:        refs,
+		Version:     0,
+		Time:        time.Now().UTC().Format("2006-01-02T15:04:05"),
+		ReadEnabled: &readEnabled,
+	}
+	if err := n.sendServiceViaBootstrap(msg); err != nil {
+		log.Printf("[CONFIRM] delivered-batch (%d refs) to %s failed: %v", len(refs), recipient, err)
+		return err
+	}
+	log.Printf("[CONFIRM] delivered-batch (%d refs) to %s", len(refs), recipient)
+	return nil
+}
+
+// queueDelivered — добавляет ref в буфер. Если буфер достиг 10 — flush.
+// Иначе flush произойдёт по таймеру (500 мс).
+func (n *Node) queueDelivered(sender, ref string) {
+	if sender == "" || ref == "" {
+		return
+	}
+	n.pendingDeliveredMu.Lock()
+	n.pendingDelivered[sender] = append(n.pendingDelivered[sender], ref)
+	count := len(n.pendingDelivered[sender])
+	n.pendingDeliveredMu.Unlock()
+
+	if count >= 10 {
+		go n.flushDelivered(sender)
+		return
+	}
+	time.AfterFunc(500*time.Millisecond, func() {
+		n.flushDelivered(sender)
+	})
+}
+
+// flushDelivered — отправляет батч [DELIVERED] для указанного sender.
+func (n *Node) flushDelivered(sender string) {
+	n.pendingDeliveredMu.Lock()
+	refs, ok := n.pendingDelivered[sender]
+	if !ok || len(refs) == 0 {
+		n.pendingDeliveredMu.Unlock()
+		return
+	}
+	delete(n.pendingDelivered, sender)
+	n.pendingDeliveredMu.Unlock()
+
+	if err := n.SendDeliveredBatch(refs, sender); err != nil {
+		log.Printf("[CONFIRM] delivered-batch flush failed for %s: %v", sender, err)
+	}
+}
+
+// handleDeliveredRef — обработка одного ref из [DELIVERED] (одиночного или батча).
+func (n *Node) handleDeliveredRef(ref, sender string) {
+	if ref == "" {
+		return
+	}
+	n.removePendingByRef(ref)
+
+	peerReadEnabled := n.getPeerReadEnabled(sender)
+	if !n.myReadEnabled || !peerReadEnabled {
+		n.setMessageStatus(ref, StatusHidden)
+		log.Printf("[SERVICE] delivered ack (hidden) ref=%s from=%s", ref, sender)
+
+		if msg, ok := n.findMyMessageByID(ref); ok {
+			if msg.TtlMode == "after_read" && msg.ExpiresAt.IsZero() && msg.TtlPeriodSeconds > 0 {
+				expiresAt := time.Now().Add(time.Duration(msg.TtlPeriodSeconds) * time.Second)
+				if n.memory.SetExpiresAt(ref, expiresAt) {
+					log.Printf("[TTL] after_read → hard (hidden): set ExpiresAt for %s (+%ds)", ref, msg.TtlPeriodSeconds)
+					n.scheduleSaveState()
+					if updated, ok := n.findMyMessageByID(ref); ok {
+						if data, err := json.Marshal(updated); err == nil {
+							if n.messageHook != nil {
+								n.messageHook(string(data))
+							}
+						}
+					}
+					if err := n.SendTtlUpdate(ref, msg.TtlPeriodSeconds, sender); err != nil {
+						log.Printf("[TTL_UPDATE] send failed ref=%s: %v", ref, err)
+					}
+				}
+			}
+		}
+	} else {
+		n.setMessageStatus(ref, StatusDelivered)
+		log.Printf("[SERVICE] delivered ack ref=%s from=%s", ref, sender)
+	}
 }
 
 // SendTtlUpdate — отправляет получателю [TTL_UPDATE] с expires_in_seconds.
