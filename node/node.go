@@ -2178,6 +2178,10 @@ func (n *Node) replicateMessage(msg Message) {
 	log.Printf("[REPLICA] alive=%d", len(alive))
 
 	if len(alive) == 0 {
+		if n.isRelay {
+			// Relay не отправитель — pending не нужен.
+			return
+		}
 		log.Printf("[REPLICA] SKIP: no alive peers — enqueue")
 		n.enqueuePending(msg)
 		return
