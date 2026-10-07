@@ -1603,12 +1603,29 @@ func (n *Node) handleServiceMessage(m Message) {
 		for _, ref := range refs {
 			// Если я не делюсь статусом прочтения — не показываю чужой [READ].
 			// Иконка становится ✓✓🔒 (StatusHidden), а не ✓✓ (цвет).
+			statusToSet := StatusRead
 			if !n.myReadEnabled {
-				n.setMessageStatus(ref, StatusHidden)
-				log.Printf("[SERVICE] read ack (hidden, myReadEnabled=false) ref=%s from=%s", ref, m.Sender)
+				statusToSet = StatusHidden
+			}
+			// Файловый чанк: [READ] приходит по последнему чанку.
+			// Распространяем статус на все чанки этого файла.
+			if msg, ok := n.findMyMessageByID(ref); ok {
+				if msg.MediaType == "file" && msg.ChunkTotal > 0 {
+					all := n.memory.GetAll()
+					for _, cm := range all {
+						if cm.MediaID == msg.MediaID {
+							n.setMessageStatus(cm.ID, statusToSet)
+						}
+					}
+					log.Printf("[SERVICE] read ack (file %s, %d chunks) ref=%s from=%s",
+						msg.MediaID, msg.ChunkTotal, ref, m.Sender)
+				} else {
+					n.setMessageStatus(ref, statusToSet)
+					log.Printf("[SERVICE] read ack ref=%s from=%s", ref, m.Sender)
+				}
 			} else {
-				n.setMessageStatus(ref, StatusRead)
-				log.Printf("[SERVICE] read ack ref=%s from=%s", ref, m.Sender)
+				n.setMessageStatus(ref, statusToSet)
+				log.Printf("[SERVICE] read ack ref=%s (not found in memory) from=%s", ref, m.Sender)
 			}
 
 			// Режим after_read: сообщение получателя прочитано — запускаем
@@ -3132,7 +3149,10 @@ func (n *Node) sendTtlUpdate(ref, text, recipient string) error {
 func (n *Node) SendRead(ref, recipient string) error {
 	if msg, ok := n.findMyMessageByID(ref); ok {
 		if msg.MediaType == "file" && msg.ChunkTotal > 0 {
-			return nil
+			// [READ] для файла — только по последнему чанку.
+			if msg.ChunkIndex != msg.ChunkTotal-1 {
+				return nil
+			}
 		}
 	}
 	// Локальный TTL: получатель прочитал — запускаем таймер удаления.

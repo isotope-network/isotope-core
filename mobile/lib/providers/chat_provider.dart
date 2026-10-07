@@ -689,8 +689,12 @@ class ChatProvider extends ChangeNotifier {
         final isNew = msgIdU.isNotEmpty && !_messagesMap.containsKey(msgIdU);
         final mediaTypeU = map['media_type'] as String? ?? '';
         final chunkTotalU = map['chunk_total'] as int? ?? 0;
+        final chunkIndexU = map['chunk_index'] as int? ?? 0;
         final isFileChunkU = mediaTypeU == 'file' && chunkTotalU > 0;
-        if (isNew && !isSelf && !isFileChunkU && sender != _currentOpenPeerID) {
+        final isLastChunkU = isFileChunkU && chunkIndexU == chunkTotalU - 1;
+        // Файл: бейдж только по последнему чанку. Обычное — всегда.
+        final shouldCount = isFileChunkU ? isLastChunkU : true;
+        if (isNew && !isSelf && shouldCount && sender != _currentOpenPeerID) {
           _unreadByPeer[sender] = (_unreadByPeer[sender] ?? 0) + 1;
           _safeNotify();
         }
@@ -1292,8 +1296,12 @@ class ChatProvider extends ChangeNotifier {
     if (msg.sender.isEmpty) return;
     if (msg.sender != _currentOpenPeerID) return;       // не текущий чат
     if (msg.readLocally) return;
-    // Файловый чанк — не отправляем [READ]. Только [DELIVERED] (Go).
-    if (msg.isFile && msg.chunkTotal > 0) return;
+    // Файловый чанк — [READ] отправляется только для ПОСЛЕДНЕГО чанка
+    // файла и только когда файл собран (localFilePath установлен).
+    if (msg.isFile && msg.chunkTotal > 0) {
+      if (msg.chunkIndex != msg.chunkTotal - 1) return;
+      if (msg.localFilePath.isEmpty) return;
+    }
     // Локально — пометить прочитанным (источник истины — Go).
     // Без этого readLocally не выставляется при новом сообщении в
     // открытом чате → при перезапуске появляется бейдж.
@@ -1439,8 +1447,15 @@ class ChatProvider extends ChangeNotifier {
             if (isNew) added++;
             // Восстановление счётчика непрочитанных: входящее,
             // ещё не прочитано локально, чат не открыт.
+            // Файловые чанки — не считаем unread per-chunk.
+            // Один бейдж на файл: считаем только по последнему чанку.
+            final isFileChunk = msg.isFile && msg.chunkTotal > 0;
+            final isLastChunk = msg.isFile && msg.chunkTotal > 0 && msg.chunkIndex == msg.chunkTotal - 1;
+            final shouldCount = isFileChunk ? isLastChunk : true;
+
             if (isNew &&
                 !msg.isOwn &&
+                shouldCount &&
                 !msg.readLocally &&
                 msg.sender.isNotEmpty &&
                 msg.sender != '🌐 Сеть' &&
