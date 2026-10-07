@@ -2150,12 +2150,12 @@ func (n *Node) replicateMessage(msg Message) {
 	if msg.Recipient != "" {
 		// Адресное сообщение.
 		n.sendToRecipient(msg, data)
-		// В offline-очередь — только НЕ-сервисные.
+		// В offline-очередь — только НЕ-сервисные и только на клиенте.
+		// Relay (VPS) не отправитель — pending не нужен, иначе очередь
+		// растёт бесконечно (68 МБ за часы) и вызывает OOM при старте.
 		// Сервисные ([CONTACT_*], [DELIVERED], [READ], [TTL_UPDATE])
-		// переотправлять нельзя: получатель их не подтверждает через
-		// [DELIVERED], они остаются в очереди навсегда и вызывают
-		// бесконечный цикл handshake.
-		if !n.isServiceType(msg.Type) {
+		// тоже не кладём: получатель их не подтверждает через [DELIVERED].
+		if !n.isRelay && !n.isServiceType(msg.Type) {
 			n.enqueuePending(msg)
 		}
 		return
