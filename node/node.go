@@ -3115,7 +3115,14 @@ func (n *Node) sendTtlUpdate(ref, text, recipient string) error {
 // См. SendDelivered.
 // Плюс: локально запускает TTL у получателя — если это after_read,
 // ставим ExpiresAt = now + period для входящего сообщения.
+// Файловые чанки (MediaType=file, ChunkTotal>0) не отправляют [READ] —
+// только [DELIVERED]. Меньше трафика при передаче файлов.
 func (n *Node) SendRead(ref, recipient string) error {
+	if msg, ok := n.findMyMessageByID(ref); ok {
+		if msg.MediaType == "file" && msg.ChunkTotal > 0 {
+			return nil
+		}
+	}
 	// Локальный TTL: получатель прочитал — запускаем таймер удаления.
 	if msg, ok := n.findMyMessageByID(ref); ok {
 		if msg.TtlMode == "after_read" && msg.ExpiresAt.IsZero() && msg.TtlPeriodSeconds > 0 {
@@ -3154,6 +3161,21 @@ func (n *Node) SendReadBatch(refs []string, recipient string) error {
 	}
 	// [READ] отправляется только если делюсь статусом прочтения.
 	if !n.myReadEnabled {
+		return nil
+	}
+
+	// Фильтр: файловые чанки не отправляют [READ].
+	filtered := make([]string, 0, len(refs))
+	for _, ref := range refs {
+		if msg, ok := n.findMyMessageByID(ref); ok {
+			if msg.MediaType == "file" && msg.ChunkTotal > 0 {
+				continue
+			}
+		}
+		filtered = append(filtered, ref)
+	}
+	refs = filtered
+	if len(refs) == 0 {
 		return nil
 	}
 

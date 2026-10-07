@@ -662,7 +662,10 @@ class ChatProvider extends ChangeNotifier {
         // когда чат с ними не открыт. Иначе — дубликат или своё.
         final msgIdU = map['id'] as String? ?? '';
         final isNew = msgIdU.isNotEmpty && !_messagesMap.containsKey(msgIdU);
-        if (isNew && !isSelf && sender != _currentOpenPeerID) {
+        final mediaTypeU = map['media_type'] as String? ?? '';
+        final chunkTotalU = map['chunk_total'] as int? ?? 0;
+        final isFileChunkU = mediaTypeU == 'file' && chunkTotalU > 0;
+        if (isNew && !isSelf && !isFileChunkU && sender != _currentOpenPeerID) {
           _unreadByPeer[sender] = (_unreadByPeer[sender] ?? 0) + 1;
           _safeNotify();
         }
@@ -1204,6 +1207,16 @@ class ChatProvider extends ChangeNotifier {
     }
     _messagesMap[msg.id] = msg;
 
+    // Файловый чанк — сохраняем на диск, при готовности собираем.
+    // НЕ обновляем lastMessage, НЕ отправляем [READ], НЕ пушим в unread.
+    final isFileChunk = msg.isFile && msg.chunkTotal > 0;
+    if (isFileChunk) {
+      LogService.log('ADD chunk id=${msg.id} ${msg.chunkIndex}/${msg.chunkTotal} mediaId=${msg.mediaId}');
+      _handleFileChunk(msg);
+      _safeNotify();
+      return;
+    }
+
     // Обновляем кэш последнего сообщения от пира
     if (msg.sender != 'Вы' && msg.sender != '🌐 Сеть' && msg.sender.isNotEmpty) {
       final existing = _lastMessageByPeer[msg.sender];
@@ -1213,11 +1226,6 @@ class ChatProvider extends ChangeNotifier {
     }
 
     LogService.log('ADD id=${msg.id} len=${msg.id.length} text="${msg.text}" sender=${msg.sender}');
-
-    // Файловый чанк — сохраняем на диск, при готовности собираем.
-    if (msg.isFile && msg.chunkTotal > 0) {
-      _handleFileChunk(msg);
-    }
 
     // [READ] отправляется при открытии чата (setChatOpen).
     // Если чат с этим sender открыт — отправим сразу.
@@ -1271,6 +1279,8 @@ class ChatProvider extends ChangeNotifier {
     if (msg.sender.isEmpty) return;
     if (msg.sender != _currentOpenPeerID) return;       // не текущий чат
     if (msg.readLocally) return;
+    // Файловый чанк — не отправляем [READ]. Только [DELIVERED] (Go).
+    if (msg.isFile && msg.chunkTotal > 0) return;
     // Локально — пометить прочитанным (источник истины — Go).
     // Без этого readLocally не выставляется при новом сообщении в
     // открытом чате → при перезапуске появляется бейдж.

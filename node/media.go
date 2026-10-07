@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"sync"
 	"time"
 )
 
@@ -134,57 +135,73 @@ func (n *Node) SendFile(peerID, fileBase64, fileName string, fileSize int64, ttl
 	readEnabled := n.myReadEnabled
 	myID := n.host.ID().String()
 
+	// Параллельная отправка — 5 потоков. Каждый чанк шифруется
+	// и отправляется независимо. Порядок не важен: получатель
+	// собирает по ChunkIndex.
+	const maxParallel = 5
+	sem := make(chan struct{}, maxParallel)
+	var wg sync.WaitGroup
+
 	for i := 0; i < chunkTotal; i++ {
-		start := i * chunkSize
-		end := start + chunkSize
-		if end > len(raw) {
-			end = len(raw)
-		}
-		chunkRaw := raw[start:end]
-		chunkB64 := base64.StdEncoding.EncodeToString(chunkRaw)
+		wg.Add(1)
+		sem <- struct{}{}
+		go func(idx int) {
+			defer wg.Done()
+			defer func() { <-sem }()
 
-		encrypted, err := n.encryptForRecipient(peerID, chunkB64)
-		if err != nil {
-			return "", fmt.Errorf("encrypt chunk %d failed: %w", i, err)
-		}
-
-		id := generateMsgID(fmt.Sprintf("file:%s:%d:%d", mediaID, i, time.Now().UnixNano()))
-		msg := Message{
-			ID:               id,
-			Text:             encrypted,
-			PlainText:        chunkB64,
-			Sender:           myID,
-			Recipient:        peerID,
-			Version:          MESSAGE_VERSION_E2E,
-			Type:             TypeMessage,
-			MediaType:        "file",
-			MediaID:          mediaID,
-			ChunkIndex:       i,
-			ChunkTotal:       chunkTotal,
-			FileName:         fileName,
-			FileSize:         fileSize,
-			TtlPeriodSeconds: ttlSeconds,
-			TtlMode:          ttlMode,
-			ReadEnabled:      &readEnabled,
-			Time:             time.Now().UTC().Format("2006-01-02T15:04:05"),
-			IsOwn:            true,
-			Weight:           0.5,
-			Priority:         0,
-			Mode:             0,
-			Score:            0,
-			ExpiresAt:        expiresAt,
-		}
-		if n.memory.Add(msg) {
-			n.setMessageStatus(id, StatusSent)
-			n.replicateMessage(msg)
-			if n.messageHook != nil {
-				data, _ := json.Marshal(msg)
-				n.messageHook(string(data))
+			start := idx * chunkSize
+			end := start + chunkSize
+			if end > len(raw) {
+				end = len(raw)
 			}
-		} else {
-			log.Printf("[FILE] memory.Add rejected chunk %d/%d of %s", i, chunkTotal, mediaID)
-		}
+			chunkRaw := raw[start:end]
+			chunkB64 := base64.StdEncoding.EncodeToString(chunkRaw)
+
+			encrypted, err := n.encryptForRecipient(peerID, chunkB64)
+			if err != nil {
+				log.Printf("[FILE] encrypt chunk %d failed: %v", idx, err)
+				return
+			}
+
+			id := generateMsgID(fmt.Sprintf("file:%s:%d:%d", mediaID, idx, time.Now().UnixNano()))
+			msg := Message{
+				ID:               id,
+				Text:             encrypted,
+				PlainText:        chunkB64,
+				Sender:           myID,
+				Recipient:        peerID,
+				Version:          MESSAGE_VERSION_E2E,
+				Type:             TypeMessage,
+				MediaType:        "file",
+				MediaID:          mediaID,
+				ChunkIndex:       idx,
+				ChunkTotal:       chunkTotal,
+				FileName:         fileName,
+				FileSize:         fileSize,
+				TtlPeriodSeconds: ttlSeconds,
+				TtlMode:          ttlMode,
+				ReadEnabled:      &readEnabled,
+				Time:             time.Now().UTC().Format("2006-01-02T15:04:05"),
+				IsOwn:            true,
+				Weight:           0.5,
+				Priority:         0,
+				Mode:             0,
+				Score:            0,
+				ExpiresAt:        expiresAt,
+			}
+			if n.memory.Add(msg) {
+				n.setMessageStatus(id, StatusSent)
+				n.replicateMessage(msg)
+				if n.messageHook != nil {
+					data, _ := json.Marshal(msg)
+					n.messageHook(string(data))
+				}
+			} else {
+				log.Printf("[FILE] memory.Add rejected chunk %d/%d of %s", idx, chunkTotal, mediaID)
+			}
+		}(i)
 	}
+	wg.Wait()
 
 	log.Printf("[FILE] sent %s (%s, %d bytes, %d chunks) to %s",
 		mediaID, fileName, fileSize, chunkTotal, peerID)
