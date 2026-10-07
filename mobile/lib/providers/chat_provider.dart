@@ -625,7 +625,12 @@ class ChatProvider extends ChangeNotifier {
         // пропустить в _addMessage (обновит expiresAt).
         final msgIdCheck = map['id'] as String? ?? '';
         final isUpdate = msgIdCheck.isNotEmpty && _messagesMap.containsKey(msgIdCheck);
-        if (!isUpdate && isSelf) {
+        // Файловые чанки (в т.ч. свои) пропускаем — они нужны UI
+        // для группировки и отображения файла.
+        final mediaTypeS = map['media_type'] as String? ?? '';
+        final chunkTotalS = map['chunk_total'] as int? ?? 0;
+        final isFileChunkS = mediaTypeS == 'file' && chunkTotalS > 0;
+        if (!isUpdate && isSelf && !isFileChunkS) {
           return;
         }
 
