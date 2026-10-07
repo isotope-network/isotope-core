@@ -113,8 +113,13 @@ class MediaStorage {
       }
       await sink.close();
 
-      // Удаляем папку с чанками.
-      await dir.delete(recursive: true);
+      // Удаляем папку с чанками. Если её уже удалил другой поток —
+      // это не ошибка.
+      try {
+        if (await dir.exists()) {
+          await dir.delete(recursive: true);
+        }
+      } catch (_) {}
 
       LogService.log('MEDIA: assembled $mediaId → $outPath');
       return outPath;

@@ -1234,6 +1234,10 @@ class ChatProvider extends ChangeNotifier {
     _safeNotify();
   }
 
+  // Защита от race condition: пока один чанк собирает файл,
+  // остальные ждут. Иначе 5 горутин вызывают tryAssemble одновременно.
+  final Set<String> _assembling = {};
+
   /// Сохраняет чанк файла на диск. Если все чанки собраны —
   /// склеивает в файл и обновляет Message.localFilePath.
   Future<void> _handleFileChunk(Message msg) async {
@@ -1251,7 +1255,15 @@ class ChatProvider extends ChangeNotifier {
     );
     if (!ok) return;
 
-    final path = await MediaStorage.tryAssemble(msg.mediaId);
+    // Защита: только один поток собирает файл для данного mediaId.
+    if (_assembling.contains(msg.mediaId)) return;
+    _assembling.add(msg.mediaId);
+    String? path;
+    try {
+      path = await MediaStorage.tryAssemble(msg.mediaId);
+    } finally {
+      _assembling.remove(msg.mediaId);
+    }
     if (path == null) return;
 
     // Все чанки собраны — обновляем ВСЕ Message этого mediaId (localFilePath).
