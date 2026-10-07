@@ -195,7 +195,26 @@ class ChatProvider extends ChangeNotifier {
     }
     for (final group in fileGroups.values) {
       group.sort((a, b) => a.chunkIndex.compareTo(b.chunkIndex));
-      others.add(group.first);
+      // Статус файла = минимум по всем чанкам группы.
+      // 1=sent, 2=delivered, 3=hidden, 4=read.
+      // hidden — терминальный: если есть хоть один, статус = hidden.
+      int minStatus = 4;
+      bool anyHidden = false;
+      bool anyStatus = false;
+      for (final c in group) {
+        final s = _messageStatuses[c.id] ?? c.messageStatus ?? 0;
+        if (s == 3) anyHidden = true;
+        if (s > 0) {
+          anyStatus = true;
+          if (s < minStatus) minStatus = s;
+        }
+      }
+      if (anyHidden) {
+        minStatus = 3;
+      } else if (!anyStatus) {
+        minStatus = 0;
+      }
+      others.add(group.first.withStatus(minStatus));
     }
 
     final list = others
@@ -1009,33 +1028,8 @@ class ChatProvider extends ChangeNotifier {
       return false;
     }
 
-    final now = DateTime.now().toUtc().toIso8601String();
-    final ttlSec = _ttlPeriodSeconds(_ttlPeriod);
-
-    final msg = Message(
-      id: mediaId.toString(),
-      text: '',
-      plainText: '',
-      sender: 'Вы',
-      time: now,
-      isOwn: true,
-      score: 0,
-      weight: 0.5,
-      archived: false,
-      channel: _activeChannel,
-      ttlPeriodSeconds: ttlSec,
-      ttlMode: _ttlMode,
-      expiresAt: (ttlSec > 0 && _ttlMode == 'hard')
-          ? DateTime.now().add(Duration(seconds: ttlSec))
-          : null,
-      recipient: _currentNodeIp,
-      mediaType: 'file',
-      mediaId: mediaId.toString(),
-      fileName: fileName,
-      fileSize: fileSize,
-    );
-
-    _addMessage(msg);
+    // Локальное сообщение НЕ создаём — UI покажет сгруппированные чанки
+    // (mediaType=file, chunkTotal>0) как одно сообщение «📎 file.pdf».
 
     if (_currentNodeIp.isNotEmpty) {
       _peerSeenController.add(_currentNodeIp);
