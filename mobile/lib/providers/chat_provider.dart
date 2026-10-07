@@ -1226,7 +1226,8 @@ class ChatProvider extends ChangeNotifier {
       }
     }
 
-    LogService.log('ADD id=${msg.id} len=${msg.id.length} text="${msg.text}" sender=${msg.sender}');
+    final preview = msg.text.length > 40 ? '${msg.text.substring(0, 40)}…' : msg.text;
+    LogService.log('ADD id=${msg.id} text="${preview}" sender=${msg.sender}');
 
     // [READ] отправляется при открытии чата (setChatOpen).
     // Если чат с этим sender открыт — отправим сразу.

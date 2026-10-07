@@ -201,6 +201,10 @@ type Node struct {
 
 	// saveStateScheduled — защита от частых saveState (throttle 5 сек).
 	saveStateScheduled bool
+
+	// sendSem — глобальный семафор исходящих stream'ов (10 одновременно).
+	// Защита от перегруза libp2p при flushPending / SendFile.
+	sendSem chan struct{}
 }
 
 // NewNode — создаёт новый узел
@@ -226,6 +230,7 @@ func NewNode(cfg Config) *Node {
 		announcedPeers:          make(map[string]announcedPeer),
 		tempContacts:            make(map[string]Contact),
 		myReadEnabled:           true,
+		sendSem:                 make(chan struct{}, 10),
 	}
 }
 
@@ -900,7 +905,11 @@ func (n *Node) sendToRecipient(msg Message, data []byte) bool {
 
 func (n *Node) sendReplicaToPeer(targetID peer.ID, data []byte) {
 	randomDelay(10, 30)
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	// Глобальный семафор — не более 10 одновременных stream'ов.
+	n.sendSem <- struct{}{}
+	defer func() { <-n.sendSem }()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	s, err := n.host.NewStream(ctx, targetID, protocolID)
 	if err != nil {
@@ -909,7 +918,6 @@ func (n *Node) sendReplicaToPeer(targetID peer.ID, data []byte) {
 	}
 	defer s.Close()
 	fmt.Fprintf(s, "%s%s\n", REPLICA_PREFIX, string(data))
-	log.Printf("[REPLICA] sent to %s", targetID)
 }
 
 // sendServiceViaBootstrap — отправка сервисного сообщения через bootstrap (relay).
