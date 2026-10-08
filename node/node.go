@@ -887,19 +887,70 @@ func (n *Node) sendToRecipient(msg Message, data []byte) bool {
 		return false
 	}
 
-	// Network().Peers() — источник истины (libp2p сам убирает мёртвых).
-	// isPeerDead не используем: PING-timeout может быть ложным.
-	for _, p := range n.host.Network().Peers() {
-		if p == targetID {
-			go n.sendReplicaToPeer(targetID, data)
-			return true
-		}
+	// Уровень 1: isPeerDead — предфильтр. PING пометил мёртвым —
+	// не тратим 3 сек на direct, сразу fallback.
+	// Не барьер: если peer ожил, но PING ещё не прошёл —
+	// fallback тоже доставит. Оптимизация, не блокировка.
+	if n.isPeerDead(msg.Recipient) {
+		log.Printf("[REPLICA] peer %s marked dead by PING, skip direct, fallback", msg.Recipient)
+		return n.fallbackSend(msg.Recipient, data)
 	}
 
-	// Fallback для relay: если recipient не в Peers(), но есть в announcedPeers —
+	// Уровень 2: если peer в Peers() — tryDirectSend (3 сек) через горутину.
+	// Не блокируем sendToRecipient.
+	inPeers := false
+	for _, p := range n.host.Network().Peers() {
+		if p == targetID {
+			inPeers = true
+			break
+		}
+	}
+	if inPeers {
+		go n.sendWithFallback(targetID, data, msg.Recipient)
+		return true
+	}
+
+	// Уровень 3: не в Peers() — сразу fallback.
+	return n.fallbackSend(msg.Recipient, data)
+}
+
+// tryDirectSend — синхронная попытка прямого stream с коротким timeout.
+// Возвращает true, если stream открылся и данные записаны.
+// Используется внутри sendWithFallback (горутина).
+func (n *Node) tryDirectSend(targetID peer.ID, data []byte, timeout time.Duration) bool {
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	s, err := n.host.NewStream(ctx, targetID, protocolID)
+	if err != nil {
+		return false
+	}
+	defer s.Close()
+	if _, err := fmt.Fprintf(s, "%s%s\n", REPLICA_PREFIX, string(data)); err != nil {
+		return false
+	}
+	return true
+}
+
+// sendWithFallback — синхронная (вызывается из горутины).
+// Сначала tryDirectSend (3 сек). При провале — fallbackSend.
+func (n *Node) sendWithFallback(targetID peer.ID, data []byte, recipient string) {
+	if n.tryDirectSend(targetID, data, 3*time.Second) {
+		return
+	}
+	log.Printf("[REPLICA] direct send to %s failed (phantom circuit?), fallback", targetID)
+	n.fallbackSend(recipient, data)
+}
+
+// fallbackSend — синхронная. Логика fallback:
+//   - relay → announcedPeers;
+//   - клиент → bootstrap.
+//
+// Возвращает true, если удалось отправить хотя бы одному адресату.
+func (n *Node) fallbackSend(recipient string, data []byte) bool {
+	// Fallback для relay: если recipient в announcedPeers —
 	// подключаемся к нему напрямую и отправляем.
 	if n.isRelay {
-		if addrs, ok := n.lookupPeer(msg.Recipient); ok && len(addrs) > 0 {
+		if addrs, ok := n.lookupPeer(recipient); ok && len(addrs) > 0 {
 			go func(pid string, addrList []string, payload []byte) {
 				for _, a := range addrList {
 					pi, err := peer.AddrInfoFromString(a)
@@ -918,10 +969,10 @@ func (n *Node) sendToRecipient(msg Message, data []byte) bool {
 					n.sendReplicaToPeer(pi.ID, payload)
 					return
 				}
-			}(msg.Recipient, addrs, data)
+			}(recipient, addrs, data)
 			return true
 		}
-		log.Printf("[STATUS] relay: recipient not found in announcedPeers: %s", msg.Recipient)
+		log.Printf("[STATUS] relay: recipient not found in announcedPeers: %s", recipient)
 		return false
 	}
 
@@ -939,7 +990,7 @@ func (n *Node) sendToRecipient(msg Message, data []byte) bool {
 		return true
 	}
 
-	log.Printf("[STATUS] recipient not found: %s", msg.Recipient)
+	log.Printf("[STATUS] recipient not found: %s", recipient)
 	return false
 }
 
@@ -3437,21 +3488,10 @@ func (n *Node) sendConfirmation(msgType MessageType, ref, recipient string) erro
 		return err
 	}
 
-	// Пытаемся напрямую — если peerstore знает рабочий адрес.
-	targetID, err := peer.Decode(recipient)
-	if err == nil {
-		for _, p := range n.host.Network().Peers() {
-			if p == targetID {
-				go n.sendReplicaToPeer(targetID, data)
-				log.Printf("[CONFIRM] direct %s ref=%s to %s", msgTypeString(msgType), ref, recipient)
-				return nil
-			}
-		}
-	}
-
-	// Fallback — через relay (bootstrap).
+	// Один путь — sendToRecipient (tryDirectSend + fallback).
+	// Дублирование убрано: sendToRecipient сам делает direct и fallback.
 	if n.sendToRecipient(msg, data) {
-		log.Printf("[CONFIRM] relay %s ref=%s to %s", msgTypeString(msgType), ref, recipient)
+		log.Printf("[CONFIRM] %s ref=%s to %s (via sendToRecipient)", msgTypeString(msgType), ref, recipient)
 		return nil
 	}
 	return fmt.Errorf("no route for confirmation")
