@@ -861,6 +861,7 @@ class _ChatScreenState extends State<ChatScreen> {
                             senderName: msg.isOwn
                                 ? null
                                 : provider.nameFor(msg.sender),
+                            progressFor: provider.fileProgress,
                             onLike: () => provider.sendFeedback(msg.id, 1),
                             onDislike: () => provider.sendFeedback(msg.id, -1),
                           ),

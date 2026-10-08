@@ -15,6 +15,13 @@ class MediaStorage {
   static Directory? _chunksDir;
   static Directory? _filesDir;
 
+  /// Кэш: mediaId → количество сохранённых чанков.
+  /// Инкрементируется в saveChunk. Сбрасывается при init.
+  static final Map<String, int> _chunkCounts = {};
+
+  /// Количество сохранённых чанков для mediaId (из кэша).
+  static int chunksCount(String mediaId) => _chunkCounts[mediaId] ?? 0;
+
   /// Инициализация. Вызывается один раз при старте приложения.
   static Future<void> init() async {
     final appDir = await getApplicationDocumentsDirectory();
@@ -27,7 +34,32 @@ class MediaStorage {
     if (!await _filesDir!.exists()) {
       await _filesDir!.create(recursive: true);
     }
+    _chunkCounts.clear();
     LogService.log('MEDIA: init done');
+  }
+
+  /// Пересчитывает счётчик чанков для mediaId с диска.
+  /// Вызывается лениво — при первом обращении, если кэш пуст.
+  static Future<int> recountChunks(String mediaId) async {
+    try {
+      final dir = Directory('${_chunksRoot.path}/$mediaId');
+      if (!await dir.exists()) {
+        // Возможно, файл уже собран — тогда все чанки были.
+        final assembled = File('${_filesRoot.path}/$mediaId.bin');
+        if (await assembled.exists()) {
+          return -1; // маркер «собран»
+        }
+        return 0;
+      }
+      int count = 0;
+      await for (final e in dir.list()) {
+        if (e is File && e.path.endsWith('.bin')) count++;
+      }
+      _chunkCounts[mediaId] = count;
+      return count;
+    } catch (_) {
+      return 0;
+    }
   }
 
   static Directory get _chunksRoot {
@@ -73,7 +105,11 @@ class MediaStorage {
 
       final bytes = base64Decode(base64Data);
       final chunkFile = File('${dir.path}/chunk_$chunkIndex.bin');
+      final existed = await chunkFile.exists();
       await chunkFile.writeAsBytes(bytes);
+      if (!existed) {
+        _chunkCounts[mediaId] = (_chunkCounts[mediaId] ?? 0) + 1;
+      }
       LogService.log('MEDIA: saved chunk $chunkIndex/$chunkTotal of $mediaId (${bytes.length} B)');
       return true;
     } catch (e) {
@@ -121,6 +157,7 @@ class MediaStorage {
         }
       } catch (_) {}
 
+      _chunkCounts.remove(mediaId);
       LogService.log('MEDIA: assembled $mediaId → $outPath');
       return outPath;
     } catch (e) {

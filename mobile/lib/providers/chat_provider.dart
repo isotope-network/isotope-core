@@ -1371,6 +1371,46 @@ class ChatProvider extends ChangeNotifier {
     }
     LogService.log('MEDIA: file ready $path');
     _safeNotify();
+
+    // Файл собран — если чат открыт, отправляем [READ] по последнему чанку.
+    if (_currentOpenPeerID != null && _currentOpenPeerID!.isNotEmpty) {
+      final all = _messagesMap.values
+          .where((m) => m.mediaId == msg.mediaId && m.chunkTotal > 0)
+          .toList();
+      if (all.isNotEmpty) {
+        all.sort((a, b) => a.chunkIndex.compareTo(b.chunkIndex));
+        final last = all.last;
+        if (last.sender == _currentOpenPeerID && !last.readLocally) {
+          _sendReadFor(last);
+        }
+      }
+    }
+  }
+
+  /// Прогресс передачи файла (0-100). Целое.
+  /// Отправитель: по доставленным чанкам (status >= 2).
+  /// Получатель: по числу сохранённых чанков на диске.
+  int fileProgress(String mediaId) {
+    if (mediaId.isEmpty) return 0;
+    final chunks = _messagesMap.values
+        .where((m) => m.mediaId == mediaId && m.chunkTotal > 0)
+        .toList();
+    if (chunks.isEmpty) return 0;
+    final total = chunks.first.chunkTotal;
+    if (total <= 0) return 0;
+
+    final isOwn = chunks.first.isOwn;
+    int ready = 0;
+    if (isOwn) {
+      for (final c in chunks) {
+        final s = _messageStatuses[c.id] ?? c.messageStatus ?? 0;
+        if (s >= 2) ready++;
+      }
+    } else {
+      ready = MediaStorage.chunksCount(mediaId);
+      if (ready < 0) return 100; // маркер «собран»
+    }
+    return ((ready / total) * 100).clamp(0, 100).round();
   }
 
   /// Отправляет [READ] для одного сообщения (если ещё не отправляли).

@@ -18,6 +18,8 @@ class MessageBubble extends StatelessWidget {
   /// Отображаемое имя отправителя (для входящих).
   /// Пусто — используется message.sender (PeerID).
   final String? senderName;
+  /// Прогресс передачи файла (0-100). Для file-сообщений.
+  final int Function(String mediaId)? progressFor;
 
   const MessageBubble({
     super.key,
@@ -25,7 +27,13 @@ class MessageBubble extends StatelessWidget {
     this.onLike,
     this.onDislike,
     this.senderName,
+    this.progressFor,
   });
+
+  int _progressFor(String mediaId) {
+    if (progressFor == null) return 0;
+    return progressFor!(mediaId);
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -92,7 +100,10 @@ class MessageBubble extends StatelessWidget {
                     if (message.isVoice)
                       _VoicePlayer(message: message)
                     else if (message.isFile)
-                      _FileRow(message: message)
+                      _FileRow(
+                        message: message,
+                        progress: _progressFor(message.mediaId),
+                      )
                     else if (message.isPhoto)
                       _PhotoView(message: message)
                     else
@@ -333,12 +344,16 @@ class _PhotoFullscreen extends StatelessWidget {
   }
 }
 
-/// Отображение файла: иконка + имя + размер + кнопка «Открыть».
-/// Пока файл не собран — «Ожидание…».
+/// Отображение файла: иконка + имя + размер + прогресс/кнопка «Открыть».
+/// Пока файл не собран:
+///   - получатель: «Получение N%» (по числу чанков на диске).
+///   - отправитель: «Отправка N%» (по доставленным чанкам).
+/// После сборки/доставки: «Открыть» / «Отправлено».
 class _FileRow extends StatelessWidget {
   final Message message;
+  final int progress;
 
-  const _FileRow({required this.message});
+  const _FileRow({required this.message, this.progress = 0});
 
   String _fmtSize(int bytes) {
     if (bytes < 1024) return '$bytes Б';
@@ -401,14 +416,16 @@ class _FileRow extends StatelessWidget {
                     ),
                   )
                 else if (message.isOwn)
-                  const Text(
-                    'Отправлено',
-                    style: TextStyle(fontSize: 12, color: Colors.black54),
+                  Text(
+                    progress > 0 && progress < 100
+                        ? 'Отправка $progress%'
+                        : 'Отправлено',
+                    style: const TextStyle(fontSize: 12, color: Colors.black54),
                   )
                 else
-                  const Text(
-                    'Ожидание…',
-                    style: TextStyle(fontSize: 12, color: Colors.black54),
+                  Text(
+                    progress > 0 ? 'Получение $progress%' : 'Ожидание…',
+                    style: const TextStyle(fontSize: 12, color: Colors.black54),
                   ),
               ],
             ),
