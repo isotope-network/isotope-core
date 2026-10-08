@@ -1,3 +1,4 @@
+// node/state.go
 package core
 
 import (
@@ -97,12 +98,18 @@ func (n *Node) saveState() error {
 	}
 
 	// Не сохраняем истёкшие — они не должны возродиться после перезапуска.
+	// Файловые чанки: не пишем Text/PlainText (base64) — только метаданные.
+	// Иначе state-файл пухнет на десятки МБ (440 чанков × ~170 КБ).
 	now := time.Now()
 	allMsgs := n.memory.GetAll()
 	aliveMsgs := make([]Message, 0, len(allMsgs))
 	for _, m := range allMsgs {
 		if !m.ExpiresAt.IsZero() && now.After(m.ExpiresAt) {
 			continue
+		}
+		if m.MediaType == "file" && m.ChunkTotal > 0 {
+			m.Text = ""
+			m.PlainText = ""
 		}
 		aliveMsgs = append(aliveMsgs, m)
 	}

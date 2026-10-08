@@ -130,6 +130,30 @@ class LibP2PService {
     }
   }
 
+  /// Отправляет фото, читая файл с диска по пути.
+  /// Go сам читает файл — base64 через MethodChannel не идёт (OOM устранён).
+  /// Путь — внутри app dir (file_picker / image_picker дают такой путь).
+  static Future<Map<String, dynamic>> sendPhotoByPath({
+    required String peerID,
+    required String filePath,
+    required String fileName,
+    String period = 'never',
+    String mode = '',
+  }) async {
+    try {
+      final response = await _channel.invokeMethod<String>('sendPhotoByPath', {
+        'peerID': peerID,
+        'filePath': filePath,
+        'fileName': fileName,
+        'period': period,
+        'mode': mode,
+      });
+      return _safeDecode(response);
+    } on PlatformException catch (e) {
+      return {'error': e.message ?? 'platform_error', 'operation': 'send_photo_by_path'};
+    }
+  }
+
   /// Отправляет файл конкретному пиру (E2E).
   /// fileBase64 — base64 исходного файла. fileSize — размер в байтах.
   /// Go режет на чанки по 64 КБ.
@@ -154,6 +178,31 @@ class LibP2PService {
       return _safeDecode(response);
     } on PlatformException catch (e) {
       return {'error': e.message ?? 'platform_error', 'operation': 'send_file'};
+    }
+  }
+
+  /// Отправляет файл, читая его с диска по пути.
+  /// Go сам режет на чанки по 64 КБ, шифрует, отправляет.
+  /// Base64 через MethodChannel не идёт (OOM устранён).
+  /// Возвращает {"status":"ok","id":"<MediaID>"}.
+  static Future<Map<String, dynamic>> sendFileByPath({
+    required String peerID,
+    required String filePath,
+    required String fileName,
+    String period = 'never',
+    String mode = '',
+  }) async {
+    try {
+      final response = await _channel.invokeMethod<String>('sendFileByPath', {
+        'peerID': peerID,
+        'filePath': filePath,
+        'fileName': fileName,
+        'period': period,
+        'mode': mode,
+      });
+      return _safeDecode(response);
+    } on PlatformException catch (e) {
+      return {'error': e.message ?? 'platform_error', 'operation': 'send_file_by_path'};
     }
   }
 

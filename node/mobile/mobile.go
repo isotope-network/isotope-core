@@ -327,6 +327,33 @@ func SendFile(peerID string, fileBase64 string, fileName string, fileSize int64,
 	return fmt.Sprintf(`{"status":"ok","id":"%s"}`, mediaID)
 }
 
+// SendFileByPath — отправляет файл, читая его с диска по пути.
+// filePath — внутри app dir. Go сам режет на чанки по 64 КБ.
+// Base64 через MethodChannel не проходит — OOM устранён.
+// Возвращает {"status":"ok","id":"<MediaID>"}.
+func SendFileByPath(peerID, filePath, fileName, period, mode string) string {
+	nodeMu.Lock()
+	defer nodeMu.Unlock()
+
+	if node == nil {
+		return errorJSON("node not started")
+	}
+	if peerID == "" {
+		return errorJSON("peerID is required")
+	}
+	if filePath == "" {
+		return errorJSON("filePath is required")
+	}
+
+	mediaID, err := node.SendFileByPath(peerID, filePath, fileName, period, mode)
+	if err != nil {
+		return errorJSON(err.Error())
+	}
+
+	addLog("[FILE] sent (by path) to %s (mediaID=%s, %s)", peerID, mediaID, fileName)
+	return fmt.Sprintf(`{"status":"ok","id":"%s"}`, mediaID)
+}
+
 // SendPhoto — отправляет фото конкретному пиру (E2E).
 // photoBase64 — base64 JPEG (сжатое).
 // period: "10s" | "30s" | "1m" | ... | "never".
@@ -351,6 +378,32 @@ func SendPhoto(peerID string, photoBase64 string, period string, mode string) st
 	}
 
 	addLog("[MEDIA] photo sent to %s (id=%s)", peerID, id)
+	return fmt.Sprintf(`{"status":"ok","id":"%s"}`, id)
+}
+
+// SendPhotoByPath — отправляет фото, читая файл с диска по пути.
+// filePath — внутри app dir (Dart передаёт путь из image_picker).
+// Base64 через MethodChannel не проходит — OOM устранён.
+func SendPhotoByPath(peerID, filePath, fileName, period, mode string) string {
+	nodeMu.Lock()
+	defer nodeMu.Unlock()
+
+	if node == nil {
+		return errorJSON("node not started")
+	}
+	if peerID == "" {
+		return errorJSON("peerID is required")
+	}
+	if filePath == "" {
+		return errorJSON("filePath is required")
+	}
+
+	id, err := node.SendPhotoByPath(peerID, filePath, fileName, period, mode)
+	if err != nil {
+		return errorJSON(err.Error())
+	}
+
+	addLog("[MEDIA] photo sent (by path) to %s (id=%s)", peerID, id)
 	return fmt.Sprintf(`{"status":"ok","id":"%s"}`, id)
 }
 

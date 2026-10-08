@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"os"
 	"sync"
 	"time"
 )
@@ -101,6 +102,147 @@ func (n *Node) SendVoice(peerID string, mediaData string, duration int, ttlPerio
 // photoBase64 — base64 JPEG. duration = 0.
 func (n *Node) SendPhoto(peerID string, photoBase64 string, ttlPeriod, ttlMode string) (string, error) {
 	return n.sendMedia(peerID, "photo", photoBase64, 0, ttlPeriod, ttlMode)
+}
+
+// SendPhotoByPath — отправляет фото, читая файл с диска по пути.
+// Путь — внутри app dir (Dart передаёт путь из image_picker).
+// Возвращает MediaID.
+func (n *Node) SendPhotoByPath(peerID, filePath, fileName string, ttlPeriod, ttlMode string) (string, error) {
+	if filePath == "" {
+		return "", fmt.Errorf("filePath is required")
+	}
+	raw, err := os.ReadFile(filePath)
+	if err != nil {
+		return "", fmt.Errorf("read file failed: %w", err)
+	}
+	if len(raw) == 0 {
+		return "", fmt.Errorf("empty file")
+	}
+	photoB64 := base64.StdEncoding.EncodeToString(raw)
+	return n.sendMedia(peerID, "photo", photoB64, 0, ttlPeriod, ttlMode)
+}
+
+// SendFileByPath — отправляет файл, читая его с диска по пути.
+// Путь — внутри app dir. Go сам режет на чанки по 64 КБ,
+// шифрует каждый и отправляет.
+// Чанки в memory НЕ остаются: только метаданные (MediaID, ChunkIndex, ChunkTotal).
+// Base64 через MethodChannel не проходит — OOM устранён.
+// Возвращает MediaID.
+func (n *Node) SendFileByPath(peerID, filePath, fileName string, ttlPeriod, ttlMode string) (string, error) {
+	if n.host == nil {
+		return "", fmt.Errorf("node not started")
+	}
+	if peerID == "" {
+		return "", fmt.Errorf("peerID is required")
+	}
+	if filePath == "" {
+		return "", fmt.Errorf("filePath is required")
+	}
+
+	raw, err := os.ReadFile(filePath)
+	if err != nil {
+		return "", fmt.Errorf("read file failed: %w", err)
+	}
+	if len(raw) == 0 {
+		return "", fmt.Errorf("empty file")
+	}
+
+	fileSize := int64(len(raw))
+	const chunkSize = 64 * 1024
+	chunkTotal := (len(raw) + chunkSize - 1) / chunkSize
+
+	mediaID := generateMsgID(fmt.Sprintf("file:%s:%s:%d", peerID, fileName, time.Now().UnixNano()))
+
+	ttlSeconds := parsePeriod(ttlPeriod)
+	var expiresAt time.Time
+	if ttlSeconds > 0 && ttlMode == "hard" {
+		expiresAt = time.Now().Add(time.Duration(ttlSeconds) * time.Second)
+	}
+
+	readEnabled := n.myReadEnabled
+	myID := n.host.ID().String()
+
+	const maxParallel = 5
+	sem := make(chan struct{}, maxParallel)
+	var wg sync.WaitGroup
+
+	for i := 0; i < chunkTotal; i++ {
+		wg.Add(1)
+		sem <- struct{}{}
+		go func(idx int) {
+			defer wg.Done()
+			defer func() { <-sem }()
+
+			start := idx * chunkSize
+			end := start + chunkSize
+			if end > len(raw) {
+				end = len(raw)
+			}
+			chunkRaw := raw[start:end]
+			chunkB64 := base64.StdEncoding.EncodeToString(chunkRaw)
+
+			encrypted, err := n.encryptForRecipient(peerID, chunkB64)
+			if err != nil {
+				log.Printf("[FILE] encrypt chunk %d failed: %v", idx, err)
+				return
+			}
+
+			id := generateMsgID(fmt.Sprintf("file:%s:%d:%d", mediaID, idx, time.Now().UnixNano()))
+			msg := Message{
+				ID:               id,
+				Text:             encrypted,
+				PlainText:        chunkB64,
+				Sender:           myID,
+				Recipient:        peerID,
+				Version:          MESSAGE_VERSION_E2E,
+				Type:             TypeMessage,
+				MediaType:        "file",
+				MediaID:          mediaID,
+				ChunkIndex:       idx,
+				ChunkTotal:       chunkTotal,
+				FileName:         fileName,
+				FileSize:         fileSize,
+				TtlPeriodSeconds: ttlSeconds,
+				TtlMode:          ttlMode,
+				ReadEnabled:      &readEnabled,
+				Time:             time.Now().UTC().Format("2006-01-02T15:04:05"),
+				IsOwn:            true,
+				Weight:           0.5,
+				Priority:         0,
+				Mode:             0,
+				Score:            0,
+				ExpiresAt:        expiresAt,
+			}
+			// Отправка: replicateMessage идёт с base64 (нужен получателю).
+			n.replicateMessage(msg)
+			n.setMessageStatus(id, StatusSent)
+
+			// В memory — только метаданные (без base64).
+			// Отправителю base64 не нужен: файл у него на диске,
+			// у получателя соберётся сам. Это устраняет накопление
+			// 440 × ~170 КБ = ~75 МБ на каждый отправленный файл (OOM).
+			memMsg := msg
+			if memMsg.MediaType == "file" && memMsg.ChunkTotal > 0 {
+				memMsg.Text = ""
+				memMsg.PlainText = ""
+			}
+			if n.memory.Add(memMsg) {
+				if n.messageHook != nil {
+					// Hook отдаёт только метаданные (Text/PlainText пусты).
+					data, _ := json.Marshal(memMsg)
+					n.messageHook(string(data))
+				}
+			} else {
+				log.Printf("[FILE] memory.Add rejected chunk %d/%d of %s", idx, chunkTotal, mediaID)
+			}
+		}(i)
+	}
+	wg.Wait()
+
+	log.Printf("[FILE] sent %s (%s, %d bytes, %d chunks) to %s",
+		mediaID, fileName, fileSize, chunkTotal, peerID)
+	go n.saveState()
+	return mediaID, nil
 }
 
 // SendFile — отправляет файл. Режет на чанки по 64 КБ (сырых байтов),

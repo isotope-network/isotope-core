@@ -213,6 +213,17 @@ class MainActivity : FlutterActivity() {
                             runOnUiThread { result.success(response) }
                         }.start()
                     }
+                    "sendFileByPath" -> {
+                        val peerID = call.argument<String>("peerID") ?: ""
+                        val filePath = call.argument<String>("filePath") ?: ""
+                        val fileName = call.argument<String>("fileName") ?: ""
+                        val period = call.argument<String>("period") ?: "forever"
+                        val mode = call.argument<String>("mode") ?: ""
+                        Thread {
+                            val response = Mobile.sendFileByPath(peerID, filePath, fileName, period, mode)
+                            runOnUiThread { result.success(response) }
+                        }.start()
+                    }
                     "sendPhoto" -> {
                         val peerID = call.argument<String>("peerID") ?: ""
                         val photoBase64 = call.argument<String>("photoBase64") ?: ""
@@ -223,9 +234,28 @@ class MainActivity : FlutterActivity() {
                             runOnUiThread { result.success(response) }
                         }.start()
                     }
+                    "sendPhotoByPath" -> {
+                        val peerID = call.argument<String>("peerID") ?: ""
+                        val filePath = call.argument<String>("filePath") ?: ""
+                        val fileName = call.argument<String>("fileName") ?: ""
+                        val period = call.argument<String>("period") ?: "forever"
+                        val mode = call.argument<String>("mode") ?: ""
+                        Thread {
+                            val response = Mobile.sendPhotoByPath(peerID, filePath, fileName, period, mode)
+                            runOnUiThread { result.success(response) }
+                        }.start()
+                    }
                     "getMessages" -> {
                         Thread {
                             val response = Mobile.getMessages()
+                            runOnUiThread { result.success(response) }
+                        }.start()
+                    }
+                    "getChunk" -> {
+                        val mediaID = call.argument<String>("mediaID") ?: ""
+                        val chunkIndex = call.argument<Int>("chunkIndex") ?: 0
+                        Thread {
+                            val response = Mobile.getChunk(mediaID, chunkIndex.toLong())
                             runOnUiThread { result.success(response) }
                         }.start()
                     }

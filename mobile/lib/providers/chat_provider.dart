@@ -999,22 +999,26 @@ class ChatProvider extends ChangeNotifier {
   }
 
   /// Отправляет фото текущему контакту (E2E). Один чанк.
-  /// photoBase64 — base64 JPEG (сжатое).
-  Future<bool> sendPhoto({required String photoBase64}) async {
+  /// Файл читается Go с диска по пути — base64 через MethodChannel не идёт.
+  Future<bool> sendPhotoByPath({
+    required String filePath,
+    required String fileName,
+  }) async {
     if (_currentNodeIp.isEmpty || !_currentNodeIp.startsWith('Qm')) {
       _error = 'Нет получателя — откройте чат';
       _safeNotify();
       return false;
     }
-    if (photoBase64.isEmpty) {
-      _error = 'Пустое фото';
+    if (filePath.isEmpty) {
+      _error = 'Пустой путь к фото';
       _safeNotify();
       return false;
     }
 
-    final response = await LibP2PService.sendPhoto(
+    final response = await LibP2PService.sendPhotoByPath(
       peerID: _currentNodeIp,
-      photoBase64: photoBase64,
+      filePath: filePath,
+      fileName: fileName,
       period: _ttlPeriod,
       mode: _ttlMode,
     );
@@ -1038,10 +1042,12 @@ class ChatProvider extends ChangeNotifier {
     final now = DateTime.now().toUtc().toIso8601String();
     final ttlSec = _ttlPeriodSeconds(_ttlPeriod);
 
+    // Локальное сообщение — без base64. Для UI — метаданные.
+    // Отображается из mediaType='photo'. Содержимое — с диска.
     final msg = Message(
       id: msgId.toString(),
-      text: photoBase64,
-      plainText: photoBase64,
+      text: '',
+      plainText: '',
       sender: 'Вы',
       time: now,
       isOwn: true,
@@ -1071,29 +1077,28 @@ class ChatProvider extends ChangeNotifier {
   }
 
   /// Отправляет файл текущему контакту (E2E).
-  /// Go режет на чанки по 64 КБ, шифрует каждый, отправляет.
-  /// Локально храним одно сообщение (без mediaData) — метаданные.
-  Future<bool> sendFile({
-    required String fileBase64,
+  /// Go читает файл с диска по пути, режет на чанки по 64 КБ,
+  /// шифрует каждый, отправляет.
+  /// Base64 через MethodChannel не проходит — OOM устранён.
+  Future<bool> sendFileByPath({
+    required String filePath,
     required String fileName,
-    required int fileSize,
   }) async {
     if (_currentNodeIp.isEmpty || !_currentNodeIp.startsWith('Qm')) {
       _error = 'Нет получателя — откройте чат';
       _safeNotify();
       return false;
     }
-    if (fileBase64.isEmpty) {
-      _error = 'Пустой файл';
+    if (filePath.isEmpty) {
+      _error = 'Пустой путь к файлу';
       _safeNotify();
       return false;
     }
 
-    final response = await LibP2PService.sendFile(
+    final response = await LibP2PService.sendFileByPath(
       peerID: _currentNodeIp,
-      fileBase64: fileBase64,
+      filePath: filePath,
       fileName: fileName,
-      fileSize: fileSize,
       period: _ttlPeriod,
       mode: _ttlMode,
     );

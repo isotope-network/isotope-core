@@ -409,29 +409,30 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   /// Выбор файла и отправка.
+  /// Передаём путь к файлу — Go сам читает с диска.
+  /// Base64 через MethodChannel не проходит (OOM устранён).
   Future<void> _pickAndSendFile() async {
     try {
-      final result = await FilePicker.platform.pickFiles(withData: true);
+      final result = await FilePicker.platform.pickFiles(withData: false);
       if (result == null || result.files.isEmpty) return;
       final f = result.files.first;
-      final bytes = f.bytes;
-      if (bytes == null || bytes.isEmpty) {
+      final path = f.path;
+      if (path == null || path.isEmpty) {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Не удалось прочитать файл')),
+            const SnackBar(content: Text('Не удалось получить путь к файлу')),
           );
         }
         return;
       }
-      final confirmed = await _confirmLargeFile(bytes.length);
+      final size = f.size;
+      final confirmed = await _confirmLargeFile(size);
       if (!confirmed) return;
-      final b64 = base64Encode(bytes);
       final provider = _provider;
       if (provider == null) return;
-      final ok = await provider.sendFile(
-        fileBase64: b64,
+      final ok = await provider.sendFileByPath(
+        filePath: path,
         fileName: f.name,
-        fileSize: bytes.length,
       );
       if (!ok && mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -450,6 +451,7 @@ class _ChatScreenState extends State<ChatScreen> {
 
   /// Фото с камеры и отправка (MediaType=photo, один чанк).
   /// Сжатие — image_picker (1600px, JPEG 80).
+  /// Передаём путь — Go сам читает с диска.
   Future<void> _pickAndSendPhoto() async {
     try {
       final picker = ImagePicker();
@@ -460,12 +462,14 @@ class _ChatScreenState extends State<ChatScreen> {
         imageQuality: 80,
       );
       if (file == null) return;
-      final bytes = await file.readAsBytes();
-      if (bytes.isEmpty) return;
-      final b64 = base64Encode(bytes);
+      final path = file.path;
+      if (path.isEmpty) return;
       final provider = _provider;
       if (provider == null) return;
-      final ok = await provider.sendPhoto(photoBase64: b64);
+      final ok = await provider.sendPhotoByPath(
+        filePath: path,
+        fileName: file.name,
+      );
       if (!ok && mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text(provider.error ?? 'Ошибка отправки фото')),
