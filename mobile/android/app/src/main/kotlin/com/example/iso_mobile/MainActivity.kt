@@ -698,6 +698,15 @@ class MainActivity : FlutterActivity() {
             val type = map.optInt("type", 0)
             if (isOwn || type != 0) return
 
+            // Файловые чанки — не показываем в шторке.
+            // Уведомление только для ПОСЛЕДНЕГО чанка файла (одно на файл).
+            val mediaType = map.optString("media_type", "")
+            val chunkTotal = map.optInt("chunk_total", 0)
+            val chunkIndex = map.optInt("chunk_index", 0)
+            if (mediaType == "file" && chunkTotal > 0) {
+                if (chunkIndex != chunkTotal - 1) return
+            }
+
             val sender = map.optString("sender", "")
             if (sender.isEmpty()) return
 
@@ -716,12 +725,16 @@ class MainActivity : FlutterActivity() {
                 "Новое сообщение"
             } else if (ttlMode.isNotEmpty()) {
                 "Исчезающее сообщение"
+            } else if (mediaType == "voice") {
+                "🎤 Голосовое сообщение"
+            } else if (mediaType == "photo") {
+                "📷 Фото"
+            } else if (mediaType == "file") {
+                val fileName = map.optString("file_name", "Файл")
+                val short = if (fileName.length > 40) fileName.substring(0, 40) + "…" else fileName
+                "📎 $short"
             } else {
-                val text = if (map.optString("plainText", "").isNotEmpty() && isOwn) {
-                    map.optString("plainText")
-                } else {
-                    map.optString("text", "")
-                }
+                val text = map.optString("text", "")
                 if (text.length > 50) text.substring(0, 50) + "…" else text
             }
 
