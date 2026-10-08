@@ -875,6 +875,12 @@ func (n *Node) tryReplicate(msg Message) bool {
 // ============================================================
 
 func (n *Node) sendToRecipient(msg Message, data []byte) bool {
+	myID := ""
+	if n.host != nil {
+		myID = n.host.ID().String()
+	}
+	log.Printf("[REPLICA] sendToRecipient: recipient=%s me=%s isRelay=%v sender=%s id=%s type=%d version=%d",
+		msg.Recipient, myID, n.isRelay, msg.Sender, msg.ID, msg.Type, msg.Version)
 	targetID, err := peer.Decode(msg.Recipient)
 	if err != nil {
 		log.Printf("[REPLICA] invalid Recipient %q: %v", msg.Recipient, err)
@@ -938,6 +944,17 @@ func (n *Node) sendToRecipient(msg Message, data []byte) bool {
 }
 
 func (n *Node) sendReplicaToPeer(targetID peer.ID, data []byte) {
+	myID := ""
+	if n.host != nil {
+		myID = n.host.ID().String()
+	}
+	var msgPreview string
+	if len(data) > 200 {
+		msgPreview = string(data[:200])
+	} else {
+		msgPreview = string(data)
+	}
+	log.Printf("[REPLICA] sendReplicaToPeer target=%s me=%s data=%s", targetID, myID, msgPreview)
 	randomDelay(10, 30)
 	// Глобальный семафор — не более 10 одновременных stream'ов.
 	n.sendSem <- struct{}{}
@@ -3072,6 +3089,8 @@ func (n *Node) SendToPeer(peerID string, text string, ttlPeriod string, ttlMode 
 	if peerID == "" {
 		return "", fmt.Errorf("peerID is required")
 	}
+	log.Printf("[SEND] SendToPeer: peerID=%s me=%s text=%q ttlPeriod=%s ttlMode=%s",
+		peerID, n.host.ID().String(), truncate(text, 40), ttlPeriod, ttlMode)
 
 	encrypted, err := n.encryptForRecipient(peerID, text)
 	if err != nil {
@@ -3391,6 +3410,8 @@ func (n *Node) sendConfirmation(msgType MessageType, ref, recipient string) erro
 	if ref == "" || recipient == "" {
 		return fmt.Errorf("ref and recipient are required")
 	}
+	log.Printf("[CONFIRM] sendConfirmation: type=%s ref=%s recipient=%s me=%s",
+		msgTypeString(msgType), ref, recipient, n.host.ID().String())
 	// [READ] отправляется только если делюсь статусом прочтения.
 	// [DELIVERED] — всегда.
 	if msgType == TypeRead && !n.myReadEnabled {
