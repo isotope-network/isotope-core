@@ -845,9 +845,7 @@ func (n *Node) tryReplicate(msg Message) bool {
 		if p.String() == msg.Sender {
 			continue
 		}
-		if !n.isPeerDead(p.String()) {
-			alive = append(alive, p)
-		}
+		alive = append(alive, p)
 	}
 	if len(alive) == 0 {
 		return false
@@ -883,13 +881,45 @@ func (n *Node) sendToRecipient(msg Message, data []byte) bool {
 		return false
 	}
 
+	// Network().Peers() — источник истины (libp2p сам убирает мёртвых).
+	// isPeerDead не используем: PING-timeout может быть ложным.
 	for _, p := range n.host.Network().Peers() {
-		if p == targetID && !n.isPeerDead(p.String()) {
+		if p == targetID {
 			go n.sendReplicaToPeer(targetID, data)
 			return true
 		}
 	}
 
+	// Fallback для relay: если recipient не в Peers(), но есть в announcedPeers —
+	// подключаемся к нему напрямую и отправляем.
+	if n.isRelay {
+		if addrs, ok := n.lookupPeer(msg.Recipient); ok && len(addrs) > 0 {
+			go func(pid string, addrList []string, payload []byte) {
+				for _, a := range addrList {
+					pi, err := peer.AddrInfoFromString(a)
+					if err != nil {
+						continue
+					}
+					if pi.ID.String() != pid {
+						continue
+					}
+					ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+					if err := n.host.Connect(ctx, *pi); err != nil {
+						cancel()
+						continue
+					}
+					cancel()
+					n.sendReplicaToPeer(pi.ID, payload)
+					return
+				}
+			}(msg.Recipient, addrs, data)
+			return true
+		}
+		log.Printf("[STATUS] relay: recipient not found in announcedPeers: %s", msg.Recipient)
+		return false
+	}
+
+	// Fallback для клиента: через bootstrap.
 	bootstrapPeers := n.loadBootstrapPeers()
 	for _, addr := range bootstrapPeers {
 		pi, err := peer.AddrInfoFromString(addr)
@@ -1943,7 +1973,7 @@ func (n *Node) handlePingStream(stream network.Stream) {
 func (n *Node) pingPeers() {
 	go func() {
 		for {
-			time.Sleep(15 * time.Second)
+			time.Sleep(30 * time.Second)
 			if n.host == nil {
 				continue
 			}
@@ -2160,14 +2190,10 @@ func (n *Node) replicateMessage(msg Message) {
 
 	var alive []peer.ID
 	for _, p := range peers {
-		dead := n.isPeerDead(p.String())
-		isSender := p.String() == msg.Sender
-		if isSender {
+		if p.String() == msg.Sender {
 			continue
 		}
-		if !dead {
-			alive = append(alive, p)
-		}
+		alive = append(alive, p)
 	}
 	log.Printf("[REPLICA] alive=%d", len(alive))
 
@@ -2256,9 +2282,6 @@ func (n *Node) selectRelays(count int) []string {
 	var trusted []peer.ID
 	var fallback []peer.ID
 	for _, p := range peers {
-		if n.isPeerDead(p.String()) {
-			continue
-		}
 		weight := n.getPeerWeight(p.String())
 		if weight > 0.7 {
 			trusted = append(trusted, p)
@@ -3397,7 +3420,7 @@ func (n *Node) sendConfirmation(msgType MessageType, ref, recipient string) erro
 	targetID, err := peer.Decode(recipient)
 	if err == nil {
 		for _, p := range n.host.Network().Peers() {
-			if p == targetID && !n.isPeerDead(p.String()) {
+			if p == targetID {
 				go n.sendReplicaToPeer(targetID, data)
 				log.Printf("[CONFIRM] direct %s ref=%s to %s", msgTypeString(msgType), ref, recipient)
 				return nil
