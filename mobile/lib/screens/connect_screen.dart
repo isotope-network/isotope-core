@@ -1466,10 +1466,12 @@ class _ConnectScreenState extends State<ConnectScreen> {
         }
       }
       if (last.isVoice) {
-        return '🎤 Голосовое';
+        return '🎤 Голосовое сообщение';
       }
       if (last.isFile) {
-        return '📎 ${last.fileName.isNotEmpty ? last.fileName : "Файл"}';
+        final name = last.fileName.isNotEmpty ? last.fileName : 'Файл';
+        final short = name.length > 30 ? '${name.substring(0, 30)}...' : name;
+        return '📎 $short';
       }
       final raw = last.displayText;
       final text = raw.length > 40 ? '${raw.substring(0, 40)}...' : raw;

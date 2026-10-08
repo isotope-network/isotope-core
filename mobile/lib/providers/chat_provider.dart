@@ -1218,16 +1218,29 @@ class ChatProvider extends ChangeNotifier {
     final isFileChunk = msg.isFile && msg.chunkTotal > 0;
     if (isFileChunk) {
       LogService.log('ADD chunk ${msg.chunkIndex + 1}/${msg.chunkTotal} mediaId=${msg.mediaId}');
+      // Обновляем lastMessageByPeer по последнему чанку (файл = одно сообщение).
+      // Ключ — peerID собеседника: свой recipient или sender.
+      if (msg.chunkIndex == msg.chunkTotal - 1) {
+        final chatPeer = msg.isOwn ? msg.recipient : msg.sender;
+        if (chatPeer.isNotEmpty && chatPeer != '🌐 Сеть') {
+          final existing = _lastMessageByPeer[chatPeer];
+          if (existing == null || msg.time.compareTo(existing.time) > 0) {
+            _lastMessageByPeer[chatPeer] = msg;
+          }
+        }
+      }
       _handleFileChunk(msg);
       _safeNotify();
       return;
     }
 
-    // Обновляем кэш последнего сообщения от пира
-    if (msg.sender != 'Вы' && msg.sender != '🌐 Сеть' && msg.sender.isNotEmpty) {
-      final existing = _lastMessageByPeer[msg.sender];
+    // Обновляем кэш последнего сообщения для чата.
+    // Ключ — peerID собеседника: свой recipient или sender.
+    final chatPeer = msg.isOwn ? msg.recipient : msg.sender;
+    if (chatPeer.isNotEmpty && chatPeer != '🌐 Сеть') {
+      final existing = _lastMessageByPeer[chatPeer];
       if (existing == null || msg.time.compareTo(existing.time) > 0) {
-        _lastMessageByPeer[msg.sender] = msg;
+        _lastMessageByPeer[chatPeer] = msg;
       }
     }
 
