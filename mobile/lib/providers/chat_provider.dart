@@ -998,6 +998,78 @@ class ChatProvider extends ChangeNotifier {
     return true;
   }
 
+  /// Отправляет фото текущему контакту (E2E). Один чанк.
+  /// photoBase64 — base64 JPEG (сжатое).
+  Future<bool> sendPhoto({required String photoBase64}) async {
+    if (_currentNodeIp.isEmpty || !_currentNodeIp.startsWith('Qm')) {
+      _error = 'Нет получателя — откройте чат';
+      _safeNotify();
+      return false;
+    }
+    if (photoBase64.isEmpty) {
+      _error = 'Пустое фото';
+      _safeNotify();
+      return false;
+    }
+
+    final response = await LibP2PService.sendPhoto(
+      peerID: _currentNodeIp,
+      photoBase64: photoBase64,
+      period: _ttlPeriod,
+      mode: _ttlMode,
+    );
+
+    if (response.containsKey('error')) {
+      _error = 'Ошибка отправки фото: ${response['error']}';
+      _safeNotify();
+      return false;
+    }
+
+    final msgId = response['id'];
+    if (msgId == null || msgId.toString().isEmpty) {
+      _error = 'Ошибка: Go-ядро не вернуло ID фото';
+      _safeNotify();
+      return false;
+    }
+
+    _ownMessageIds.add(msgId.toString());
+    await _saveOwnMessageIds();
+
+    final now = DateTime.now().toUtc().toIso8601String();
+    final ttlSec = _ttlPeriodSeconds(_ttlPeriod);
+
+    final msg = Message(
+      id: msgId.toString(),
+      text: photoBase64,
+      plainText: photoBase64,
+      sender: 'Вы',
+      time: now,
+      isOwn: true,
+      score: 0,
+      weight: 0.5,
+      archived: false,
+      channel: _activeChannel,
+      ttlPeriodSeconds: ttlSec,
+      ttlMode: _ttlMode,
+      expiresAt: (ttlSec > 0 && _ttlMode == 'hard')
+          ? DateTime.now().add(Duration(seconds: ttlSec))
+          : null,
+      recipient: _currentNodeIp,
+      mediaType: 'photo',
+    );
+
+    _addMessage(msg);
+    _messageStatuses[msg.id] = 1;
+
+    p2p?.saveOwnMessage(_currentNodeIp, msg);
+
+    if (_currentNodeIp.isNotEmpty) {
+      _peerSeenController.add(_currentNodeIp);
+    }
+
+    return true;
+  }
+
   /// Отправляет файл текущему контакту (E2E).
   /// Go режет на чанки по 64 КБ, шифрует каждый, отправляет.
   /// Локально храним одно сообщение (без mediaData) — метаданные.

@@ -421,6 +421,9 @@ class Message {
   /// Файл?
   bool get isFile => mediaType == 'file';
 
+  /// Фото?
+  bool get isPhoto => mediaType == 'photo';
+
   /// Base64-данные медиа: у своих — PlainText, у входящих — Text.
   /// Для голосовых — base64 Opus/Ogg.
   String get mediaBase64 {

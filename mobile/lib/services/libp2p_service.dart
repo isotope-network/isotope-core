@@ -109,6 +109,27 @@ class LibP2PService {
     }
   }
 
+  /// Отправляет фото конкретному пиру (E2E).
+  /// photoBase64 — base64 JPEG (сжатое).
+  static Future<Map<String, dynamic>> sendPhoto({
+    required String peerID,
+    required String photoBase64,
+    String period = 'never',
+    String mode = '',
+  }) async {
+    try {
+      final response = await _channel.invokeMethod<String>('sendPhoto', {
+        'peerID': peerID,
+        'photoBase64': photoBase64,
+        'period': period,
+        'mode': mode,
+      });
+      return _safeDecode(response);
+    } on PlatformException catch (e) {
+      return {'error': e.message ?? 'platform_error', 'operation': 'send_photo'};
+    }
+  }
+
   /// Отправляет файл конкретному пиру (E2E).
   /// fileBase64 — base64 исходного файла. fileSize — размер в байтах.
   /// Go режет на чанки по 64 КБ.

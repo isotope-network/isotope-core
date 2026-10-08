@@ -97,6 +97,12 @@ func (n *Node) SendVoice(peerID string, mediaData string, duration int, ttlPerio
 	return n.sendMedia(peerID, "voice", mediaData, duration, ttlPeriod, ttlMode)
 }
 
+// SendPhoto — отправляет фото. Один чанк (сжатое фото < 1 МБ).
+// photoBase64 — base64 JPEG. duration = 0.
+func (n *Node) SendPhoto(peerID string, photoBase64 string, ttlPeriod, ttlMode string) (string, error) {
+	return n.sendMedia(peerID, "photo", photoBase64, 0, ttlPeriod, ttlMode)
+}
+
 // SendFile — отправляет файл. Режет на чанки по 64 КБ (сырых байтов),
 // шифрует каждый чанк отдельно, отправляет как отдельный Message
 // с MediaType="file", MediaID, ChunkIndex, ChunkTotal.

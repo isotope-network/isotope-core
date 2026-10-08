@@ -298,6 +298,33 @@ func SendFile(peerID string, fileBase64 string, fileName string, fileSize int64,
 	return fmt.Sprintf(`{"status":"ok","id":"%s"}`, mediaID)
 }
 
+// SendPhoto — отправляет фото конкретному пиру (E2E).
+// photoBase64 — base64 JPEG (сжатое).
+// period: "10s" | "30s" | "1m" | ... | "never".
+// mode: "" (при never) | "after_read" | "hard".
+func SendPhoto(peerID string, photoBase64 string, period string, mode string) string {
+	nodeMu.Lock()
+	defer nodeMu.Unlock()
+
+	if node == nil {
+		return errorJSON("node not started")
+	}
+	if peerID == "" {
+		return errorJSON("peerID is required")
+	}
+	if photoBase64 == "" {
+		return errorJSON("photoBase64 is required")
+	}
+
+	id, err := node.SendPhoto(peerID, photoBase64, period, mode)
+	if err != nil {
+		return errorJSON(err.Error())
+	}
+
+	addLog("[MEDIA] photo sent to %s (id=%s)", peerID, id)
+	return fmt.Sprintf(`{"status":"ok","id":"%s"}`, id)
+}
+
 // GetPeers — возвращает список пиров
 func GetPeers() string {
 	nodeMu.Lock()

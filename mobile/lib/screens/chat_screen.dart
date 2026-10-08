@@ -448,31 +448,31 @@ class _ChatScreenState extends State<ChatScreen> {
     }
   }
 
-  /// Фото с камеры и отправка.
+  /// Фото с камеры и отправка (MediaType=photo, один чанк).
+  /// Сжатие — image_picker (1600px, JPEG 80).
   Future<void> _pickAndSendPhoto() async {
     try {
       final picker = ImagePicker();
-      final file = await picker.pickImage(source: ImageSource.camera);
+      final file = await picker.pickImage(
+        source: ImageSource.camera,
+        maxWidth: 1600,
+        maxHeight: 1600,
+        imageQuality: 80,
+      );
       if (file == null) return;
       final bytes = await file.readAsBytes();
       if (bytes.isEmpty) return;
-      final confirmed = await _confirmLargeFile(bytes.length);
-      if (!confirmed) return;
       final b64 = base64Encode(bytes);
       final provider = _provider;
       if (provider == null) return;
-      final ok = await provider.sendFile(
-        fileBase64: b64,
-        fileName: file.name,
-        fileSize: bytes.length,
-      );
+      final ok = await provider.sendPhoto(photoBase64: b64);
       if (!ok && mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text(provider.error ?? 'Ошибка отправки фото')),
         );
       }
     } catch (e) {
-      LogService.log('FILE: photo failed: $e');
+      LogService.log('PHOTO: failed: $e');
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('Ошибка фото: $e')),

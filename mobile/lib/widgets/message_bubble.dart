@@ -2,6 +2,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:just_audio/just_audio.dart';
 import 'package:path_provider/path_provider.dart';
@@ -92,6 +93,8 @@ class MessageBubble extends StatelessWidget {
                       _VoicePlayer(message: message)
                     else if (message.isFile)
                       _FileRow(message: message)
+                    else if (message.isPhoto)
+                      _PhotoView(message: message)
                     else
                       Text(
                         message.displayText,
@@ -230,6 +233,103 @@ class MessageBubble extends StatelessWidget {
       default:
         return '';
     }
+  }
+}
+
+/// Отображение фото: миниатюра + тап для полноэкранного просмотра.
+class _PhotoView extends StatelessWidget {
+  final Message message;
+
+  const _PhotoView({required this.message});
+
+  void _openFullscreen(BuildContext context) {
+    final b64 = message.mediaBase64;
+    if (b64.isEmpty) return;
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => _PhotoFullscreen(photoBase64: b64),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final b64 = message.mediaBase64;
+    if (b64.isEmpty) {
+      return const SizedBox(
+        width: 160,
+        height: 120,
+        child: Center(child: Text('Нет фото')),
+      );
+    }
+    Uint8List? bytes;
+    try {
+      bytes = base64Decode(b64);
+    } catch (_) {
+      bytes = null;
+    }
+    if (bytes == null || bytes.isEmpty) {
+      return const SizedBox(
+        width: 160,
+        height: 120,
+        child: Center(child: Text('Ошибка фото')),
+      );
+    }
+
+    return GestureDetector(
+      onTap: () => _openFullscreen(context),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(8),
+        child: Image.memory(
+          bytes,
+          width: 200,
+          height: 200,
+          fit: BoxFit.cover,
+          gaplessPlayback: true,
+        ),
+      ),
+    );
+  }
+}
+
+/// Полноэкранный просмотр фото. InteractiveViewer — zoom, pan.
+class _PhotoFullscreen extends StatelessWidget {
+  final String photoBase64;
+
+  const _PhotoFullscreen({required this.photoBase64});
+
+  @override
+  Widget build(BuildContext context) {
+    Uint8List? bytes;
+    try {
+      bytes = base64Decode(photoBase64);
+    } catch (_) {
+      bytes = null;
+    }
+    return Scaffold(
+      backgroundColor: Colors.black,
+      appBar: AppBar(
+        backgroundColor: Colors.black,
+        foregroundColor: Colors.white,
+        elevation: 0,
+      ),
+      body: Center(
+        child: bytes == null
+            ? const Text(
+                'Ошибка фото',
+                style: TextStyle(color: Colors.white),
+              )
+            : InteractiveViewer(
+                minScale: 1.0,
+                maxScale: 5.0,
+                child: Image.memory(
+                  bytes,
+                  fit: BoxFit.contain,
+                  gaplessPlayback: true,
+                ),
+              ),
+      ),
+    );
   }
 }
 

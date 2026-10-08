@@ -213,6 +213,16 @@ class MainActivity : FlutterActivity() {
                             runOnUiThread { result.success(response) }
                         }.start()
                     }
+                    "sendPhoto" -> {
+                        val peerID = call.argument<String>("peerID") ?: ""
+                        val photoBase64 = call.argument<String>("photoBase64") ?: ""
+                        val period = call.argument<String>("period") ?: "forever"
+                        val mode = call.argument<String>("mode") ?: ""
+                        Thread {
+                            val response = Mobile.sendPhoto(peerID, photoBase64, period, mode)
+                            runOnUiThread { result.success(response) }
+                        }.start()
+                    }
                     "getMessages" -> {
                         Thread {
                             val response = Mobile.getMessages()
