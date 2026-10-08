@@ -193,6 +193,29 @@ class LibP2PService {
     }
   }
 
+  /// Возвращает base64 одного чанка файла по mediaID + chunkIndex.
+  /// Используется при сборке файлов вместо пересылки всего списка
+  /// сообщений через MethodChannel (OOM при больших файлах).
+  /// Ответ: {"status":"ok","data":"<base64>"} или {"error":"..."}.
+  static Future<String?> getChunk({
+    required String mediaID,
+    required int chunkIndex,
+  }) async {
+    try {
+      final response = await _channel.invokeMethod<String>('getChunk', {
+        'mediaID': mediaID,
+        'chunkIndex': chunkIndex,
+      });
+      final decoded = _safeDecode(response);
+      if (decoded.containsKey('error')) {
+        return null;
+      }
+      return decoded['data'] as String?;
+    } on PlatformException {
+      return null;
+    }
+  }
+
   static Future<List<dynamic>> getPeers() async {
     try {
       final response = await _channel.invokeMethod<String>('getPeers');

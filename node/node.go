@@ -1477,7 +1477,14 @@ func (n *Node) handleStream(stream network.Stream) {
 						// Батч [DELIVERED] — копим refs, отправляем по таймеру/размеру.
 						n.queueDelivered(replicaMsg.Sender, replicaMsg.ID)
 						if n.messageHook != nil {
-							data, _ := json.Marshal(replicaMsg)
+							// Файловые чанки: не шлём base64 в Dart (OOM).
+							// Метаданные — в hook. base64 — через getChunk по запросу.
+							hookMsg := replicaMsg
+							if hookMsg.MediaType == "file" && hookMsg.ChunkTotal > 0 {
+								hookMsg.Text = ""
+								hookMsg.PlainText = ""
+							}
+							data, _ := json.Marshal(hookMsg)
 							n.messageHook(string(data))
 						}
 					}
@@ -2869,6 +2876,8 @@ func (n *Node) Stop() error {
 }
 
 // GetMessages — возвращает все НЕ истёкшие сообщения.
+// Для файловых чанков Text/PlainText обнуляются — чтобы base64
+// не летел через MethodChannel (OOM). base64 — через GetChunk.
 func (n *Node) GetMessages() []Message {
 	all := n.memory.GetAll()
 	now := time.Now()
@@ -2877,9 +2886,36 @@ func (n *Node) GetMessages() []Message {
 		if !m.ExpiresAt.IsZero() && now.After(m.ExpiresAt) {
 			continue
 		}
+		// Файловые чанки: не отдаём base64. Только метаданные.
+		// Оригинал в memory не трогаем — GetChunk читает оттуда.
+		if m.MediaType == "file" && m.ChunkTotal > 0 {
+			m.Text = ""
+			m.PlainText = ""
+		}
 		alive = append(alive, m)
 	}
 	return alive
+}
+
+// GetChunk — возвращает base64 одного чанка файла по mediaID + chunkIndex.
+// Используется Dart-ом, чтобы получить base64 без пересылки всего списка
+// сообщений через MethodChannel (OOM при больших файлах).
+//   - свои чанки  → PlainText (открытый base64);
+//   - чужие чанки → Text (после расшифровки).
+func (n *Node) GetChunk(mediaID string, chunkIndex int) (string, error) {
+	if mediaID == "" {
+		return "", fmt.Errorf("mediaID is required")
+	}
+	all := n.memory.GetAll()
+	for _, m := range all {
+		if m.MediaID == mediaID && m.ChunkIndex == chunkIndex {
+			if m.IsOwn {
+				return m.PlainText, nil
+			}
+			return m.Text, nil
+		}
+	}
+	return "", fmt.Errorf("chunk not found: mediaID=%s index=%d", mediaID, chunkIndex)
 }
 
 // GetPeers — возвращает список активных пиров
@@ -3162,6 +3198,11 @@ func (n *Node) SendToPeer(peerID string, text string, ttlPeriod string, ttlMode 
 // См. SendRead.
 func (n *Node) SendDelivered(ref, recipient string) error {
 	return n.sendConfirmation(TypeDelivered, ref, recipient)
+}
+
+// GetMessageChunkBase64 — обёртка над GetChunk для MethodChannel.
+func (n *Node) GetMessageChunkBase64(mediaID string, chunkIndex int) (string, error) {
+	return n.GetChunk(mediaID, chunkIndex)
 }
 
 // SendDeliveredBatch — отправляет батч подтверждений доставки.

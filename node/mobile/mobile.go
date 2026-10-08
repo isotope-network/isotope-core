@@ -186,6 +186,7 @@ func GetStatus() string {
 // GetMessages — возвращает все ОБЫЧНЫЕ сообщения (Type == 0).
 // Служебные (TypeDelivered, TypeRead, TypeContact* ) не попадают в UI.
 // Для статусов — отдельный метод GetMessageStatuses (позже, 1.5).
+// Для файловых чанков Text/PlainText обнуляются — base64 идёт через GetChunk.
 func GetMessages() string {
 	nodeMu.Lock()
 	defer nodeMu.Unlock()
@@ -203,6 +204,34 @@ func GetMessages() string {
 	}
 	data, _ := json.Marshal(filtered)
 	return string(data)
+}
+
+// GetChunk — возвращает base64 одного чанка файла по mediaID + chunkIndex.
+// Используется Dart-ом, чтобы получить base64 без пересылки всего списка
+// сообщений через MethodChannel (OOM при больших файлах).
+// Формат ответа: {"status":"ok","data":"<base64>"} или errorJSON.
+func GetChunk(mediaID string, chunkIndex int) string {
+	nodeMu.Lock()
+	defer nodeMu.Unlock()
+
+	if node == nil {
+		return errorJSON("node not started")
+	}
+	if mediaID == "" {
+		return errorJSON("mediaID is required")
+	}
+
+	data, err := node.GetMessageChunkBase64(mediaID, chunkIndex)
+	if err != nil {
+		return errorJSON(err.Error())
+	}
+
+	result := map[string]string{
+		"status": "ok",
+		"data":   data,
+	}
+	out, _ := json.Marshal(result)
+	return string(out)
 }
 
 // SendMessage — отправляет сообщение всем пирам (broadcast).

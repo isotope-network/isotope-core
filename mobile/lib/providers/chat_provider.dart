@@ -1301,7 +1301,7 @@ class ChatProvider extends ChangeNotifier {
           }
         }
       }
-      _handleFileChunk(msg);
+      _enqueueFileChunk(msg);
       _safeNotify();
       return;
     }
@@ -1330,38 +1330,114 @@ class ChatProvider extends ChangeNotifier {
   // остальные ждут. Иначе 5 горутин вызывают tryAssemble одновременно.
   final Set<String> _assembling = {};
 
-  /// Сохраняет чанк файла на диск. Если все чанки собраны —
-  /// склеивает в файл и обновляет Message.localFilePath.
-  Future<void> _handleFileChunk(Message msg) async {
+  // Очередь запросов getChunk. Ключ — mediaId, значение — Set<chunkIndex>,
+  // ожидающих получения base64 из Go.
+  // Обрабатывается таймером (100 мс): по одному чанку за раз.
+  // Защита от всплеска 440 запросов — OOM/перегрузка MethodChannel.
+  final Map<String, Set<int>> _chunkQueue = {};
+  Timer? _chunkQueueTimer;
+
+  /// Ставит чанк в очередь на получение base64 из Go.
+  /// Реальный вызов getChunk — в _flushChunkQueue (таймер 100 мс).
+  void _enqueueFileChunk(Message msg) {
     if (msg.mediaId.isEmpty) return;
-    final base64Data = msg.mediaBase64;
-    if (base64Data.isEmpty) return;
+    // Если файл уже собран — не тянем чанки.
+    if (msg.localFilePath.isNotEmpty) return;
+    // Если base64 уже в памяти (голосовые, фото) — не нужно.
+    if (msg.chunkTotal <= 0) return;
+
+    _chunkQueue.putIfAbsent(msg.mediaId, () => <int>{}).add(msg.chunkIndex);
+    _chunkQueueTimer ??= Timer(const Duration(milliseconds: 100), () {
+      _chunkQueueTimer = null;
+      _flushChunkQueue();
+    });
+  }
+
+  /// Обрабатывает очередь: берёт первые до 10 чанков, запрашивает base64
+  /// через getChunk, сохраняет на диск. Потом — снова таймер (если ещё есть).
+  Future<void> _flushChunkQueue() async {
+    // Собираем до 10 задач.
+    final batch = <MapEntry<String, int>>[];
+    for (final entry in _chunkQueue.entries) {
+      final mediaId = entry.key;
+      final indexes = entry.value.toList()..sort();
+      for (final idx in indexes) {
+        batch.add(MapEntry(mediaId, idx));
+        if (batch.length >= 10) break;
+      }
+      if (batch.length >= 10) break;
+    }
+    if (batch.isEmpty) return;
+
+    // Удаляем взятые из очереди.
+    for (final e in batch) {
+      _chunkQueue[e.key]?.remove(e.value);
+      if (_chunkQueue[e.key]?.isEmpty ?? false) {
+        _chunkQueue.remove(e.key);
+      }
+    }
+
+    // Параллельно запрашиваем до 10 чанков.
+    await Future.wait(batch.map((e) async {
+      await _fetchAndSaveChunk(e.key, e.value);
+    }));
+
+    // Если очередь не пуста — следующий таймер.
+    if (_chunkQueue.isNotEmpty) {
+      _chunkQueueTimer ??= Timer(const Duration(milliseconds: 100), () {
+        _chunkQueueTimer = null;
+        _flushChunkQueue();
+      });
+    }
+  }
+
+  /// Запрашивает base64 одного чанка через getChunk и сохраняет на диск.
+  Future<void> _fetchAndSaveChunk(String mediaId, int chunkIndex) async {
+    // Метаданные — из _messagesMap.
+    Message? meta;
+    for (final m in _messagesMap.values) {
+      if (m.mediaId == mediaId && m.chunkIndex == chunkIndex) {
+        meta = m;
+        break;
+      }
+    }
+    if (meta == null) return;
+    if (meta.localFilePath.isNotEmpty) return; // уже собран
+
+    final base64Data = await LibP2PService.getChunk(
+      mediaID: mediaId,
+      chunkIndex: chunkIndex,
+    );
+    if (base64Data == null || base64Data.isEmpty) {
+      LogService.log('MEDIA: getChunk failed $mediaId[$chunkIndex]');
+      return;
+    }
 
     final ok = await MediaStorage.saveChunk(
-      mediaId: msg.mediaId,
-      chunkIndex: msg.chunkIndex,
-      chunkTotal: msg.chunkTotal,
-      fileName: msg.fileName,
-      fileSize: msg.fileSize,
+      mediaId: mediaId,
+      chunkIndex: chunkIndex,
+      chunkTotal: meta.chunkTotal,
+      fileName: meta.fileName,
+      fileSize: meta.fileSize,
       base64Data: base64Data,
     );
     if (!ok) return;
 
     // Защита: только один поток собирает файл для данного mediaId.
-    if (_assembling.contains(msg.mediaId)) return;
-    _assembling.add(msg.mediaId);
+    if (_assembling.contains(mediaId)) return;
+    _assembling.add(mediaId);
     String? path;
     try {
-      path = await MediaStorage.tryAssemble(msg.mediaId);
+      path = await MediaStorage.tryAssemble(mediaId);
     } finally {
-      _assembling.remove(msg.mediaId);
+      _assembling.remove(mediaId);
     }
     if (path == null) return;
 
     // Все чанки собраны — обновляем ВСЕ Message этого mediaId (localFilePath).
     final updates = <String, Message>{};
     for (final m in _messagesMap.values) {
-      if (m.mediaId == msg.mediaId && m.localFilePath != path) {
+      if (m.mediaId == mediaId && m.localFilePath != path) {
         updates[m.id] = m.withLocalFilePath(path);
       }
     }
@@ -1375,7 +1451,7 @@ class ChatProvider extends ChangeNotifier {
     // Файл собран — если чат открыт, отправляем [READ] по последнему чанку.
     if (_currentOpenPeerID != null && _currentOpenPeerID!.isNotEmpty) {
       final all = _messagesMap.values
-          .where((m) => m.mediaId == msg.mediaId && m.chunkTotal > 0)
+          .where((m) => m.mediaId == mediaId && m.chunkTotal > 0)
           .toList();
       if (all.isNotEmpty) {
         all.sort((a, b) => a.chunkIndex.compareTo(b.chunkIndex));
@@ -1844,11 +1920,13 @@ class ChatProvider extends ChangeNotifier {
   void dispose() {
     _statusTimer?.cancel();
     _purgeTimer?.cancel();
+    _chunkQueueTimer?.cancel();
     for (final t in _pendingTimers.values) {
       t.cancel();
     }
     _pendingTimers.clear();
     _messageSub?.cancel();
+
     _helloAckController.close();
     _contactRequestController.close();
     _contactAcceptController.close();
