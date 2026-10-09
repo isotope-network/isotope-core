@@ -202,6 +202,11 @@ type Node struct {
 	// saveStateScheduled — защита от частых saveState (throttle 5 сек).
 	saveStateScheduled bool
 
+	// savePendingScheduled — защита от частых savePendingQueue (throttle 5 сек).
+	// Без этого при отправке файла 440 чанков → 440 сохранений очереди
+	// (каждое маршалит ВСЮ очередь) → RSS растёт до GB → lowmemorykiller.
+	savePendingScheduled bool
+
 	// sendSem — глобальный семафор исходящих stream'ов (10 одновременно).
 	// Защита от перегруза libp2p при flushPending / SendFile.
 	sendSem chan struct{}
@@ -767,12 +772,41 @@ func (n *Node) savePendingQueue() {
 }
 
 func (n *Node) enqueuePending(msg Message) {
+	// Файловые чанки: в pending храним только метаданные.
+	// base64 (Text/PlainText) не кладём — иначе 440 × 170 КБ = 75 МБ в очереди.
+	// При flushPending — перечитать с диска (этап 2, sent/).
+	if msg.MediaType == "file" && msg.ChunkTotal > 0 {
+		msg.Text = ""
+		msg.PlainText = ""
+	}
 	n.pendingMu.Lock()
 	n.pendingMessages = append(n.pendingMessages, msg)
 	count := len(n.pendingMessages)
 	n.pendingMu.Unlock()
 	log.Printf("[QUEUE] enqueued %s (total: %d)", msg.ID, count)
-	n.savePendingQueue()
+	n.scheduleSavePendingQueue()
+}
+
+// scheduleSavePendingQueue — отложенная запись очереди (throttle 5 сек).
+// При отправке файла enqueuePending вызывается 440 раз за секунды.
+// Каждый savePendingQueue маршалит ВСЮ очередь — это O(N²) по данным.
+// Throttle схлопывает 440 вызовов в один.
+func (n *Node) scheduleSavePendingQueue() {
+	n.pendingMu.Lock()
+	if n.savePendingScheduled {
+		n.pendingMu.Unlock()
+		return
+	}
+	n.savePendingScheduled = true
+	n.pendingMu.Unlock()
+
+	go func() {
+		time.Sleep(5 * time.Second)
+		n.pendingMu.Lock()
+		n.savePendingScheduled = false
+		n.pendingMu.Unlock()
+		n.savePendingQueue()
+	}()
 }
 
 func (n *Node) hasPending() bool {
@@ -820,6 +854,7 @@ func (n *Node) removePendingByRef(ref string) {
 	n.pendingMu.Unlock()
 	if before != after {
 		log.Printf("[QUEUE] removed %s from pending (delivered)", ref)
+		// Критичное событие — сохранение сразу, без throttle.
 		n.savePendingQueue()
 	}
 }
@@ -1019,7 +1054,11 @@ func (n *Node) sendReplicaToPeer(targetID peer.ID, data []byte) {
 		return
 	}
 	defer s.Close()
-	fmt.Fprintf(s, "%s%s\n", REPLICA_PREFIX, string(data))
+	// Без string(data): пишем префикс, потом data, потом \n.
+	// string(data) создавал копию 85 КБ × 5 горутин × N чанков.
+	s.Write([]byte(REPLICA_PREFIX))
+	s.Write(data)
+	s.Write([]byte("\n"))
 }
 
 // sendServiceViaBootstrap — отправка сервисного сообщения через bootstrap (relay).
