@@ -158,6 +158,20 @@ func (n *Node) loadStateData() ([]byte, error) {
 	return data, nil
 }
 
+// sentPath — путь к копии отправленного файла.
+// Детерминирован: <stateFile dir>/isotope_media/sent/<MediaID>.bin.
+// Используется для flushPending: перечитать чанк с диска, переслать.
+func (n *Node) sentPath(mediaID string) string {
+	dir := filepath.Dir(n.stateFile)
+	return filepath.Join(dir, "isotope_media", "sent", mediaID+".bin")
+}
+
+// sentDirPath — путь к директории sent/.
+func (n *Node) sentDirPath() string {
+	dir := filepath.Dir(n.stateFile)
+	return filepath.Join(dir, "isotope_media", "sent")
+}
+
 // savePrivateKey — сохраняет приватный ключ рядом с stateFile
 func (n *Node) savePrivateKey(key []byte) error {
 	keyFile := n.stateFile + ".key"

@@ -215,6 +215,12 @@ type Node struct {
 	// Копим msg_id чанков, отправляем одним [DELIVERED] с Refs.
 	pendingDelivered   map[string][]string
 	pendingDeliveredMu sync.Mutex
+
+	// deliveredCount — счётчик доставленных чанков по MediaID (отправитель).
+	// Когда == ChunkTotal — удаляем sent/<MediaID>.bin.
+	// O(1) вместо O(N) проверки всех чанков на каждый [DELIVERED].
+	deliveredCount   map[string]int
+	deliveredCountMu sync.Mutex
 }
 
 // NewNode — создаёт новый узел
@@ -242,6 +248,7 @@ func NewNode(cfg Config) *Node {
 		myReadEnabled:           true,
 		sendSem:                 make(chan struct{}, 10),
 		pendingDelivered:        make(map[string][]string),
+		deliveredCount:          make(map[string]int),
 	}
 }
 
@@ -859,9 +866,53 @@ func (n *Node) removePendingByRef(ref string) {
 	}
 }
 
+// fillFileChunkFromSent — читает чанк файла из sent/<MediaID>.bin,
+// шифрует, дополняет msg (Text/PlainText).
+// Используется в tryReplicate для flushPending — когда в pending
+// хранятся только метаданные, а base64 надо пересоздать.
+func (n *Node) fillFileChunkFromSent(msg *Message) error {
+	path := n.sentPath(msg.MediaID)
+	f, err := os.Open(path)
+	if err != nil {
+		return fmt.Errorf("open sent failed: %w", err)
+	}
+	defer f.Close()
+
+	const chunkSize = 64 * 1024
+	buf := make([]byte, chunkSize)
+	off := int64(msg.ChunkIndex) * int64(chunkSize)
+	nr, err := f.ReadAt(buf, off)
+	if err != nil && err != io.EOF {
+		return fmt.Errorf("ReadAt failed: %w", err)
+	}
+	if nr == 0 {
+		return fmt.Errorf("empty chunk")
+	}
+	chunkB64 := base64.StdEncoding.EncodeToString(buf[:nr])
+
+	encrypted, err := n.encryptForRecipient(msg.Recipient, chunkB64)
+	if err != nil {
+		return fmt.Errorf("encrypt failed: %w", err)
+	}
+	msg.PlainText = chunkB64
+	msg.Text = encrypted
+	return nil
+}
+
 func (n *Node) tryReplicate(msg Message) bool {
 	if n.host == nil {
 		return false
+	}
+	// Файловый чанк без base64 → прочитать с диска (sent/).
+	// В pending хранятся только метаданные (для экономии памяти).
+	// Здесь base64 пересоздаётся, чтобы отправить чанк получателю.
+	if msg.MediaType == "file" && msg.ChunkTotal > 0 &&
+		msg.Text == "" && msg.PlainText == "" && msg.MediaID != "" {
+		if err := n.fillFileChunkFromSent(&msg); err != nil {
+			log.Printf("[QUEUE] fillFileChunkFromSent %s[%d] failed: %v",
+				msg.MediaID, msg.ChunkIndex, err)
+			return false
+		}
 	}
 	msg.ReplicatedFrom = msg.Sender
 	msg.IsOwn = false
@@ -2204,6 +2255,81 @@ func (n *Node) cleanupLoop() {
 	}()
 }
 
+// cleanupSentLoop — раз в час чистит sent/:
+//  1. Файлы, где все чанки в memory имеют Status >= 2 — сразу удалить.
+//  2. Файлы старше 24 часов — принудительно удалить (не доставлены).
+//
+// Это резерв. Основной путь — счётчик deliveredCount в handleDeliveredRef.
+func (n *Node) cleanupSentLoop() {
+	go func() {
+		for {
+			time.Sleep(1 * time.Hour)
+			n.cleanupSentOnce()
+		}
+	}()
+}
+
+// cleanupSentOnce — однократная очистка sent/.
+func (n *Node) cleanupSentOnce() {
+	dir := n.sentDirPath()
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return
+	}
+
+	// Собираем статусы всех чанков по mediaID из memory.
+	type fileStatus struct {
+		total     int
+		delivered int
+		createdAt time.Time
+	}
+	statuses := make(map[string]*fileStatus)
+	all := n.memory.GetAll()
+	for _, m := range all {
+		if m.MediaType != "file" || m.ChunkTotal <= 0 || m.MediaID == "" {
+			continue
+		}
+		st, ok := statuses[m.MediaID]
+		if !ok {
+			st = &fileStatus{total: m.ChunkTotal}
+			statuses[m.MediaID] = st
+		}
+		if m.Status >= StatusDelivered {
+			st.delivered++
+		}
+	}
+
+	cutoff := time.Now().Add(-24 * time.Hour)
+
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".bin") {
+			continue
+		}
+		mediaID := strings.TrimSuffix(e.Name(), ".bin")
+		fullPath := n.sentPath(mediaID)
+
+		info, err := os.Stat(fullPath)
+		if err != nil {
+			continue
+		}
+
+		// Удалить если старше 24 часов.
+		if info.ModTime().Before(cutoff) {
+			if err := os.Remove(fullPath); err == nil {
+				log.Printf("[SENT] removed %s (older than 24h)", mediaID)
+			}
+			continue
+		}
+
+		// Удалить если все чанки доставлены.
+		if st, ok := statuses[mediaID]; ok && st.total > 0 && st.delivered >= st.total {
+			if err := os.Remove(fullPath); err == nil {
+				log.Printf("[SENT] removed %s (all %d chunks delivered)", mediaID, st.total)
+			}
+		}
+	}
+}
+
 func (n *Node) markPeerAlive(peerID string) bool {
 	n.mu.Lock()
 	defer n.mu.Unlock()
@@ -2693,6 +2819,12 @@ func (n *Node) InitP2P() error {
 	}
 	n.loadPendingQueue()
 
+	// Директория sent/ для копий отправленных файлов.
+	// Используется flushPending и fillFileChunkFromSent.
+	if n.stateFile != "" {
+		_ = os.MkdirAll(n.sentDirPath(), 0700)
+	}
+
 	// Инициализация E2E-ключей (Ed25519 + X25519).
 	n.loadOrGenerateE2EKeys()
 
@@ -2864,6 +2996,7 @@ func (n *Node) InitP2P() error {
 	}
 	n.announceLoop()
 	n.cleanupLoop()
+	n.cleanupSentLoop()
 	n.relayLoop()
 	n.StartAdaptation()
 
@@ -3347,6 +3480,29 @@ func (n *Node) handleDeliveredRef(ref, sender string) {
 	} else {
 		n.setMessageStatus(ref, StatusDelivered)
 		log.Printf("[SERVICE] delivered ack ref=%s from=%s", ref, sender)
+
+		// Счётчик доставленных чанков для файлового mediaID.
+		// Когда все чанки доставлены — удаляем sent/<MediaID>.bin.
+		if msg, ok := n.findMyMessageByID(ref); ok {
+			if msg.MediaType == "file" && msg.ChunkTotal > 0 && msg.MediaID != "" {
+				n.deliveredCountMu.Lock()
+				n.deliveredCount[msg.MediaID]++
+				delivered := n.deliveredCount[msg.MediaID]
+				total := msg.ChunkTotal
+				mediaID := msg.MediaID
+				n.deliveredCountMu.Unlock()
+
+				if delivered >= total {
+					sentPath := n.sentPath(mediaID)
+					if err := os.Remove(sentPath); err == nil {
+						log.Printf("[SENT] removed sent file %s (all %d chunks delivered)", mediaID, total)
+					}
+					n.deliveredCountMu.Lock()
+					delete(n.deliveredCount, mediaID)
+					n.deliveredCountMu.Unlock()
+				}
+			}
+		}
 	}
 }
 

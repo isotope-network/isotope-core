@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"sync"
@@ -123,9 +124,12 @@ func (n *Node) SendPhotoByPath(peerID, filePath, fileName string, ttlPeriod, ttl
 }
 
 // SendFileByPath — отправляет файл, читая его с диска по пути.
-// Путь — внутри app dir. Go сам режет на чанки по 64 КБ,
-// шифрует каждый и отправляет.
-// Чанки в memory НЕ остаются: только метаданные (MediaID, ChunkIndex, ChunkTotal).
+// Схема:
+//  1. Копирует исходный файл в <stateFile dir>/isotope_media/sent/<MediaID>.bin.
+//     Копия нужна для flushPending — переслать чанк, если получатель не подтвердил.
+//  2. Читает чанки через f.ReadAt (не os.ReadFile) — в память только один чанк.
+//  3. Шифрует, отправляет, в memory кладёт только метаданные.
+//
 // Base64 через MethodChannel не проходит — OOM устранён.
 // Возвращает MediaID.
 func (n *Node) SendFileByPath(peerID, filePath, fileName string, ttlPeriod, ttlMode string) (string, error) {
@@ -139,19 +143,41 @@ func (n *Node) SendFileByPath(peerID, filePath, fileName string, ttlPeriod, ttlM
 		return "", fmt.Errorf("filePath is required")
 	}
 
-	raw, err := os.ReadFile(filePath)
+	src, err := os.Open(filePath)
 	if err != nil {
-		return "", fmt.Errorf("read file failed: %w", err)
+		return "", fmt.Errorf("open file failed: %w", err)
 	}
-	if len(raw) == 0 {
+	defer src.Close()
+
+	stat, err := src.Stat()
+	if err != nil {
+		return "", fmt.Errorf("stat file failed: %w", err)
+	}
+	fileSize := stat.Size()
+	if fileSize == 0 {
 		return "", fmt.Errorf("empty file")
 	}
 
-	fileSize := int64(len(raw))
 	const chunkSize = 64 * 1024
-	chunkTotal := (len(raw) + chunkSize - 1) / chunkSize
+	chunkTotal := (fileSize + chunkSize - 1) / chunkSize
 
 	mediaID := generateMsgID(fmt.Sprintf("file:%s:%s:%d", peerID, fileName, time.Now().UnixNano()))
+
+	// Копия в sent/ — для flushPending.
+	sentPath := n.sentPath(mediaID)
+	if err := os.MkdirAll(n.sentDirPath(), 0700); err != nil {
+		return "", fmt.Errorf("mkdir sent failed: %w", err)
+	}
+	dst, err := os.Create(sentPath)
+	if err != nil {
+		return "", fmt.Errorf("create sent copy failed: %w", err)
+	}
+	if _, err := io.Copy(dst, src); err != nil {
+		dst.Close()
+		os.Remove(sentPath)
+		return "", fmt.Errorf("copy to sent failed: %w", err)
+	}
+	dst.Close()
 
 	ttlSeconds := parsePeriod(ttlPeriod)
 	var expiresAt time.Time
@@ -166,19 +192,24 @@ func (n *Node) SendFileByPath(peerID, filePath, fileName string, ttlPeriod, ttlM
 	sem := make(chan struct{}, maxParallel)
 	var wg sync.WaitGroup
 
-	for i := 0; i < chunkTotal; i++ {
+	for i := 0; i < int(chunkTotal); i++ {
 		wg.Add(1)
 		sem <- struct{}{}
 		go func(idx int) {
 			defer wg.Done()
 			defer func() { <-sem }()
 
-			start := idx * chunkSize
-			end := start + chunkSize
-			if end > len(raw) {
-				end = len(raw)
+			buf := make([]byte, chunkSize)
+			off := int64(idx) * int64(chunkSize)
+			nr, err := src.ReadAt(buf, off)
+			if err != nil && err != io.EOF {
+				log.Printf("[FILE] ReadAt chunk %d failed: %v", idx, err)
+				return
 			}
-			chunkRaw := raw[start:end]
+			if nr == 0 {
+				return
+			}
+			chunkRaw := buf[:nr]
 			chunkB64 := base64.StdEncoding.EncodeToString(chunkRaw)
 
 			encrypted, err := n.encryptForRecipient(peerID, chunkB64)
@@ -199,7 +230,7 @@ func (n *Node) SendFileByPath(peerID, filePath, fileName string, ttlPeriod, ttlM
 				MediaType:        "file",
 				MediaID:          mediaID,
 				ChunkIndex:       idx,
-				ChunkTotal:       chunkTotal,
+				ChunkTotal:       int(chunkTotal),
 				FileName:         fileName,
 				FileSize:         fileSize,
 				TtlPeriodSeconds: ttlSeconds,
@@ -218,17 +249,11 @@ func (n *Node) SendFileByPath(peerID, filePath, fileName string, ttlPeriod, ttlM
 			n.setMessageStatus(id, StatusSent)
 
 			// В memory — только метаданные (без base64).
-			// Отправителю base64 не нужен: файл у него на диске,
-			// у получателя соберётся сам. Это устраняет накопление
-			// 440 × ~170 КБ = ~75 МБ на каждый отправленный файл (OOM).
 			memMsg := msg
-			if memMsg.MediaType == "file" && memMsg.ChunkTotal > 0 {
-				memMsg.Text = ""
-				memMsg.PlainText = ""
-			}
+			memMsg.Text = ""
+			memMsg.PlainText = ""
 			if n.memory.Add(memMsg) {
 				if n.messageHook != nil {
-					// Hook отдаёт только метаданные (Text/PlainText пусты).
 					data, _ := json.Marshal(memMsg)
 					n.messageHook(string(data))
 				}
