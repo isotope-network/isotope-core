@@ -4,6 +4,7 @@ package mobile
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"strings"
@@ -116,7 +117,9 @@ func Start(ethHash string, bootstrapPeers string, enableMDNS bool) string {
 		return `{"status":"already_started"}`
 	}
 
-	log.SetOutput(&logWriter{})
+	// Дублируем Go-логи в stdout, чтобы adb logcat видел ВСЁ
+	// в реальном времени (без буфера 500 в addLog и без потерь при 10718 чанках).
+	log.SetOutput(io.MultiWriter(&logWriter{}, os.Stdout))
 	addLog("[MOBILE] Starting node...")
 
 	if filesDir == "" {

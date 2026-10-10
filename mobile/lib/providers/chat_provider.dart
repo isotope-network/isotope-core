@@ -1332,7 +1332,7 @@ class ChatProvider extends ChangeNotifier {
     }
 
     final preview = msg.text.length > 40 ? '${msg.text.substring(0, 40)}…' : msg.text;
-    LogService.log('ADD id=${msg.id} text="${preview}" sender=${msg.sender}');
+    LogService.log('ADD id=${msg.id} text="$preview" sender=${msg.sender}');
 
     // [READ] отправляется при открытии чата (setChatOpen).
     // Если чат с этим sender открыт — отправим сразу.
@@ -1354,8 +1354,12 @@ class ChatProvider extends ChangeNotifier {
 
   /// Ставит чанк в очередь на получение base64 из Go.
   /// Реальный вызов getChunk — в _flushChunkQueue (таймер 100 мс).
+  /// Свои чанки (isOwn) — не сохраняем: файл у отправителя на диске (sent/).
+  /// Иначе — getChunk × 10718 впустую (возвращает пусто), шум в логе.
   void _enqueueFileChunk(Message msg) {
     if (msg.mediaId.isEmpty) return;
+    // Свои чанки — не сохраняем как входящие.
+    if (msg.isOwn) return;
     // Если файл уже собран — не тянем чанки.
     if (msg.localFilePath.isNotEmpty) return;
     // Если base64 уже в памяти (голосовые, фото) — не нужно.
@@ -1417,6 +1421,8 @@ class ChatProvider extends ChangeNotifier {
       }
     }
     if (meta == null) return;
+    // Свои чанки — не сохраняем (двойная защита).
+    if (meta.isOwn) return;
     if (meta.localFilePath.isNotEmpty) return; // уже собран
 
     final base64Data = await LibP2PService.getChunk(
