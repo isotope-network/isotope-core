@@ -3090,6 +3090,27 @@ func (n *Node) GetChunk(mediaID string, chunkIndex int) (string, error) {
 	return "", fmt.Errorf("chunk not found: mediaID=%s index=%d", mediaID, chunkIndex)
 }
 
+// ClearChunkData — очищает Text/PlainText у конкретного чанка в memory.
+// Используется получателем: после saveChunk на диск base64 больше не нужен
+// в памяти. Освобождает ~170 КБ на чанк (для больших файлов — сотни МБ).
+// Метаданные (ID, MediaID, ChunkIndex, ChunkTotal, FileName, FileSize) остаются.
+// Возвращает true, если чанк найден.
+func (n *Node) ClearChunkData(mediaID string, chunkIndex int) bool {
+	if mediaID == "" {
+		return false
+	}
+	all := n.memory.GetAll()
+	for _, m := range all {
+		if m.MediaID == mediaID && m.ChunkIndex == chunkIndex {
+			if m.Text == "" && m.PlainText == "" {
+				return true // уже очищен
+			}
+			return n.memory.ClearChunkData(m.ID)
+		}
+	}
+	return false
+}
+
 // DeleteFile — удаляет все чанки файла из memory по mediaID.
 // Также удаляет sent/<MediaID>.bin (если есть) и счётчик deliveredCount.
 // Используется при удалении файла из чата (свайп).

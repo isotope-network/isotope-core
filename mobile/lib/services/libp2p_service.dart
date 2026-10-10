@@ -279,6 +279,23 @@ class LibP2PService {
     }
   }
 
+  /// Очищает base64 (Text/PlainText) у конкретного чанка в Go-памяти.
+  /// Вызывается получателем после saveChunk на диск.
+  /// Освобождает память (для больших файлов — сотни МБ).
+  static Future<void> clearChunkData({
+    required String mediaID,
+    required int chunkIndex,
+  }) async {
+    try {
+      await _channel.invokeMethod<String>('clearChunkData', {
+        'mediaID': mediaID,
+        'chunkIndex': chunkIndex,
+      });
+    } on PlatformException {
+      // Тихо — не критично.
+    }
+  }
+
   static Future<List<dynamic>> getPeers() async {
     try {
       final response = await _channel.invokeMethod<String>('getPeers');

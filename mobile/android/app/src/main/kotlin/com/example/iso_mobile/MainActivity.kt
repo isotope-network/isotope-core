@@ -266,6 +266,14 @@ class MainActivity : FlutterActivity() {
                             runOnUiThread { result.success(response) }
                         }.start()
                     }
+                    "clearChunkData" -> {
+                        val mediaID = call.argument<String>("mediaID") ?: ""
+                        val chunkIndex = call.argument<Int>("chunkIndex") ?: 0
+                        Thread {
+                            val response = Mobile.clearChunkData(mediaID, chunkIndex.toLong())
+                            runOnUiThread { result.success(response) }
+                        }.start()
+                    }
                     "getPeers" -> {
                         Thread {
                             val response = Mobile.getPeers()

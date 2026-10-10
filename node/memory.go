@@ -186,6 +186,24 @@ func (m *Memory) MarkReadLocally(refs []string) int {
 	return changed
 }
 
+// ClearChunkData — очищает Text/PlainText у сообщения по ID.
+// Используется получателем: после saveChunk на диск base64 больше не нужен
+// в памяти. Освобождает ~170 КБ на чанк (для больших файлов — сотни МБ).
+// Метаданные (ID, MediaID, ChunkIndex, ChunkTotal, FileName, FileSize) остаются.
+// Возвращает true, если сообщение найдено.
+func (m *Memory) ClearChunkData(id string) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for i := range m.messages {
+		if m.messages[i].ID == id {
+			m.messages[i].Text = ""
+			m.messages[i].PlainText = ""
+			return true
+		}
+	}
+	return false
+}
+
 // Remove — удаляет сообщение по ID. Возвращает true, если было.
 // Чистит seen, чтобы ID можно было переиспользовать.
 func (m *Memory) Remove(id string) bool {

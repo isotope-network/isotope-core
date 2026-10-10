@@ -234,6 +234,24 @@ func GetChunk(mediaID string, chunkIndex int) string {
 	return string(out)
 }
 
+// ClearChunkData — очищает Text/PlainText у конкретного чанка в memory.
+// Используется получателем: после saveChunk на диск base64 больше не нужен.
+// Возвращает {"status":"ok"} или errorJSON.
+func ClearChunkData(mediaID string, chunkIndex int) string {
+	nodeMu.Lock()
+	defer nodeMu.Unlock()
+
+	if node == nil {
+		return errorJSON("node not started")
+	}
+	if mediaID == "" {
+		return errorJSON("mediaID is required")
+	}
+
+	node.ClearChunkData(mediaID, chunkIndex)
+	return `{"status":"ok"}`
+}
+
 // DeleteFile — удаляет все чанки файла из memory по mediaID.
 // Также удаляет sent/<MediaID>.bin (если есть) и счётчик.
 // Возвращает {"status":"ok","removed":N} или errorJSON.

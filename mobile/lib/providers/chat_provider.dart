@@ -1438,6 +1438,10 @@ class ChatProvider extends ChangeNotifier {
     );
     if (!ok) return;
 
+    // Чанк сохранён на диск — base64 в Go-памяти больше не нужен.
+    // Очищаем, чтобы memory у получателя не раздувалась на больших файлах.
+    LibP2PService.clearChunkData(mediaID: mediaId, chunkIndex: chunkIndex);
+
     // Защита: только один поток собирает файл для данного mediaId.
     if (_assembling.contains(mediaId)) return;
     _assembling.add(mediaId);
