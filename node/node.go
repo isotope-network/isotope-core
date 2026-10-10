@@ -922,7 +922,8 @@ func (n *Node) tryReplicate(msg Message) bool {
 	}
 
 	if msg.Recipient != "" {
-		return n.sendToRecipient(msg, data)
+		isFileChunk := msg.MediaType == "file" && msg.ChunkTotal > 0
+		return n.sendToRecipient(msg, data, isFileChunk)
 	}
 
 	peers := n.host.Network().Peers()
@@ -960,13 +961,11 @@ func (n *Node) tryReplicate(msg Message) bool {
 // АДРЕСНАЯ МАРШРУТИЗАЦИЯ (этап 4.2)
 // ============================================================
 
-func (n *Node) sendToRecipient(msg Message, data []byte) bool {
-	myID := ""
-	if n.host != nil {
-		myID = n.host.ID().String()
-	}
-	log.Printf("[REPLICA] sendToRecipient: recipient=%s me=%s isRelay=%v sender=%s id=%s type=%d version=%d",
-		msg.Recipient, myID, n.isRelay, msg.Sender, msg.ID, msg.Type, msg.Version)
+// sendToRecipient — адресная отправка. isFileChunk — true для файловых
+// чанков (MediaType=file, ChunkTotal>0). Пробрасывается вниз, чтобы
+// sendReplicaToPeer не делал randomDelay для чанков (10718 × 10-30 мс =
+// минуты ожидания + heap).
+func (n *Node) sendToRecipient(msg Message, data []byte, isFileChunk bool) bool {
 	targetID, err := peer.Decode(msg.Recipient)
 	if err != nil {
 		log.Printf("[REPLICA] invalid Recipient %q: %v", msg.Recipient, err)
@@ -975,15 +974,12 @@ func (n *Node) sendToRecipient(msg Message, data []byte) bool {
 
 	// Уровень 1: isPeerDead — предфильтр. PING пометил мёртвым —
 	// не тратим 3 сек на direct, сразу fallback.
-	// Не барьер: если peer ожил, но PING ещё не прошёл —
-	// fallback тоже доставит. Оптимизация, не блокировка.
+	// Лог убран из hot path (10718 × лог = heap).
 	if n.isPeerDead(msg.Recipient) {
-		log.Printf("[REPLICA] peer %s marked dead by PING, skip direct, fallback", msg.Recipient)
-		return n.fallbackSend(msg.Recipient, data)
+		return n.fallbackSend(msg.Recipient, data, isFileChunk)
 	}
 
 	// Уровень 2: если peer в Peers() — tryDirectSend (3 сек) через горутину.
-	// Не блокируем sendToRecipient.
 	inPeers := false
 	for _, p := range n.host.Network().Peers() {
 		if p == targetID {
@@ -992,12 +988,12 @@ func (n *Node) sendToRecipient(msg Message, data []byte) bool {
 		}
 	}
 	if inPeers {
-		go n.sendWithFallback(targetID, data, msg.Recipient)
+		go n.sendWithFallback(targetID, data, msg.Recipient, isFileChunk)
 		return true
 	}
 
 	// Уровень 3: не в Peers() — сразу fallback.
-	return n.fallbackSend(msg.Recipient, data)
+	return n.fallbackSend(msg.Recipient, data, isFileChunk)
 }
 
 // tryDirectSend — синхронная попытка прямого stream с коротким timeout.
@@ -1019,12 +1015,12 @@ func (n *Node) tryDirectSend(targetID peer.ID, data []byte, timeout time.Duratio
 
 // sendWithFallback — синхронная (вызывается из горутины).
 // Сначала tryDirectSend (3 сек). При провале — fallbackSend.
-func (n *Node) sendWithFallback(targetID peer.ID, data []byte, recipient string) {
+func (n *Node) sendWithFallback(targetID peer.ID, data []byte, recipient string, isFileChunk bool) {
 	if n.tryDirectSend(targetID, data, 3*time.Second) {
 		return
 	}
 	log.Printf("[REPLICA] direct send to %s failed (phantom circuit?), fallback", targetID)
-	n.fallbackSend(recipient, data)
+	n.fallbackSend(recipient, data, isFileChunk)
 }
 
 // fallbackSend — синхронная. Логика fallback:
@@ -1032,12 +1028,12 @@ func (n *Node) sendWithFallback(targetID peer.ID, data []byte, recipient string)
 //   - клиент → bootstrap.
 //
 // Возвращает true, если удалось отправить хотя бы одному адресату.
-func (n *Node) fallbackSend(recipient string, data []byte) bool {
+func (n *Node) fallbackSend(recipient string, data []byte, isFileChunk bool) bool {
 	// Fallback для relay: если recipient в announcedPeers —
 	// подключаемся к нему напрямую и отправляем.
 	if n.isRelay {
 		if addrs, ok := n.lookupPeer(recipient); ok && len(addrs) > 0 {
-			go func(pid string, addrList []string, payload []byte) {
+			go func(pid string, addrList []string, payload []byte, isFileChunk bool) {
 				for _, a := range addrList {
 					pi, err := peer.AddrInfoFromString(a)
 					if err != nil {
@@ -1052,10 +1048,10 @@ func (n *Node) fallbackSend(recipient string, data []byte) bool {
 						continue
 					}
 					cancel()
-					n.sendReplicaToPeer(pi.ID, payload)
+					n.sendReplicaToPeer(pi.ID, payload, isFileChunk)
 					return
 				}
-			}(recipient, addrs, data)
+			}(recipient, addrs, data, isFileChunk)
 			return true
 		}
 		log.Printf("[STATUS] relay: recipient not found in announcedPeers: %s", recipient)
@@ -1072,7 +1068,7 @@ func (n *Node) fallbackSend(recipient string, data []byte) bool {
 		if n.host.ID() == pi.ID {
 			continue
 		}
-		go n.sendReplicaToPeer(pi.ID, data)
+		go n.sendReplicaToPeer(pi.ID, data, isFileChunk)
 		return true
 	}
 
@@ -1080,19 +1076,24 @@ func (n *Node) fallbackSend(recipient string, data []byte) bool {
 	return false
 }
 
-func (n *Node) sendReplicaToPeer(targetID peer.ID, data []byte) {
-	myID := ""
-	if n.host != nil {
-		myID = n.host.ID().String()
+// sendReplicaToPeer — отправка данных пиру.
+// isFileChunk — true: без randomDelay и без лога (10718 чанков ×
+// 10-30 мс = минуты ожидания + heap).
+func (n *Node) sendReplicaToPeer(targetID peer.ID, data []byte, isFileChunk bool) {
+	if !isFileChunk {
+		myID := ""
+		if n.host != nil {
+			myID = n.host.ID().String()
+		}
+		var msgPreview string
+		if len(data) > 200 {
+			msgPreview = string(data[:200])
+		} else {
+			msgPreview = string(data)
+		}
+		log.Printf("[REPLICA] sendReplicaToPeer target=%s me=%s data=%s", targetID, myID, msgPreview)
+		randomDelay(10, 30)
 	}
-	var msgPreview string
-	if len(data) > 200 {
-		msgPreview = string(data[:200])
-	} else {
-		msgPreview = string(data)
-	}
-	log.Printf("[REPLICA] sendReplicaToPeer target=%s me=%s data=%s", targetID, myID, msgPreview)
-	randomDelay(10, 30)
 	// Глобальный семафор — не более 10 одновременных stream'ов.
 	n.sendSem <- struct{}{}
 	defer func() { <-n.sendSem }()
@@ -1101,12 +1102,12 @@ func (n *Node) sendReplicaToPeer(targetID peer.ID, data []byte) {
 	defer cancel()
 	s, err := n.host.NewStream(ctx, targetID, protocolID)
 	if err != nil {
-		log.Printf("[REPLICA] NewStream to %s failed: %v", targetID, err)
+		if !isFileChunk {
+			log.Printf("[REPLICA] NewStream to %s failed: %v", targetID, err)
+		}
 		return
 	}
 	defer s.Close()
-	// Без string(data): пишем префикс, потом data, потом \n.
-	// string(data) создавал копию 85 КБ × 5 горутин × N чанков.
 	s.Write([]byte(REPLICA_PREFIX))
 	s.Write(data)
 	s.Write([]byte("\n"))
@@ -1198,7 +1199,17 @@ func (nn *nodeNotifiee) Connected(net network.Network, conn network.Conn) {
 }
 
 func (nn *nodeNotifiee) Disconnected(net network.Network, conn network.Conn) {
-	log.Printf("[NOTIFY] disconnected from %s", conn.RemotePeer())
+	remote := conn.RemotePeer().String()
+	log.Printf("[NOTIFY] disconnected from %s", remote)
+	// F″: peer ушёл — сбрасываем deadPeers.
+	// Иначе Xiaomi, один раз помеченный мёртвым по PING, остаётся dead
+	// навсегда (его нет в Peers() → PING не идёт → markPeerAlive не зовётся).
+	// Это даёт 10718 ложных "marked dead" на файл.
+	nn.node.mu.Lock()
+	if nn.node.deadPeers != nil {
+		delete(nn.node.deadPeers, remote)
+	}
+	nn.node.mu.Unlock()
 }
 
 func (nn *nodeNotifiee) Listen(net network.Network, addr ma.Multiaddr)      {}
@@ -2353,7 +2364,23 @@ func (n *Node) markPeerDead(peerID string) {
 	}
 }
 
+// isPeerDead — true, только если peer сейчас в Network().Peers()
+// и помечен мёртвым. Если peer вне Peers() — не «мёртв», а «нет
+// прямого пути». Для таких — сразу fallback (в sendToRecipient).
 func (n *Node) isPeerDead(peerID string) bool {
+	if n.host == nil {
+		return false
+	}
+	inPeers := false
+	for _, p := range n.host.Network().Peers() {
+		if p.String() == peerID {
+			inPeers = true
+			break
+		}
+	}
+	if !inPeers {
+		return false
+	}
 	n.mu.Lock()
 	defer n.mu.Unlock()
 	return n.deadPeers[peerID]
@@ -2399,6 +2426,9 @@ func (n *Node) replicateMessage(msg Message) {
 	if n.host == nil {
 		return
 	}
+	// B3: isFileChunk — файловый чанк. Пробрасываем вниз,
+	// чтобы sendReplicaToPeer не делал randomDelay для чанков.
+	isFileChunk := msg.MediaType == "file" && msg.ChunkTotal > 0
 	msg.ReplicatedFrom = msg.Sender
 	msg.IsOwn = false
 	data, err := json.Marshal(msg)
@@ -2408,12 +2438,8 @@ func (n *Node) replicateMessage(msg Message) {
 
 	if msg.Recipient != "" {
 		// Адресное сообщение.
-		n.sendToRecipient(msg, data)
+		n.sendToRecipient(msg, data, isFileChunk)
 		// В offline-очередь — только НЕ-сервисные и только на клиенте.
-		// Relay (VPS) не отправитель — pending не нужен, иначе очередь
-		// растёт бесконечно (68 МБ за часы) и вызывает OOM при старте.
-		// Сервисные ([CONTACT_*], [DELIVERED], [READ], [TTL_UPDATE])
-		// тоже не кладём: получатель их не подтверждает через [DELIVERED].
 		if !n.isRelay && !n.isServiceType(msg.Type) {
 			n.enqueuePending(msg)
 		}
@@ -2434,7 +2460,6 @@ func (n *Node) replicateMessage(msg Message) {
 
 	if len(alive) == 0 {
 		if n.isRelay {
-			// Relay не отправитель — pending не нужен.
 			return
 		}
 		log.Printf("[REPLICA] SKIP: no alive peers — enqueue")
@@ -2446,7 +2471,7 @@ func (n *Node) replicateMessage(msg Message) {
 		replicaCount = len(alive)
 	}
 	for i := 0; i < replicaCount; i++ {
-		go n.sendReplicaToPeer(alive[i], data)
+		go n.sendReplicaToPeer(alive[i], data, isFileChunk)
 	}
 }
 
@@ -3774,7 +3799,7 @@ func (n *Node) sendConfirmation(msgType MessageType, ref, recipient string) erro
 
 	// Один путь — sendToRecipient (tryDirectSend + fallback).
 	// Дублирование убрано: sendToRecipient сам делает direct и fallback.
-	if n.sendToRecipient(msg, data) {
+	if n.sendToRecipient(msg, data, false) {
 		log.Printf("[CONFIRM] %s ref=%s to %s (via sendToRecipient)", msgTypeString(msgType), ref, recipient)
 		return nil
 	}
