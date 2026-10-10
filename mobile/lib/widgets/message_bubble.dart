@@ -417,9 +417,11 @@ class _FileRow extends StatelessWidget {
                   )
                 else if (message.isOwn)
                   Text(
-                    progress > 0 && progress < 100
-                        ? 'Отправка $progress%'
-                        : 'Отправлено',
+                    progress >= 100
+                        ? 'Отправлено'
+                        : progress > 0
+                            ? 'Отправка $progress%'
+                            : 'Отправляется…',
                     style: const TextStyle(fontSize: 12, color: Colors.black54),
                   )
                 else

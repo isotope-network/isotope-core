@@ -1715,17 +1715,12 @@ func (n *Node) handleStream(stream network.Stream) {
 
 // findMyMessageByID — находит моё сообщение по ID в памяти.
 // Возвращает копию и true, если найдено.
+// Использует Memory.GetByID — без копии всего среза (OOM на больших файлах).
 func (n *Node) findMyMessageByID(id string) (Message, bool) {
 	if id == "" {
 		return Message{}, false
 	}
-	all := n.memory.GetAll()
-	for _, msg := range all {
-		if msg.ID == id {
-			return msg, true
-		}
-	}
-	return Message{}, false
+	return n.memory.GetByID(id)
 }
 
 // isServiceType — классификация. Только тип, без побочных эффектов.

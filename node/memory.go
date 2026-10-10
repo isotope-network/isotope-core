@@ -220,6 +220,22 @@ func (m *Memory) Remove(id string) bool {
 	return false
 }
 
+// GetByID — возвращает сообщение по ID без копирования всего среза.
+// В отличие от GetAll+цикл — не аллоцирует копию всех сообщений.
+// Критично для больших файлов: findAllMessageByID в цикле по 10720
+// чанкам через GetAll давал 21 ГБ аллокаций → OOM.
+// Возвращает копию одного Message (безопасно для чтения).
+func (m *Memory) GetByID(id string) (Message, bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for i := range m.messages {
+		if m.messages[i].ID == id {
+			return m.messages[i], true
+		}
+	}
+	return Message{}, false
+}
+
 // GetAll — возвращает все сообщения
 func (m *Memory) GetAll() []Message {
 	m.mu.Lock()
