@@ -1,6 +1,7 @@
 // mobile/lib/providers/chat_provider.dart
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../models/message.dart';
@@ -1042,12 +1043,21 @@ class ChatProvider extends ChangeNotifier {
     final now = DateTime.now().toUtc().toIso8601String();
     final ttlSec = _ttlPeriodSeconds(_ttlPeriod);
 
-    // Локальное сообщение — без base64. Для UI — метаданные.
-    // Отображается из mediaType='photo'. Содержимое — с диска.
+    // Локальное сообщение — с base64 (для отображения у отправителя).
+    // Фото < 1 МБ, base64 приемлемо. Читаем файл локально,
+    // НЕ через MethodChannel. У получателя — свой base64 из расшифровки.
+    String photoB64 = '';
+    try {
+      final bytes = await File(filePath).readAsBytes();
+      photoB64 = base64Encode(bytes);
+    } catch (e) {
+      LogService.log('PHOTO: read local failed: $e');
+    }
+
     final msg = Message(
       id: msgId.toString(),
-      text: '',
-      plainText: '',
+      text: photoB64,
+      plainText: photoB64,
       sender: 'Вы',
       time: now,
       isOwn: true,
@@ -1530,8 +1540,37 @@ class ChatProvider extends ChangeNotifier {
     });
   }
 
+  /// Удаляет сообщение по ID. Для файловых чанков — удаляет ВСЕ чанки
+  /// этого mediaId (один файл = много чанков, они группируются в UI).
+  /// Синхронизирует с Go: FileDeleteAll в Go-ядре.
   void deleteMessage(String id) {
-    _messagesMap.remove(id);
+    final msg = _messagesMap[id];
+    if (msg == null) return;
+
+    if (msg.isFile && msg.mediaId.isNotEmpty) {
+      // Удаляем все чанки этого mediaId.
+      final toRemove = <String>[];
+      for (final entry in _messagesMap.entries) {
+        if (entry.value.mediaId == msg.mediaId) {
+          toRemove.add(entry.key);
+          _messageStatuses.remove(entry.key);
+        }
+      }
+      for (final k in toRemove) {
+        _messagesMap.remove(k);
+      }
+      // Кэш последнего сообщения — пересобрать.
+      final chatPeer = msg.isOwn ? msg.recipient : msg.sender;
+      if (chatPeer.isNotEmpty) {
+        _lastMessageByPeer.remove(chatPeer);
+      }
+      // Go: удалить все чанки файла из memory + sent/ (если есть).
+      LibP2PService.deleteFile(msg.mediaId).catchError((_) => <String, dynamic>{});
+      LogService.log('DELETE file ${msg.mediaId} — удалено чанков: ${toRemove.length}');
+    } else {
+      _messagesMap.remove(id);
+      _messageStatuses.remove(id);
+    }
     _safeNotify();
   }
 

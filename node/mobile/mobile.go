@@ -234,6 +234,25 @@ func GetChunk(mediaID string, chunkIndex int) string {
 	return string(out)
 }
 
+// DeleteFile — удаляет все чанки файла из memory по mediaID.
+// Также удаляет sent/<MediaID>.bin (если есть) и счётчик.
+// Возвращает {"status":"ok","removed":N} или errorJSON.
+func DeleteFile(mediaID string) string {
+	nodeMu.Lock()
+	defer nodeMu.Unlock()
+
+	if node == nil {
+		return errorJSON("node not started")
+	}
+	if mediaID == "" {
+		return errorJSON("mediaID is required")
+	}
+
+	removed := node.DeleteFile(mediaID)
+	addLog("[FILE] deleted mediaID=%s removed=%d chunks", mediaID, removed)
+	return fmt.Sprintf(`{"status":"ok","removed":%d}`, removed)
+}
+
 // SendMessage — отправляет сообщение всем пирам (broadcast).
 // period: "10s" | "30s" | "1m" | ... | "never".
 // mode: "" (при never) | "after_read" | "hard".

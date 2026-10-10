@@ -3090,6 +3090,38 @@ func (n *Node) GetChunk(mediaID string, chunkIndex int) (string, error) {
 	return "", fmt.Errorf("chunk not found: mediaID=%s index=%d", mediaID, chunkIndex)
 }
 
+// DeleteFile — удаляет все чанки файла из memory по mediaID.
+// Также удаляет sent/<MediaID>.bin (если есть) и счётчик deliveredCount.
+// Используется при удалении файла из чата (свайп).
+// Возвращает количество удалённых чанков.
+func (n *Node) DeleteFile(mediaID string) int {
+	if mediaID == "" {
+		return 0
+	}
+	all := n.memory.GetAll()
+	removed := 0
+	for _, m := range all {
+		if m.MediaID == mediaID {
+			if n.memory.Remove(m.ID) {
+				removed++
+			}
+		}
+	}
+	// Удаляем sent/<MediaID>.bin, если остался.
+	sentPath := n.sentPath(mediaID)
+	_ = os.Remove(sentPath)
+	// Очищаем счётчик.
+	n.deliveredCountMu.Lock()
+	delete(n.deliveredCount, mediaID)
+	n.deliveredCountMu.Unlock()
+
+	if removed > 0 {
+		log.Printf("[DELETE] file %s — removed %d chunks", mediaID, removed)
+		n.scheduleSaveState()
+	}
+	return removed
+}
+
 // GetPeers — возвращает список активных пиров
 func (n *Node) GetPeers() []string {
 	if n.host == nil {

@@ -259,6 +259,13 @@ class MainActivity : FlutterActivity() {
                             runOnUiThread { result.success(response) }
                         }.start()
                     }
+                    "deleteFile" -> {
+                        val mediaID = call.argument<String>("mediaID") ?: ""
+                        Thread {
+                            val response = Mobile.deleteFile(mediaID)
+                            runOnUiThread { result.success(response) }
+                        }.start()
+                    }
                     "getPeers" -> {
                         Thread {
                             val response = Mobile.getPeers()

@@ -265,6 +265,20 @@ class LibP2PService {
     }
   }
 
+  /// Удаляет все чанки файла из Go-ядра по mediaID.
+  /// Также удаляет sent/<MediaID>.bin, если он ещё есть (у отправителя).
+  /// Используется при удалении файла из чата (свайп).
+  static Future<Map<String, dynamic>> deleteFile(String mediaID) async {
+    try {
+      final response = await _channel.invokeMethod<String>('deleteFile', {
+        'mediaID': mediaID,
+      });
+      return _safeDecode(response);
+    } on PlatformException catch (e) {
+      return {'error': e.message ?? 'platform_error', 'operation': 'delete_file'};
+    }
+  }
+
   static Future<List<dynamic>> getPeers() async {
     try {
       final response = await _channel.invokeMethod<String>('getPeers');
