@@ -19,6 +19,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -57,6 +58,11 @@ const NOT_FOUND_PREFIX = "[NOT_FOUND]"
 const END_PREFIX = "[END]"
 
 const ANNOUNCE_TTL = 8 * time.Minute
+
+// SendSemaphoreCapacity — максимальное число одновременных
+// исходящих отправок (stream'ов). Защита libp2p от перегруза.
+// 10 — проверено. При 15+ узлах — можно увеличить.
+const SendSemaphoreCapacity = 10
 
 // E2E_VERSION — версия формата QR-обмена E2E-ключами.
 // 0 — старый формат (только PeerID). 1 — JSON с ключами.
@@ -246,7 +252,7 @@ func NewNode(cfg Config) *Node {
 		announcedPeers:          make(map[string]announcedPeer),
 		tempContacts:            make(map[string]Contact),
 		myReadEnabled:           true,
-		sendSem:                 make(chan struct{}, 10),
+		sendSem:                 make(chan struct{}, SendSemaphoreCapacity),
 		pendingDelivered:        make(map[string][]string),
 		deliveredCount:          make(map[string]int),
 	}
@@ -988,7 +994,15 @@ func (n *Node) sendToRecipient(msg Message, data []byte, isFileChunk bool) bool 
 		}
 	}
 	if inPeers {
-		go n.sendWithFallback(targetID, data, msg.Recipient, isFileChunk)
+		if isFileChunk {
+			go func() {
+				n.sendSem <- struct{}{}
+				defer func() { <-n.sendSem }()
+				n.sendWithFallback(targetID, data, msg.Recipient, isFileChunk)
+			}()
+		} else {
+			go n.sendWithFallback(targetID, data, msg.Recipient, isFileChunk)
+		}
 		return true
 	}
 
@@ -1033,6 +1047,8 @@ func (n *Node) fallbackSend(recipient string, data []byte, isFileChunk bool) boo
 	// подключаемся к нему напрямую и отправляем.
 	if n.isRelay {
 		if addrs, ok := n.lookupPeer(recipient); ok && len(addrs) > 0 {
+			// TODO(15+): relay-fallback без семафора. VPS не падает — ресурсы серверные.
+			// При 15+ узлах и прямых circuit — добавить семафор сюда.
 			go func(pid string, addrList []string, payload []byte, isFileChunk bool) {
 				for _, a := range addrList {
 					pi, err := peer.AddrInfoFromString(a)
@@ -1068,7 +1084,15 @@ func (n *Node) fallbackSend(recipient string, data []byte, isFileChunk bool) boo
 		if n.host.ID() == pi.ID {
 			continue
 		}
-		go n.sendReplicaToPeer(pi.ID, data, isFileChunk)
+		if isFileChunk {
+			go func(pid peer.ID) {
+				n.sendSem <- struct{}{}
+				defer func() { <-n.sendSem }()
+				n.sendReplicaToPeer(pid, data, isFileChunk)
+			}(pi.ID)
+		} else {
+			go n.sendReplicaToPeer(pi.ID, data, isFileChunk)
+		}
 		return true
 	}
 
@@ -1094,10 +1118,6 @@ func (n *Node) sendReplicaToPeer(targetID peer.ID, data []byte, isFileChunk bool
 		log.Printf("[REPLICA] sendReplicaToPeer target=%s me=%s data=%s", targetID, myID, msgPreview)
 		randomDelay(10, 30)
 	}
-	// Глобальный семафор — не более 10 одновременных stream'ов.
-	n.sendSem <- struct{}{}
-	defer func() { <-n.sendSem }()
-
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	s, err := n.host.NewStream(ctx, targetID, protocolID)
@@ -2250,12 +2270,23 @@ func (n *Node) announceLoop() {
 
 func (n *Node) cleanupLoop() {
 	go func() {
+		ticker := time.NewTicker(1 * time.Minute)
+		defer ticker.Stop()
+		diagTicker := time.NewTicker(10 * time.Second)
+		defer diagTicker.Stop()
 		for {
-			time.Sleep(1 * time.Minute)
-			n.cleanupAnnounced()
-			if removed := n.memory.DeleteExpired(); removed > 0 {
-				log.Printf("[TTL] purged %d expired messages", removed)
-				n.scheduleSaveState()
+			select {
+			case <-ticker.C:
+				n.cleanupAnnounced()
+				if removed := n.memory.DeleteExpired(); removed > 0 {
+					log.Printf("[TTL] purged %d expired messages", removed)
+					n.scheduleSaveState()
+				}
+			case <-diagTicker.C:
+				var m runtime.MemStats
+				runtime.ReadMemStats(&m)
+				log.Printf("[DIAG] goroutines=%d, heap=%d KB, sys=%d KB",
+					runtime.NumGoroutine(), m.HeapAlloc/1024, m.Sys/1024)
 			}
 		}
 	}()
