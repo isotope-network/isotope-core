@@ -245,6 +245,19 @@ func (m *Memory) GetAll() []Message {
 	return result
 }
 
+// GetSeenCopy — возвращает копию map seen под m.mu.
+// Нужно для saveState: маршалинг должен видеть стабильный снимок,
+// а не map, которая параллельно мутируется.
+func (m *Memory) GetSeenCopy() map[string]bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	result := make(map[string]bool, len(m.seen))
+	for k, v := range m.seen {
+		result[k] = v
+	}
+	return result
+}
+
 // GetActiveMessages — возвращает неархивированные сообщения с весом >= threshold
 func (m *Memory) GetActiveMessages(threshold float64) []Message {
 	m.mu.Lock()

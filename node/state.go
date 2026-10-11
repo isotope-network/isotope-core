@@ -86,10 +86,7 @@ func (n *Node) saveState() error {
 	n.mu.Lock()
 	defer n.mu.Unlock()
 
-	seen := n.memory.seen
-	if seen == nil {
-		seen = make(map[string]bool)
-	}
+	seen := n.memory.GetSeenCopy()
 
 	var routingTable []string
 	if n.dhtNode != nil {
