@@ -215,7 +215,15 @@ type Node struct {
 
 	// sendSem — глобальный семафор исходящих stream'ов (10 одновременно).
 	// Защита от перегруза libp2p при flushPending / SendFile.
+	// Используется только для не-файловых сообщений.
 	sendSem chan struct{}
+
+	// chunkQueue — очередь файловых чанков для воркер-пула.
+	// Файловые чанки не создают горутину на каждый чанк (было 10 700 горутин
+	// → 4.5 ГБ heap). Вместо этого — очередь + 10 воркеров.
+	// Буфер 1000 — SendFileByPath блокируется, если полный. Это OK —
+	// SendFileByPath работает в своей горутине.
+	chunkQueue chan Message
 
 	// Батч [DELIVERED] — буфер refs по отправителю.
 	// Копим msg_id чанков, отправляем одним [DELIVERED] с Refs.
@@ -253,6 +261,7 @@ func NewNode(cfg Config) *Node {
 		tempContacts:            make(map[string]Contact),
 		myReadEnabled:           true,
 		sendSem:                 make(chan struct{}, SendSemaphoreCapacity),
+		chunkQueue:              make(chan Message, 1000),
 		pendingDelivered:        make(map[string][]string),
 		deliveredCount:          make(map[string]int),
 	}
@@ -995,13 +1004,14 @@ func (n *Node) sendToRecipient(msg Message, data []byte, isFileChunk bool) bool 
 	}
 	if inPeers {
 		if isFileChunk {
+			// Уже в воркере — синхронно, без горутины, без семафора.
+			n.sendWithFallback(targetID, data, msg.Recipient, isFileChunk)
+		} else {
 			go func() {
 				n.sendSem <- struct{}{}
 				defer func() { <-n.sendSem }()
 				n.sendWithFallback(targetID, data, msg.Recipient, isFileChunk)
 			}()
-		} else {
-			go n.sendWithFallback(targetID, data, msg.Recipient, isFileChunk)
 		}
 		return true
 	}
@@ -1085,19 +1095,34 @@ func (n *Node) fallbackSend(recipient string, data []byte, isFileChunk bool) boo
 			continue
 		}
 		if isFileChunk {
+			// Уже в воркере — синхронно.
+			n.sendReplicaToPeer(pi.ID, data, isFileChunk)
+		} else {
 			go func(pid peer.ID) {
 				n.sendSem <- struct{}{}
 				defer func() { <-n.sendSem }()
 				n.sendReplicaToPeer(pid, data, isFileChunk)
 			}(pi.ID)
-		} else {
-			go n.sendReplicaToPeer(pi.ID, data, isFileChunk)
 		}
 		return true
 	}
 
 	log.Printf("[STATUS] recipient not found: %s", recipient)
 	return false
+}
+
+// chunkWorker — воркер отправки файловых чанков.
+// Читает из chunkQueue, маршалит, отправляет через sendToRecipient.
+// 10 воркеров запускаются в InitP2P.
+func (n *Node) chunkWorker() {
+	for msg := range n.chunkQueue {
+		data, err := json.Marshal(msg)
+		if err != nil {
+			log.Printf("[CHUNK] marshal failed id=%s: %v", msg.ID, err)
+			continue
+		}
+		n.sendToRecipient(msg, data, true)
+	}
 }
 
 // sendReplicaToPeer — отправка данных пиру.
@@ -2469,9 +2494,14 @@ func (n *Node) replicateMessage(msg Message) {
 
 	if msg.Recipient != "" {
 		// Адресное сообщение.
-		n.sendToRecipient(msg, data, isFileChunk)
-		// В offline-очередь — только НЕ-сервисные и только на клиенте.
-		if !n.isRelay && !n.isServiceType(msg.Type) {
+		if isFileChunk {
+			// Файловый чанк — в очередь воркеров (не создаём горутину).
+			n.chunkQueue <- msg
+		} else {
+			n.sendToRecipient(msg, data, isFileChunk)
+		}
+		// В offline-очередь — только НЕ-сервисные, НЕ файловые чанки и только на клиенте.
+		if !n.isRelay && !n.isServiceType(msg.Type) && !isFileChunk {
 			n.enqueuePending(msg)
 		}
 		return
@@ -2494,7 +2524,9 @@ func (n *Node) replicateMessage(msg Message) {
 			return
 		}
 		log.Printf("[REPLICA] SKIP: no alive peers — enqueue")
-		n.enqueuePending(msg)
+		if !isFileChunk {
+			n.enqueuePending(msg)
+		}
 		return
 	}
 	replicaCount := 2
@@ -2720,6 +2752,12 @@ func (n *Node) processMessageInternal(msg string, senderID string, isOwn bool, e
 		ReadEnabled:      &readEnabled,
 		TtlPeriodSeconds: ttlPeriodSeconds,
 		TtlMode:          ttlMode,
+	}
+	// Свои файловые чанки: base64 не нужен в Memory (файл на диске в sent/).
+	// Dart не запрашивает getChunk для isOwn. Экономия ~900 МБ на 670 МБ-файле.
+	if isOwn && newMsg.MediaType == "file" && newMsg.ChunkTotal > 0 {
+		newMsg.Text = ""
+		newMsg.PlainText = ""
 	}
 	if n.memory.Add(newMsg) {
 		// Если это наше E2E-сообщение — фиксируем статус StatusSent.
@@ -3039,6 +3077,12 @@ func (n *Node) InitP2P() error {
 				n.layers[0][i] = hashVec[i] * 0.1
 			}
 		}
+	}
+
+	// Воркер-пул для файловых чанков (10 воркеров).
+	// Защита от 10 700 горутин: чанки идут через chunkQueue, не через go func.
+	for i := 0; i < SendSemaphoreCapacity; i++ {
+		go n.chunkWorker()
 	}
 
 	n.pingPeers()
