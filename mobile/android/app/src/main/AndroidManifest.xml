@@ -1,3 +1,4 @@
+<!-- mobile/android/app/src/main/AndroidManifest.xml -->
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <!-- Разрешения для Wi-Fi, multicast и сети -->
     <uses-permission android:name="android.permission.INTERNET"/>
@@ -19,6 +20,8 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC"/>
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
+    <!-- Wake Lock (PARTIAL_WAKE_LOCK в IsotopeService) -->
+    <uses-permission android:name="android.permission.WAKE_LOCK"/>
 
     <!-- Микрофон (голосовые сообщения) -->
     <uses-permission android:name="android.permission.RECORD_AUDIO"/>
@@ -64,3 +67,4 @@
         </intent>
     </queries>
 </manifest>
+<!-- mobile/android/app/src/main/AndroidManifest.xml -->
