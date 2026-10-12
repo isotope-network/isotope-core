@@ -45,8 +45,9 @@ class MediaStorage {
       final dir = Directory('${_chunksRoot.path}/$mediaId');
       if (!await dir.exists()) {
         // Возможно, файл уже собран — тогда все чанки были.
-        final assembled = File('${_filesRoot.path}/$mediaId.bin');
-        if (await assembled.exists()) {
+        // Ищем с любым расширением: <mediaId>.*
+        final filePath = await getFilePath(mediaId);
+        if (filePath != null) {
           return -1; // маркер «собран»
         }
         return 0;
@@ -118,6 +119,14 @@ class MediaStorage {
     }
   }
 
+  /// Извлекает расширение из имени файла (включая точку).
+  /// "video.mp4" → ".mp4". "file" → "".
+  static String _extFromName(String name) {
+    final dot = name.lastIndexOf('.');
+    if (dot < 0 || dot == name.length - 1) return '';
+    return name.substring(dot);
+  }
+
   /// Проверяет — все ли чанки есть. Если да — склеивает в файл.
   /// Возвращает путь к собранному файлу или null, если ещё не все.
   static Future<String?> tryAssemble(String mediaId) async {
@@ -141,7 +150,10 @@ class MediaStorage {
       }
 
       // Все на месте — склеиваем.
-      final outPath = '${_filesRoot.path}/$mediaId.bin';
+      // Сохраняем с оригинальным расширением, чтобы Android знал тип файла.
+      final fileName = meta['fileName'] as String? ?? '';
+      final ext = _extFromName(fileName);
+      final outPath = '${_filesRoot.path}/$mediaId$ext';
       final out = File(outPath);
       final sink = out.openWrite();
       for (final c in chunks) {
@@ -167,10 +179,25 @@ class MediaStorage {
   }
 
   /// Возвращает путь к собранному файлу, если он есть.
+  /// Ищет с любым расширением: <mediaId>.*
   static Future<String?> getFilePath(String mediaId) async {
-    final path = '${_filesRoot.path}/$mediaId.bin';
-    final f = File(path);
-    if (await f.exists()) return path;
+    if (mediaId.isEmpty) return null;
+    final dir = _filesRoot;
+    if (!await dir.exists()) return null;
+    try {
+      await for (final e in dir.list()) {
+        if (e is File) {
+          final name = e.path.split(Platform.pathSeparator).last;
+          if (name.startsWith(mediaId) &&
+              (name.length == mediaId.length ||
+                  name[mediaId.length] == '.')) {
+            return e.path;
+          }
+        }
+      }
+    } catch (_) {
+      return null;
+    }
     return null;
   }
 
