@@ -75,6 +75,14 @@ class ChatProvider extends ChangeNotifier {
   final Map<String, int> _messageStatuses = {};
   Timer? _statusTimer;
 
+  // ==== FILE AGGREGATE ====
+  // Файловые чанки не хранятся в _messagesMap (иначе UI O(N) → ANR).
+  // Вместо этого — одна запись на файл + прогресс.
+  // _fileMessages: mediaId → агрегат (метаданные + localFilePath).
+  // _fileProgress: mediaId → 0..100. Обновляется push'ем [FILE_STATUS] из Go.
+  final Map<String, Message> _fileMessages = {};
+  final Map<String, int> _fileProgress = {};
+
   // ==== PENDING (таймер отправки) ====
   // Сообщения, ожидающие отправки через N секунд.
   // ID → Message (с pendingState = 'pending').
@@ -184,38 +192,14 @@ class ChatProvider extends ChangeNotifier {
         })
         .toList();
 
-    // Группировка файловых чанков по mediaId.
-    final fileGroups = <String, List<Message>>{};
-    final others = <Message>[];
-    for (final m in filtered) {
-      if (m.isFile && m.chunkTotal > 0) {
-        fileGroups.putIfAbsent(m.mediaId, () => []).add(m);
-      } else {
-        others.add(m);
-      }
-    }
-    for (final group in fileGroups.values) {
-      group.sort((a, b) => a.chunkIndex.compareTo(b.chunkIndex));
-      // Статус файла = минимум по всем чанкам группы.
-      // 1=sent, 2=delivered, 3=hidden, 4=read.
-      // hidden — терминальный: если есть хоть один, статус = hidden.
-      int minStatus = 4;
-      bool anyHidden = false;
-      bool anyStatus = false;
-      for (final c in group) {
-        final s = _messageStatuses[c.id] ?? c.messageStatus ?? 0;
-        if (s == 3) anyHidden = true;
-        if (s > 0) {
-          anyStatus = true;
-          if (s < minStatus) minStatus = s;
-        }
-      }
-      if (anyHidden) {
-        minStatus = 3;
-      } else if (!anyStatus) {
-        minStatus = 0;
-      }
-      others.add(group.first.withStatus(minStatus));
+    // Файловые агрегаты — отдельно, не из _messagesMap.
+    final others = <Message>[...filtered];
+    for (final agg in _fileMessages.values) {
+      if (agg.isExpired) continue;
+      final isOwn = agg.isOwn || _ownMessageIds.contains(agg.id);
+      if (isOwn && agg.recipient != peerID) continue;
+      if (!isOwn && agg.sender != peerID) continue;
+      others.add(agg);
     }
 
     final list = others
@@ -602,6 +586,37 @@ class ChatProvider extends ChangeNotifier {
           if (peerID.isNotEmpty) {
             LogService.log('P2P: событие open_chat → $peerID');
             _openChatController.add(peerID);
+          }
+          return;
+        }
+
+        // Специальное событие: агрегат по файлу от Go.
+        if (messageJSON.contains('"file_status"')) {
+          final map = jsonDecode(messageJSON) as Map<String, dynamic>;
+          final fs = map['file_status'] as Map<String, dynamic>?;
+          if (fs != null) {
+            final mediaID = fs['mediaID'] as String? ?? '';
+            final delivered = fs['delivered'] as int? ?? 0;
+            final total = fs['total'] as int? ?? 0;
+            if (mediaID.isNotEmpty && total > 0) {
+              final percent = ((delivered / total) * 100).clamp(0, 100).round();
+              _fileProgress[mediaID] = percent;
+              _safeNotify();
+            }
+          }
+          return;
+        }
+
+        // Специальное событие: файл завершён.
+        if (messageJSON.contains('"file_complete"')) {
+          final map = jsonDecode(messageJSON) as Map<String, dynamic>;
+          final fc = map['file_complete'] as Map<String, dynamic>?;
+          if (fc != null) {
+            final mediaID = fc['mediaID'] as String? ?? '';
+            if (mediaID.isNotEmpty) {
+              _fileProgress[mediaID] = 100;
+              _safeNotify();
+            }
           }
           return;
         }
@@ -1150,6 +1165,45 @@ class ChatProvider extends ChangeNotifier {
         final mediaId = map['media_id'] ?? '';
         final chunkTotal = map['chunk_total'] ?? 0;
 
+        // Файловые чанки: НЕ кладём в UI. Обрабатываем отдельно — один агрегат на файл.
+        if (mediaType == 'file' && chunkTotal > 0 && mediaId.toString().isNotEmpty) {
+          final mid = mediaId.toString();
+          final existing = _fileMessages[mid];
+          if (existing == null) {
+            // Восстановление пути для собранного файла.
+            String localPath = '';
+            final p = await MediaStorage.getFilePath(mid);
+            if (p != null) localPath = p;
+            final agg = Message(
+              id: map['id'] ?? '',
+              text: '',
+              plainText: '',
+              version: map['version'] ?? 0,
+              sender: sender,
+              time: map['time'] ?? DateTime.now().toUtc().toIso8601String(),
+              isOwn: shortSender == shortMyID || map['isOwn'] == true,
+              score: map['score'] ?? 0,
+              weight: (map['weight'] as num?)?.toDouble() ?? 0.5,
+              archived: map['archived'] ?? false,
+              channel: map['channel'] ?? _activeChannel,
+              ttlPeriodSeconds: map['ttl_period_s'] ?? 0,
+              ttlMode: map['ttl_mode'] ?? '',
+              expiresAt: Message.parseExpiresAt(map['expiresAt']),
+              recipient: map['recipient'] ?? '',
+              mediaType: mediaType,
+              fileName: map['file_name'] ?? '',
+              fileSize: map['file_size'] ?? 0,
+              mediaId: mid,
+              chunkIndex: 0,
+              chunkTotal: chunkTotal,
+              localFilePath: localPath,
+            );
+            _fileMessages[mid] = agg;
+          }
+          // Не добавляем в result — UI получит агрегат из _fileMessages.
+          continue;
+        }
+
         // Восстановление пути для собранного файла на диске.
         String localPath = '';
         if (mediaType == 'file' && chunkTotal > 0 && mediaId.toString().isNotEmpty) {
@@ -1298,15 +1352,27 @@ class ChatProvider extends ChangeNotifier {
       }
       return;
     }
-    _messagesMap[msg.id] = msg;
 
-    // Файловый чанк — сохраняем на диск, при готовности собираем.
-    // НЕ обновляем lastMessage, НЕ отправляем [READ], НЕ пушим в unread.
+    // Файловый чанк — НЕ храним в _messagesMap. Отдельная карта.
+    // Иначе _messagesMap растёт до 10 700 → UI O(N) → ANR.
     final isFileChunk = msg.isFile && msg.chunkTotal > 0;
     if (isFileChunk) {
       LogService.log('ADD chunk ${msg.chunkIndex + 1}/${msg.chunkTotal} mediaId=${msg.mediaId}');
-      // Обновляем lastMessageByPeer по последнему чанку (файл = одно сообщение).
-      // Ключ — peerID собеседника: свой recipient или sender.
+
+      // Агрегат по файлу: одна запись на mediaId.
+      final agg = _fileMessages[msg.mediaId];
+      if (agg == null) {
+        // Первый чанк — создаём агрегат.
+        _fileMessages[msg.mediaId] = msg;
+      } else if (msg.localFilePath.isNotEmpty && agg.localFilePath.isEmpty) {
+        // Файл собран — обновляем localFilePath.
+        _fileMessages[msg.mediaId] = agg.withLocalFilePath(msg.localFilePath);
+      } else if (msg.chunkIndex == msg.chunkTotal - 1) {
+        // Последний чанк — обновляем time (для сортировки и lastMessage).
+        _fileMessages[msg.mediaId] = msg;
+      }
+
+      // lastMessageByPeer — по последнему чанку.
       if (msg.chunkIndex == msg.chunkTotal - 1) {
         final chatPeer = msg.isOwn ? msg.recipient : msg.sender;
         if (chatPeer.isNotEmpty && chatPeer != '🌐 Сеть') {
@@ -1316,10 +1382,13 @@ class ChatProvider extends ChangeNotifier {
           }
         }
       }
+
       _enqueueFileChunk(msg);
       _safeNotify();
       return;
     }
+
+    _messagesMap[msg.id] = msg;
 
     // Обновляем кэш последнего сообщения для чата.
     // Ключ — peerID собеседника: свой recipient или sender.
@@ -1412,14 +1481,8 @@ class ChatProvider extends ChangeNotifier {
 
   /// Запрашивает base64 одного чанка через getChunk и сохраняет на диск.
   Future<void> _fetchAndSaveChunk(String mediaId, int chunkIndex) async {
-    // Метаданные — из _messagesMap.
-    Message? meta;
-    for (final m in _messagesMap.values) {
-      if (m.mediaId == mediaId && m.chunkIndex == chunkIndex) {
-        meta = m;
-        break;
-      }
-    }
+    // Метаданные — из _fileMessages (агрегат).
+    final meta = _fileMessages[mediaId];
     if (meta == null) return;
     // Свои чанки — не сохраняем (двойная защита).
     if (meta.isOwn) return;
@@ -1459,31 +1522,19 @@ class ChatProvider extends ChangeNotifier {
     }
     if (path == null) return;
 
-    // Все чанки собраны — обновляем ВСЕ Message этого mediaId (localFilePath).
-    final updates = <String, Message>{};
-    for (final m in _messagesMap.values) {
-      if (m.mediaId == mediaId && m.localFilePath != path) {
-        updates[m.id] = m.withLocalFilePath(path);
-      }
+    // Все чанки собраны — обновляем агрегат localFilePath.
+    final agg = _fileMessages[mediaId];
+    if (agg != null && agg.localFilePath != path) {
+      _fileMessages[mediaId] = agg.withLocalFilePath(path);
+      LogService.log('MEDIA: file ready $path');
+      _safeNotify();
     }
-    if (updates.isEmpty) return;
-    for (final e in updates.entries) {
-      _messagesMap[e.key] = e.value;
-    }
-    LogService.log('MEDIA: file ready $path');
-    _safeNotify();
 
     // Файл собран — если чат открыт, отправляем [READ] по последнему чанку.
     if (_currentOpenPeerID != null && _currentOpenPeerID!.isNotEmpty) {
-      final all = _messagesMap.values
-          .where((m) => m.mediaId == mediaId && m.chunkTotal > 0)
-          .toList();
-      if (all.isNotEmpty) {
-        all.sort((a, b) => a.chunkIndex.compareTo(b.chunkIndex));
-        final last = all.last;
-        if (last.sender == _currentOpenPeerID && !last.readLocally) {
-          _sendReadFor(last);
-        }
+      final last = _fileMessages[mediaId];
+      if (last != null && last.sender == _currentOpenPeerID && !last.readLocally) {
+        _sendReadFor(last);
       }
     }
   }
@@ -1493,25 +1544,20 @@ class ChatProvider extends ChangeNotifier {
   /// Получатель: по числу сохранённых чанков на диске.
   int fileProgress(String mediaId) {
     if (mediaId.isEmpty) return 0;
-    final chunks = _messagesMap.values
-        .where((m) => m.mediaId == mediaId && m.chunkTotal > 0)
-        .toList();
-    if (chunks.isEmpty) return 0;
-    final total = chunks.first.chunkTotal;
-    if (total <= 0) return 0;
 
-    final isOwn = chunks.first.isOwn;
-    int ready = 0;
-    if (isOwn) {
-      for (final c in chunks) {
-        final s = _messageStatuses[c.id] ?? c.messageStatus ?? 0;
-        if (s >= 2) ready++;
-      }
-    } else {
-      ready = MediaStorage.chunksCount(mediaId);
-      if (ready < 0) return 100; // маркер «собран»
-    }
-    return ((ready / total) * 100).clamp(0, 100).round();
+    // Отправитель: push [FILE_STATUS] из Go → _fileProgress.
+    final pushed = _fileProgress[mediaId];
+    if (pushed != null) return pushed;
+
+    // Получатель: число сохранённых чанков на диске.
+    final chunks = MediaStorage.chunksCount(mediaId);
+    if (chunks < 0) return 100; // маркер «собран»
+
+    final agg = _fileMessages[mediaId];
+    if (agg == null) return 0;
+    final total = agg.chunkTotal;
+    if (total <= 0) return 0;
+    return ((chunks / total) * 100).clamp(0, 100).round();
   }
 
   /// Отправляет [READ] для одного сообщения (если ещё не отправляли).
@@ -1554,33 +1600,32 @@ class ChatProvider extends ChangeNotifier {
   /// этого mediaId (один файл = много чанков, они группируются в UI).
   /// Синхронизирует с Go: FileDeleteAll в Go-ядре.
   void deleteMessage(String id) {
-    final msg = _messagesMap[id];
-    if (msg == null) return;
-
-    if (msg.isFile && msg.mediaId.isNotEmpty) {
-      // Удаляем все чанки этого mediaId.
-      final toRemove = <String>[];
-      for (final entry in _messagesMap.entries) {
-        if (entry.value.mediaId == msg.mediaId) {
-          toRemove.add(entry.key);
-          _messageStatuses.remove(entry.key);
-        }
+    // Файловый агрегат — отдельный путь.
+    Message? fileMsg;
+    for (final m in _fileMessages.values) {
+      if (m.id == id) {
+        fileMsg = m;
+        break;
       }
-      for (final k in toRemove) {
-        _messagesMap.remove(k);
-      }
-      // Кэш последнего сообщения — пересобрать.
-      final chatPeer = msg.isOwn ? msg.recipient : msg.sender;
+    }
+    if (fileMsg != null && fileMsg.mediaId.isNotEmpty) {
+      final mediaId = fileMsg.mediaId;
+      _fileMessages.remove(mediaId);
+      _fileProgress.remove(mediaId);
+      final chatPeer = fileMsg.isOwn ? fileMsg.recipient : fileMsg.sender;
       if (chatPeer.isNotEmpty) {
         _lastMessageByPeer.remove(chatPeer);
       }
-      // Go: удалить все чанки файла из memory + sent/ (если есть).
-      LibP2PService.deleteFile(msg.mediaId).catchError((_) => <String, dynamic>{});
-      LogService.log('DELETE file ${msg.mediaId} — удалено чанков: ${toRemove.length}');
-    } else {
-      _messagesMap.remove(id);
-      _messageStatuses.remove(id);
+      LibP2PService.deleteFile(mediaId).catchError((_) => <String, dynamic>{});
+      LogService.log('DELETE file $mediaId');
+      _safeNotify();
+      return;
     }
+
+    final msg = _messagesMap[id];
+    if (msg == null) return;
+    _messagesMap.remove(id);
+    _messageStatuses.remove(id);
     _safeNotify();
   }
 
@@ -1601,6 +1646,18 @@ class ChatProvider extends ChangeNotifier {
     for (final id in toRemove) {
       _messagesMap.remove(id);
       _messageStatuses.remove(id);
+    }
+
+    // 1b. Файловые агрегаты — тоже удалить.
+    final fileToRemove = <String>[];
+    _fileMessages.forEach((mediaId, m) {
+      if (m.sender == peerID || m.recipient == peerID) {
+        fileToRemove.add(mediaId);
+      }
+    });
+    for (final mediaId in fileToRemove) {
+      _fileMessages.remove(mediaId);
+      _fileProgress.remove(mediaId);
     }
 
     // 2. Кэш последнего сообщения.
@@ -1635,11 +1692,22 @@ class ChatProvider extends ChangeNotifier {
 
   void clearAllMessages() {
     _messagesMap.clear();
+    _fileMessages.clear();
+    _fileProgress.clear();
     _lastMessageByPeer.clear();
     _safeNotify();
   }
 
   void purgeExpired() {
+    // Файловые агрегаты — отдельно.
+    _fileMessages.removeWhere((mediaId, m) {
+      if (m.isExpired) {
+        _fileProgress.remove(mediaId);
+        return true;
+      }
+      return false;
+    });
+
     final before = _messagesMap.length;
     final expiredPeers = <String>{};
     _messagesMap.removeWhere((key, msg) {

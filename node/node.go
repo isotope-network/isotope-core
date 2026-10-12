@@ -238,6 +238,12 @@ type Node struct {
 	unackedChunks   map[string]retryInfo
 	unackedChunksMu sync.Mutex
 
+	// fileStatusLastPush — throttle для push [FILE_STATUS] в Dart.
+	// Ключ mediaID → время последнего push.
+	// Не чаще раза в секунду на файл.
+	fileStatusLastPush map[string]time.Time
+	fileStatusMu       sync.Mutex
+
 	// Батч [DELIVERED] — буфер refs по отправителю.
 	// Копим msg_id чанков, отправляем одним [DELIVERED] с Refs.
 	pendingDelivered   map[string][]string
@@ -276,6 +282,7 @@ func NewNode(cfg Config) *Node {
 		sendSem:                 make(chan struct{}, SendSemaphoreCapacity),
 		chunkQueue:              make(chan Message, 1000),
 		unackedChunks:           make(map[string]retryInfo),
+		fileStatusLastPush:      make(map[string]time.Time),
 		pendingDelivered:        make(map[string][]string),
 		deliveredCount:          make(map[string]int),
 	}
@@ -1147,6 +1154,55 @@ func (n *Node) chunkWorker() {
 		n.unackedChunksMu.Unlock()
 
 		n.sendToRecipient(msg, data, true)
+	}
+}
+
+// pushFileStatus — push агрегата по файлу в Dart.
+// Throttle: не чаще раза в секунду на mediaID.
+// Payload: {"file_status": {"mediaID": ..., "delivered": N, "total": M}}
+// Если delivered >= total — дополнительно шлём {"file_complete": {"mediaID": ...}}.
+func (n *Node) pushFileStatus(mediaID string, delivered, total int) {
+	if mediaID == "" || total <= 0 {
+		return
+	}
+	n.fileStatusMu.Lock()
+	last := n.fileStatusLastPush[mediaID]
+	complete := delivered >= total
+	if !complete && time.Since(last) < time.Second {
+		n.fileStatusMu.Unlock()
+		return
+	}
+	n.fileStatusLastPush[mediaID] = time.Now()
+	n.fileStatusMu.Unlock()
+
+	if n.messageHook == nil {
+		return
+	}
+
+	payload := map[string]interface{}{
+		"file_status": map[string]interface{}{
+			"mediaID":   mediaID,
+			"delivered": delivered,
+			"total":     total,
+		},
+	}
+	if data, err := json.Marshal(payload); err == nil {
+		n.messageHook(string(data))
+	}
+
+	if complete {
+		done := map[string]interface{}{
+			"file_complete": map[string]interface{}{
+				"mediaID": mediaID,
+			},
+		}
+		if data, err := json.Marshal(done); err == nil {
+			n.messageHook(string(data))
+		}
+		// Очистить throttle-запись — файл завершён.
+		n.fileStatusMu.Lock()
+		delete(n.fileStatusLastPush, mediaID)
+		n.fileStatusMu.Unlock()
 	}
 }
 
@@ -3715,6 +3771,9 @@ func (n *Node) handleDeliveredRef(ref, sender string) {
 				mediaID := msg.MediaID
 				n.deliveredCountMu.Unlock()
 
+				// Push агрегата в Dart (throttled).
+				n.pushFileStatus(mediaID, delivered, total)
+
 				if delivered >= total {
 					sentPath := n.sentPath(mediaID)
 					if err := os.Remove(sentPath); err == nil {
@@ -4201,6 +4260,10 @@ func (n *Node) GetMessageStatuses() map[string]MessageStatus {
 	result := make(map[string]MessageStatus, len(all))
 	for _, msg := range all {
 		if msg.Status > 0 {
+			// Файловые чанки — через [FILE_STATUS] push. Не дублируем.
+			if msg.MediaType == "file" && msg.ChunkTotal > 0 {
+				continue
+			}
 			result[msg.ID] = msg.Status
 		}
 	}
