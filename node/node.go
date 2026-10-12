@@ -86,6 +86,13 @@ const (
 	StatusRead      MessageStatus = 4 // прочитано (высший приоритет)
 )
 
+// retryInfo — информация о чанке, ожидающем подтверждения.
+type retryInfo struct {
+	msg      Message   // сам чанк
+	attempts int       // число попыток переотправки
+	lastSent time.Time // время последней отправки
+}
+
 // announcedPeer — запись о пире: список его multiaddr + когда последний раз видели.
 type announcedPeer struct {
 	Multiaddrs []string  `json:"multiaddrs"`
@@ -225,6 +232,12 @@ type Node struct {
 	// SendFileByPath работает в своей горутине.
 	chunkQueue chan Message
 
+	// unackedChunks — чанки, отправленные, но не подтверждённые [DELIVERED].
+	// Через 30 сек без ack — переотправка (до 3 попыток).
+	// Защита от потери чанков в сети (Wi-Fi).
+	unackedChunks   map[string]retryInfo
+	unackedChunksMu sync.Mutex
+
 	// Батч [DELIVERED] — буфер refs по отправителю.
 	// Копим msg_id чанков, отправляем одним [DELIVERED] с Refs.
 	pendingDelivered   map[string][]string
@@ -262,6 +275,7 @@ func NewNode(cfg Config) *Node {
 		myReadEnabled:           true,
 		sendSem:                 make(chan struct{}, SendSemaphoreCapacity),
 		chunkQueue:              make(chan Message, 1000),
+		unackedChunks:           make(map[string]retryInfo),
 		pendingDelivered:        make(map[string][]string),
 		deliveredCount:          make(map[string]int),
 	}
@@ -1121,7 +1135,62 @@ func (n *Node) chunkWorker() {
 			log.Printf("[CHUNK] marshal failed id=%s: %v", msg.ID, err)
 			continue
 		}
+		// Кладём в unackedChunks — ждём [DELIVERED].
+		n.unackedChunksMu.Lock()
+		info := n.unackedChunks[msg.ID]
+		info.msg = msg
+		if info.lastSent.IsZero() {
+			info.attempts = 0
+		}
+		info.lastSent = time.Now()
+		n.unackedChunks[msg.ID] = info
+		n.unackedChunksMu.Unlock()
+
 		n.sendToRecipient(msg, data, true)
+	}
+}
+
+// retryLoop — периодическая проверка unackedChunks.
+// Если чанк не подтверждён за 30 сек — переотправка.
+// После 3 попыток — сдаться, удалить (файл повреждён).
+func (n *Node) retryLoop() {
+	go func() {
+		for {
+			time.Sleep(15 * time.Second)
+			n.retryUnacked()
+		}
+	}()
+}
+
+// retryUnacked — одна итерация проверки unackedChunks.
+func (n *Node) retryUnacked() {
+	now := time.Now()
+	var toRetry []Message
+
+	n.unackedChunksMu.Lock()
+	for id, info := range n.unackedChunks {
+		if now.Sub(info.lastSent) < 30*time.Second {
+			continue
+		}
+		if info.attempts >= 3 {
+			log.Printf("[RETRY] giving up on %s after %d attempts", id, info.attempts)
+			delete(n.unackedChunks, id)
+			continue
+		}
+		info.attempts++
+		info.lastSent = now
+		n.unackedChunks[id] = info
+		toRetry = append(toRetry, info.msg)
+		log.Printf("[RETRY] re-enqueue %s (attempt %d)", id, info.attempts)
+	}
+	n.unackedChunksMu.Unlock()
+
+	for _, msg := range toRetry {
+		select {
+		case n.chunkQueue <- msg:
+		default:
+			log.Printf("[RETRY] chunkQueue full, dropping %s", msg.ID)
+		}
 	}
 }
 
@@ -3084,6 +3153,7 @@ func (n *Node) InitP2P() error {
 	for i := 0; i < SendSemaphoreCapacity; i++ {
 		go n.chunkWorker()
 	}
+	n.retryLoop()
 
 	n.pingPeers()
 	if !n.isRelay {
@@ -3600,6 +3670,11 @@ func (n *Node) handleDeliveredRef(ref, sender string) {
 		return
 	}
 	n.removePendingByRef(ref)
+
+	// Чанк подтверждён — убираем из unackedChunks.
+	n.unackedChunksMu.Lock()
+	delete(n.unackedChunks, ref)
+	n.unackedChunksMu.Unlock()
 
 	peerReadEnabled := n.getPeerReadEnabled(sender)
 	if !n.myReadEnabled || !peerReadEnabled {
