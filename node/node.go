@@ -249,6 +249,11 @@ type Node struct {
 	pendingDelivered   map[string][]string
 	pendingDeliveredMu sync.Mutex
 
+	// pendingDeliveredTimers — один таймер на sender.
+	// Окно 2 сек: пока открыто — refs копятся, по истечении — один батч.
+	// Без этого: time.AfterFunc на каждый ref → 10 таймеров/сек → flood.
+	pendingDeliveredTimers map[string]*time.Timer
+
 	// deliveredCount — счётчик доставленных чанков по MediaID (отправитель).
 	// Когда == ChunkTotal — удаляем sent/<MediaID>.bin.
 	// O(1) вместо O(N) проверки всех чанков на каждый [DELIVERED].
@@ -285,6 +290,7 @@ func NewNode(cfg Config) *Node {
 		fileStatusLastPush:      make(map[string]time.Time),
 		pendingDelivered:        make(map[string][]string),
 		deliveredCount:          make(map[string]int),
+		pendingDeliveredTimers:  make(map[string]*time.Timer),
 	}
 }
 
@@ -3705,8 +3711,10 @@ func (n *Node) SendDeliveredBatch(refs []string, recipient string) error {
 	return nil
 }
 
-// queueDelivered — добавляет ref в буфер. Если буфер достиг 10 — flush.
-// Иначе flush произойдёт по таймеру (500 мс).
+// queueDelivered — добавляет ref в буфер.
+// Один таймер на sender: при первом ref запускается окно 2 сек.
+// Пока окно открыто — refs копятся. По истечении — один батч [DELIVERED].
+// Если накопилось 10 — flush немедленно.
 // Дубликаты не накапливаются: если ref уже в буфере — пропускаем.
 // Это защита от повторных [DELIVERED] при retry (мы шлём [DELIVERED] всегда).
 func (n *Node) queueDelivered(sender, ref string) {
@@ -3714,7 +3722,7 @@ func (n *Node) queueDelivered(sender, ref string) {
 		return
 	}
 	n.pendingDeliveredMu.Lock()
-	// Проверка дубликатов — O(N) по буферу (N ≤ 10 обычно, ок).
+	// Проверка дубликатов.
 	already := false
 	for _, r := range n.pendingDelivered[sender] {
 		if r == ref {
@@ -3728,15 +3736,30 @@ func (n *Node) queueDelivered(sender, ref string) {
 	}
 	n.pendingDelivered[sender] = append(n.pendingDelivered[sender], ref)
 	count := len(n.pendingDelivered[sender])
+
+	needFlush := count >= 10
+	if needFlush {
+		// Достигли 10 — сбрасываем таймер (если был) и флашим немедленно.
+		if t, ok := n.pendingDeliveredTimers[sender]; ok {
+			t.Stop()
+			delete(n.pendingDeliveredTimers, sender)
+		}
+	} else {
+		// Один таймер на sender. Если уже запущен — не трогаем.
+		if _, hasTimer := n.pendingDeliveredTimers[sender]; !hasTimer {
+			n.pendingDeliveredTimers[sender] = time.AfterFunc(2*time.Second, func() {
+				n.pendingDeliveredMu.Lock()
+				delete(n.pendingDeliveredTimers, sender)
+				n.pendingDeliveredMu.Unlock()
+				n.flushDelivered(sender)
+			})
+		}
+	}
 	n.pendingDeliveredMu.Unlock()
 
-	if count >= 10 {
+	if needFlush {
 		go n.flushDelivered(sender)
-		return
 	}
-	time.AfterFunc(500*time.Millisecond, func() {
-		n.flushDelivered(sender)
-	})
 }
 
 // flushDelivered — отправляет батч [DELIVERED] для указанного sender.
@@ -3745,6 +3768,11 @@ func (n *Node) queueDelivered(sender, ref string) {
 // При ошибке отправки refs возвращаются в буфер + повтор через 5 секунд.
 func (n *Node) flushDelivered(sender string) {
 	n.pendingDeliveredMu.Lock()
+	// Останавливаем таймер, если он ещё запущен.
+	if t, ok := n.pendingDeliveredTimers[sender]; ok {
+		t.Stop()
+		delete(n.pendingDeliveredTimers, sender)
+	}
 	refs, ok := n.pendingDelivered[sender]
 	if !ok || len(refs) == 0 {
 		n.pendingDeliveredMu.Unlock()
