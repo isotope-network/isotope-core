@@ -1168,6 +1168,12 @@ func (n *Node) pushFileStatus(mediaID string, delivered, total int) {
 	n.fileStatusMu.Lock()
 	last := n.fileStatusLastPush[mediaID]
 	complete := delivered >= total
+	// Файл завершён — повторно не пушим (throttle 5 сек).
+	// Без этого retry-эхо слало file_complete много раз.
+	if complete && !last.IsZero() && time.Since(last) < 5*time.Second {
+		n.fileStatusMu.Unlock()
+		return
+	}
 	if !complete && time.Since(last) < time.Second {
 		n.fileStatusMu.Unlock()
 		return
@@ -1199,10 +1205,7 @@ func (n *Node) pushFileStatus(mediaID string, delivered, total int) {
 		if data, err := json.Marshal(done); err == nil {
 			n.messageHook(string(data))
 		}
-		// Очистить throttle-запись — файл завершён.
-		n.fileStatusMu.Lock()
-		delete(n.fileStatusLastPush, mediaID)
-		n.fileStatusMu.Unlock()
+		// НЕ удаляем throttle-запись: фильтр по времени работает.
 	}
 }
 
@@ -3820,23 +3823,37 @@ func (n *Node) handleDeliveredRef(ref, sender string) {
 		if msg, ok := n.findMyMessageByID(ref); ok {
 			if msg.MediaType == "file" && msg.ChunkTotal > 0 && msg.MediaID != "" {
 				n.deliveredCountMu.Lock()
-				n.deliveredCount[msg.MediaID]++
-				delivered := n.deliveredCount[msg.MediaID]
+				// Идемпотентность: не увеличиваем счётчик выше total.
+				// Иначе повторные [DELIVERED] (retry-эхо) дают delivered > total.
+				cur := n.deliveredCount[msg.MediaID]
 				total := msg.ChunkTotal
 				mediaID := msg.MediaID
+				if cur < total {
+					n.deliveredCount[msg.MediaID] = cur + 1
+					cur = cur + 1
+				}
 				n.deliveredCountMu.Unlock()
 
 				// Push агрегата в Dart (throttled).
-				n.pushFileStatus(mediaID, delivered, total)
+				n.pushFileStatus(mediaID, cur, total)
 
-				if delivered >= total {
+				if cur >= total {
+					// Не удаляем счётчик — оставляем как маркер «завершено».
+					// delete(n.deliveredCount, mediaID) — УБРАНО.
+
+					// Очищаем unackedChunks этого mediaID — retry-эхо не нужно.
+					n.unackedChunksMu.Lock()
+					for id, info := range n.unackedChunks {
+						if info.msg.MediaID == mediaID {
+							delete(n.unackedChunks, id)
+						}
+					}
+					n.unackedChunksMu.Unlock()
+
 					sentPath := n.sentPath(mediaID)
 					if err := os.Remove(sentPath); err == nil {
 						log.Printf("[SENT] removed sent file %s (all %d chunks delivered)", mediaID, total)
 					}
-					n.deliveredCountMu.Lock()
-					delete(n.deliveredCount, mediaID)
-					n.deliveredCountMu.Unlock()
 				}
 			}
 		}

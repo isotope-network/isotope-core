@@ -600,7 +600,12 @@ class ChatProvider extends ChangeNotifier {
             final total = fs['total'] as int? ?? 0;
             if (mediaID.isNotEmpty && total > 0) {
               final percent = ((delivered / total) * 100).clamp(0, 100).round();
-              _fileProgress[mediaID] = percent;
+              // Не понижаем прогресс: файл мог уже быть 100%, а retry-эхо
+              // снова прислало меньшее значение.
+              final cur = _fileProgress[mediaID] ?? 0;
+              if (percent > cur) {
+                _fileProgress[mediaID] = percent;
+              }
               _safeNotify();
             }
           }
