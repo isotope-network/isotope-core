@@ -1219,9 +1219,16 @@ func (n *Node) retryLoop() {
 }
 
 // retryUnacked — одна итерация проверки unackedChunks.
+// attempts++ происходит ТОЛЬКО при успешной постановке в chunkQueue.
+// Если chunkQueue полна — ждём до 2 секунд, потом откладываем на следующий тик.
+// Не дропаем: потеря чанка = незавершённая передача файла.
 func (n *Node) retryUnacked() {
 	now := time.Now()
-	var toRetry []Message
+	type retryItem struct {
+		id  string
+		msg Message
+	}
+	var toRetry []retryItem
 
 	n.unackedChunksMu.Lock()
 	for id, info := range n.unackedChunks {
@@ -1233,19 +1240,25 @@ func (n *Node) retryUnacked() {
 			delete(n.unackedChunks, id)
 			continue
 		}
-		info.attempts++
-		info.lastSent = now
-		n.unackedChunks[id] = info
-		toRetry = append(toRetry, info.msg)
-		log.Printf("[RETRY] re-enqueue %s (attempt %d)", id, info.attempts)
+		toRetry = append(toRetry, retryItem{id: id, msg: info.msg})
 	}
 	n.unackedChunksMu.Unlock()
 
-	for _, msg := range toRetry {
+	for _, item := range toRetry {
 		select {
-		case n.chunkQueue <- msg:
-		default:
-			log.Printf("[RETRY] chunkQueue full, dropping %s", msg.ID)
+		case n.chunkQueue <- item.msg:
+			// Успешная постановка — только теперь увеличиваем attempts.
+			n.unackedChunksMu.Lock()
+			if info, ok := n.unackedChunks[item.id]; ok {
+				info.attempts++
+				info.lastSent = time.Now()
+				n.unackedChunks[item.id] = info
+				log.Printf("[RETRY] re-enqueue %s (attempt %d)", item.id, info.attempts)
+			}
+			n.unackedChunksMu.Unlock()
+		case <-time.After(2 * time.Second):
+			// Очередь переполнена — откладываем. attempts НЕ увеличиваем.
+			log.Printf("[RETRY] chunkQueue busy, deferring %s", item.id)
 		}
 	}
 }
@@ -1744,9 +1757,8 @@ func (n *Node) handleStream(stream network.Stream) {
 					}
 					replicaMsg.Text = plaintext
 					replicaMsg.SenderName = n.nameForPeer(replicaMsg.Sender)
-					if n.memory.Add(replicaMsg) {
-						// Батч [DELIVERED] — копим refs, отправляем по таймеру/размеру.
-						n.queueDelivered(replicaMsg.Sender, replicaMsg.ID)
+					added := n.memory.Add(replicaMsg)
+					if added {
 						if n.messageHook != nil {
 							// Файловые чанки: не шлём base64 в Dart (OOM).
 							// Метаданные — в hook. base64 — через getChunk по запросу.
@@ -1759,6 +1771,12 @@ func (n *Node) handleStream(stream network.Stream) {
 							n.messageHook(string(data))
 						}
 					}
+					// [DELIVERED] шлём ВСЕГДА — идемпотентно.
+					// Первый [DELIVERED] мог потеряться в сети;
+					// отправитель должен знать, что чанк дошёл, даже если
+					// мы его уже видели (retry). Батчинг в queueDelivered
+					// схлопывает дубликаты, overhead минимален.
+					n.queueDelivered(replicaMsg.Sender, replicaMsg.ID)
 					return
 				}
 				// Не нам.
@@ -3686,11 +3704,25 @@ func (n *Node) SendDeliveredBatch(refs []string, recipient string) error {
 
 // queueDelivered — добавляет ref в буфер. Если буфер достиг 10 — flush.
 // Иначе flush произойдёт по таймеру (500 мс).
+// Дубликаты не накапливаются: если ref уже в буфере — пропускаем.
+// Это защита от повторных [DELIVERED] при retry (мы шлём [DELIVERED] всегда).
 func (n *Node) queueDelivered(sender, ref string) {
 	if sender == "" || ref == "" {
 		return
 	}
 	n.pendingDeliveredMu.Lock()
+	// Проверка дубликатов — O(N) по буферу (N ≤ 10 обычно, ок).
+	already := false
+	for _, r := range n.pendingDelivered[sender] {
+		if r == ref {
+			already = true
+			break
+		}
+	}
+	if already {
+		n.pendingDeliveredMu.Unlock()
+		return
+	}
 	n.pendingDelivered[sender] = append(n.pendingDelivered[sender], ref)
 	count := len(n.pendingDelivered[sender])
 	n.pendingDeliveredMu.Unlock()
@@ -3705,6 +3737,9 @@ func (n *Node) queueDelivered(sender, ref string) {
 }
 
 // flushDelivered — отправляет батч [DELIVERED] для указанного sender.
+// refs копируется под локом; ключ удаляется атомарно с копией.
+// Это устраняет race, когда новый ref добавляется между чтением и delete.
+// При ошибке отправки refs возвращаются в буфер + повтор через 5 секунд.
 func (n *Node) flushDelivered(sender string) {
 	n.pendingDeliveredMu.Lock()
 	refs, ok := n.pendingDelivered[sender]
@@ -3712,11 +3747,31 @@ func (n *Node) flushDelivered(sender string) {
 		n.pendingDeliveredMu.Unlock()
 		return
 	}
+	// Копия среза — чтобы append после unlock не влиял.
+	refsCopy := make([]string, len(refs))
+	copy(refsCopy, refs)
 	delete(n.pendingDelivered, sender)
 	n.pendingDeliveredMu.Unlock()
 
-	if err := n.SendDeliveredBatch(refs, sender); err != nil {
+	if err := n.SendDeliveredBatch(refsCopy, sender); err != nil {
 		log.Printf("[CONFIRM] delivered-batch flush failed for %s: %v", sender, err)
+		// Ошибка — вернуть refs в буфер. Иначе они потеряны навсегда.
+		n.pendingDeliveredMu.Lock()
+		existing := make(map[string]bool, len(n.pendingDelivered[sender]))
+		for _, r := range n.pendingDelivered[sender] {
+			existing[r] = true
+		}
+		for _, r := range refsCopy {
+			if !existing[r] {
+				n.pendingDelivered[sender] = append(n.pendingDelivered[sender], r)
+				existing[r] = true
+			}
+		}
+		n.pendingDeliveredMu.Unlock()
+		// Повторная попытка через 5 секунд.
+		time.AfterFunc(5*time.Second, func() {
+			n.flushDelivered(sender)
+		})
 	}
 }
 

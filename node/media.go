@@ -126,9 +126,11 @@ func (n *Node) SendPhotoByPath(peerID, filePath, fileName string, ttlPeriod, ttl
 // SendFileByPath — отправляет файл, читая его с диска по пути.
 // Схема:
 //  1. Копирует исходный файл в <stateFile dir>/isotope_media/sent/<MediaID>.bin.
-//     Копия нужна для flushPending — переслать чанк, если получатель не подтвердил.
-//  2. Читает чанки через f.ReadAt (не os.ReadFile) — в память только один чанк.
-//  3. Шифрует, отправляет, в memory кладёт только метаданные.
+//     Копия нужна для retry (unackedChunks) и flushPending — переслать чанк,
+//     если получатель не подтвердил.
+//  2. Запускает фоновую горутину sendFileChunksAsync, которая читает
+//     чанки из sent/, шифрует, кладёт в chunkQueue (блокирующая, backpressure).
+//  3. Возвращает MediaID немедленно — MethodChannel не блокируется.
 //
 // Base64 через MethodChannel не проходит — OOM устранён.
 // Возвращает MediaID.
@@ -158,12 +160,9 @@ func (n *Node) SendFileByPath(peerID, filePath, fileName string, ttlPeriod, ttlM
 		return "", fmt.Errorf("empty file")
 	}
 
-	const chunkSize = 64 * 1024
-	chunkTotal := (fileSize + chunkSize - 1) / chunkSize
-
 	mediaID := generateMsgID(fmt.Sprintf("file:%s:%s:%d", peerID, fileName, time.Now().UnixNano()))
 
-	// Копия в sent/ — для flushPending.
+	// Копия в sent/ — источник для sendFileChunksAsync и retry.
 	sentPath := n.sentPath(mediaID)
 	if err := os.MkdirAll(n.sentDirPath(), 0700); err != nil {
 		return "", fmt.Errorf("mkdir sent failed: %w", err)
@@ -185,89 +184,99 @@ func (n *Node) SendFileByPath(peerID, filePath, fileName string, ttlPeriod, ttlM
 		expiresAt = time.Now().Add(time.Duration(ttlSeconds) * time.Second)
 	}
 
+	// Фоновая отправка. MethodChannel возвращается немедленно.
+	go n.sendFileChunksAsync(peerID, mediaID, fileName, fileSize, ttlSeconds, ttlMode, expiresAt)
+
+	return mediaID, nil
+}
+
+// sendFileChunksAsync — читает чанки из sent/<MediaID>.bin,
+// шифрует, кладёт в chunkQueue. Блокирующая постановка (backpressure):
+// если очередь полна — ждём воркеров, не дропаем.
+// В memory — только метаданные (без base64). base64 хранится в sent/ на диске.
+func (n *Node) sendFileChunksAsync(peerID, mediaID, fileName string, fileSize int64, ttlSeconds int, ttlMode string, expiresAt time.Time) {
+	const chunkSize = 64 * 1024
+	chunkTotal := (fileSize + chunkSize - 1) / chunkSize
+
+	src, err := os.Open(n.sentPath(mediaID))
+	if err != nil {
+		log.Printf("[FILE] open sent copy failed for %s: %v", mediaID, err)
+		return
+	}
+	defer src.Close()
+
 	readEnabled := n.myReadEnabled
 	myID := n.host.ID().String()
 
-	const maxParallel = 5
-	sem := make(chan struct{}, maxParallel)
-	var wg sync.WaitGroup
-
 	for i := 0; i < int(chunkTotal); i++ {
-		wg.Add(1)
-		sem <- struct{}{}
-		go func(idx int) {
-			defer wg.Done()
-			defer func() { <-sem }()
+		buf := make([]byte, chunkSize)
+		off := int64(i) * int64(chunkSize)
+		nr, err := src.ReadAt(buf, off)
+		if err != nil && err != io.EOF {
+			log.Printf("[FILE] ReadAt chunk %d/%d of %s failed: %v", i, chunkTotal, mediaID, err)
+			continue
+		}
+		if nr == 0 {
+			continue
+		}
+		chunkRaw := buf[:nr]
+		chunkB64 := base64.StdEncoding.EncodeToString(chunkRaw)
 
-			buf := make([]byte, chunkSize)
-			off := int64(idx) * int64(chunkSize)
-			nr, err := src.ReadAt(buf, off)
-			if err != nil && err != io.EOF {
-				log.Printf("[FILE] ReadAt chunk %d failed: %v", idx, err)
-				return
-			}
-			if nr == 0 {
-				return
-			}
-			chunkRaw := buf[:nr]
-			chunkB64 := base64.StdEncoding.EncodeToString(chunkRaw)
+		encrypted, err := n.encryptForRecipient(peerID, chunkB64)
+		if err != nil {
+			log.Printf("[FILE] encrypt chunk %d/%d of %s failed: %v", i, chunkTotal, mediaID, err)
+			continue
+		}
 
-			encrypted, err := n.encryptForRecipient(peerID, chunkB64)
-			if err != nil {
-				log.Printf("[FILE] encrypt chunk %d failed: %v", idx, err)
-				return
-			}
+		id := generateMsgID(fmt.Sprintf("file:%s:%d:%d", mediaID, i, time.Now().UnixNano()))
+		msg := Message{
+			ID:               id,
+			Text:             encrypted,
+			PlainText:        chunkB64,
+			Sender:           myID,
+			Recipient:        peerID,
+			Version:          MESSAGE_VERSION_E2E,
+			Type:             TypeMessage,
+			MediaType:        "file",
+			MediaID:          mediaID,
+			ChunkIndex:       i,
+			ChunkTotal:       int(chunkTotal),
+			FileName:         fileName,
+			FileSize:         fileSize,
+			TtlPeriodSeconds: ttlSeconds,
+			TtlMode:          ttlMode,
+			ReadEnabled:      &readEnabled,
+			Time:             time.Now().UTC().Format("2006-01-02T15:04:05"),
+			IsOwn:            true,
+			Weight:           0.5,
+			Priority:         0,
+			Mode:             0,
+			Score:            0,
+			ExpiresAt:        expiresAt,
+		}
 
-			id := generateMsgID(fmt.Sprintf("file:%s:%d:%d", mediaID, idx, time.Now().UnixNano()))
-			msg := Message{
-				ID:               id,
-				Text:             encrypted,
-				PlainText:        chunkB64,
-				Sender:           myID,
-				Recipient:        peerID,
-				Version:          MESSAGE_VERSION_E2E,
-				Type:             TypeMessage,
-				MediaType:        "file",
-				MediaID:          mediaID,
-				ChunkIndex:       idx,
-				ChunkTotal:       int(chunkTotal),
-				FileName:         fileName,
-				FileSize:         fileSize,
-				TtlPeriodSeconds: ttlSeconds,
-				TtlMode:          ttlMode,
-				ReadEnabled:      &readEnabled,
-				Time:             time.Now().UTC().Format("2006-01-02T15:04:05"),
-				IsOwn:            true,
-				Weight:           0.5,
-				Priority:         0,
-				Mode:             0,
-				Score:            0,
-				ExpiresAt:        expiresAt,
-			}
-			// Отправка: replicateMessage идёт с base64 (нужен получателю).
-			n.replicateMessage(msg)
+		// Блокирующая постановка в chunkQueue. Backpressure: ждём воркеров.
+		// Это гарантирует, что чанк не будет потерян из-за переполнения.
+		n.chunkQueue <- msg
+
+		// В memory — только метаданные (без base64).
+		memMsg := msg
+		memMsg.Text = ""
+		memMsg.PlainText = ""
+		if n.memory.Add(memMsg) {
 			n.setMessageStatus(id, StatusSent)
-
-			// В memory — только метаданные (без base64).
-			memMsg := msg
-			memMsg.Text = ""
-			memMsg.PlainText = ""
-			if n.memory.Add(memMsg) {
-				if n.messageHook != nil {
-					data, _ := json.Marshal(memMsg)
-					n.messageHook(string(data))
-				}
-			} else {
-				log.Printf("[FILE] memory.Add rejected chunk %d/%d of %s", idx, chunkTotal, mediaID)
+			if n.messageHook != nil {
+				data, _ := json.Marshal(memMsg)
+				n.messageHook(string(data))
 			}
-		}(i)
+		} else {
+			log.Printf("[FILE] memory.Add rejected chunk %d/%d of %s", i, chunkTotal, mediaID)
+		}
 	}
-	wg.Wait()
 
 	log.Printf("[FILE] sent %s (%s, %d bytes, %d chunks) to %s",
 		mediaID, fileName, fileSize, chunkTotal, peerID)
 	go n.saveState()
-	return mediaID, nil
 }
 
 // SendFile — отправляет файл. Режет на чанки по 64 КБ (сырых байтов),
