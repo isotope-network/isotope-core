@@ -132,8 +132,11 @@ class MediaStorage {
   static Future<String?> tryAssemble(String mediaId) async {
     try {
       final dir = Directory('${_chunksRoot.path}/$mediaId');
-      if (!await dir.exists()) return null;
-
+      if (!await dir.exists()) {
+        // Файл уже собран (папка удалена после сборки) —
+        // возвращаем путь к собранному файлу.
+        return await getFilePath(mediaId);
+      }
       final metaFile = File('${dir.path}/meta.json');
       if (!await metaFile.exists()) return null;
 
@@ -175,6 +178,19 @@ class MediaStorage {
     } catch (e) {
       LogService.log('MEDIA: tryAssemble failed for $mediaId: $e');
       return null;
+    }
+  }
+
+  /// Проверяет, сохранён ли чанк на диске.
+  /// Используется для восстановления состояния после перезапуска:
+  /// уже сохранённые чанки не запрашиваются повторно.
+  static Future<bool> chunkExists(String mediaId, int chunkIndex) async {
+    if (mediaId.isEmpty) return false;
+    try {
+      final f = File('${_chunksRoot.path}/$mediaId/chunk_$chunkIndex.bin');
+      return await f.exists();
+    } catch (_) {
+      return false;
     }
   }
 

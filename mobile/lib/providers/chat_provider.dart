@@ -1178,7 +1178,26 @@ class ChatProvider extends ChangeNotifier {
             // Восстановление пути для собранного файла.
             String localPath = '';
             final p = await MediaStorage.getFilePath(mid);
-            if (p != null) localPath = p;
+            if (p != null) {
+              localPath = p;
+            } else {
+              // Файл не собран — пересчитать чанки на диске.
+              await MediaStorage.recountChunks(mid);
+              // Восстановление очереди: поставить ВСЕ чанки в _chunkQueue.
+              // _fetchAndSaveChunk пропустит те, что уже на диске (chunkExists).
+              // Без этого после перезапуска _chunkQueue пуст → файл не дособерётся.
+              final isOwnChunk = shortSender == shortMyID || map['isOwn'] == true;
+              if (!isOwnChunk) {
+                final set = _chunkQueue.putIfAbsent(mid, () => <int>{});
+                for (int i = 0; i < chunkTotal; i++) {
+                  set.add(i);
+                }
+                _chunkQueueTimer ??= Timer(const Duration(milliseconds: 100), () {
+                  _chunkQueueTimer = null;
+                  _flushChunkQueue();
+                });
+              }
+            }
             final agg = Message(
               id: map['id'] ?? '',
               text: '',
@@ -1204,6 +1223,12 @@ class ChatProvider extends ChangeNotifier {
               localFilePath: localPath,
             );
             _fileMessages[mid] = agg;
+          } else if (existing.localFilePath.isEmpty) {
+            // Файл мог быть собран после первого чанка.
+            final p = await MediaStorage.getFilePath(mid);
+            if (p != null) {
+              _fileMessages[mid] = existing.withLocalFilePath(p);
+            }
           }
           // Не добавляем в result — UI получит агрегат из _fileMessages.
           continue;
@@ -1492,6 +1517,8 @@ class ChatProvider extends ChangeNotifier {
     // Свои чанки — не сохраняем (двойная защита).
     if (meta.isOwn) return;
     if (meta.localFilePath.isNotEmpty) return; // уже собран
+    // Чанк уже на диске (после перезапуска) — пропускаем.
+    if (await MediaStorage.chunkExists(mediaId, chunkIndex)) return;
 
     final base64Data = await LibP2PService.getChunk(
       mediaID: mediaId,
@@ -1525,6 +1552,9 @@ class ChatProvider extends ChangeNotifier {
     } finally {
       _assembling.remove(mediaId);
     }
+    // Возможно, другой поток сохранил последний чанк во время нашего
+    // tryAssemble. Перепроверяем — tryAssemble идемпотентен.
+    path ??= await MediaStorage.tryAssemble(mediaId);
     if (path == null) return;
 
     // Все чанки собраны — обновляем агрегат localFilePath.
