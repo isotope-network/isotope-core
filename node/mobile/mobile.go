@@ -996,6 +996,21 @@ func GetMessageStatuses() string {
 	return string(data)
 }
 
+// GetFileStatuses — возвращает JSON-массив статусов файловых отправок.
+// Формат: [{"media_id":"...","delivered":N,"total":M}, ...].
+// Используется Dart при старте: восстановить прогресс после перезапуска.
+func GetFileStatuses() string {
+	nodeMu.Lock()
+	defer nodeMu.Unlock()
+
+	if node == nil {
+		return `[]`
+	}
+	statuses := node.GetFileStatuses()
+	data, _ := json.Marshal(statuses)
+	return string(data)
+}
+
 // GetContacts — возвращает JSON со всеми контактами.
 func GetContacts() string {
 	nodeMu.Lock()

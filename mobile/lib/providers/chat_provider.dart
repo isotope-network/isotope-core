@@ -774,6 +774,10 @@ class ChatProvider extends ChangeNotifier {
 
       _subscribeToMessages();
       await loadMessages();
+      // Восстановление прогресса файловых отправок после перезапуска.
+      // Go отдаёт delivered/total по каждому mediaID — иначе UI покажет
+      // «Подготовка…» вместо «Отправлено» на завершённых файлах.
+      await _loadFileStatuses();
       await _migrateReadSentIfNeeded();
       // После миграции — пересчитать имена (и, возможно, бейджи).
       await loadPeerNames();
@@ -1574,6 +1578,39 @@ class ChatProvider extends ChangeNotifier {
       if (last != null && last.sender == _currentOpenPeerID && !last.readLocally) {
         _sendReadFor(last);
       }
+    }
+  }
+
+  /// Загружает статусы файловых отправок из Go.
+  /// Заполняет _fileProgress[mediaID] = delivered/total × 100.
+  /// Вызывается при старте — после перезапуска Dart не знает,
+  /// какие файлы уже отправлены (push file_complete был в прошлой сессии).
+  Future<void> _loadFileStatuses() async {
+    if (!_libp2pStarted) return;
+    try {
+      final list = await LibP2PService.getFileStatuses();
+      if (list.isEmpty) return;
+      int updated = 0;
+      for (final item in list) {
+        if (item is! Map) continue;
+        final mediaID = item['media_id'] as String? ?? '';
+        final delivered = (item['delivered'] as num?)?.toInt() ?? 0;
+        final total = (item['total'] as num?)?.toInt() ?? 0;
+        if (mediaID.isEmpty || total <= 0) continue;
+        final percent = ((delivered / total) * 100).clamp(0, 100).round();
+        // Не понижаем: если уже 100 — оставляем.
+        final cur = _fileProgress[mediaID] ?? 0;
+        if (percent > cur) {
+          _fileProgress[mediaID] = percent;
+          updated++;
+        }
+      }
+      if (updated > 0) {
+        LogService.log('ChatProvider: _loadFileStatuses — восстановлено $updated');
+        _safeNotify();
+      }
+    } catch (e) {
+      LogService.log('ChatProvider: _loadFileStatuses ERROR: $e');
     }
   }
 

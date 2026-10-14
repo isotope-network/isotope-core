@@ -4459,6 +4459,49 @@ func (n *Node) GetMessageStatuses() map[string]MessageStatus {
 	return result
 }
 
+// FileStatusEntry — статус файловой отправки для Dart.
+// Восстановление прогресса после перезапуска: Dart получает
+// delivered/total для каждого mediaID и заполняет _fileProgress.
+type FileStatusEntry struct {
+	MediaID   string `json:"media_id"`
+	Delivered int    `json:"delivered"`
+	Total     int    `json:"total"`
+}
+
+// GetFileStatuses — статус всех файловых отправок (delivered/total).
+// Используется Dart при старте: восстановить прогресс после перезапуска.
+// Считает по memory: для каждого mediaID — сколько чанков Status >= StatusDelivered.
+func (n *Node) GetFileStatuses() []FileStatusEntry {
+	all := n.memory.GetAll()
+	type acc struct {
+		total     int
+		delivered int
+	}
+	m := make(map[string]*acc)
+	for _, msg := range all {
+		if msg.MediaType != "file" || msg.ChunkTotal <= 0 || msg.MediaID == "" {
+			continue
+		}
+		a, ok := m[msg.MediaID]
+		if !ok {
+			a = &acc{total: msg.ChunkTotal}
+			m[msg.MediaID] = a
+		}
+		if msg.Status >= StatusDelivered {
+			a.delivered++
+		}
+	}
+	result := make([]FileStatusEntry, 0, len(m))
+	for id, a := range m {
+		result = append(result, FileStatusEntry{
+			MediaID:   id,
+			Delivered: a.delivered,
+			Total:     a.total,
+		})
+	}
+	return result
+}
+
 // GetRequests — возвращает все pending-запросы на контакт.
 func (n *Node) GetRequests() []ContactRequest {
 	if n.requests == nil {

@@ -296,6 +296,24 @@ class LibP2PService {
     }
   }
 
+  /// Возвращает статусы всех файловых отправок:
+  /// [{"media_id":"...","delivered":N,"total":M}, ...].
+  /// Используется при старте — восстановить прогресс после перезапуска.
+  static Future<List<dynamic>> getFileStatuses() async {
+    try {
+      final response = await _channel.invokeMethod<String>('getFileStatuses');
+      final raw = response ?? '[]';
+      try {
+        final decoded = jsonDecode(raw);
+        return decoded is List ? decoded : [];
+      } on FormatException {
+        return [];
+      }
+    } on PlatformException {
+      return [];
+    }
+  }
+
   static Future<List<dynamic>> getPeers() async {
     try {
       final response = await _channel.invokeMethod<String>('getPeers');

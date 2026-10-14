@@ -421,6 +421,12 @@ class MainActivity : FlutterActivity() {
                             runOnUiThread { result.success(response) }
                         }.start()
                     }
+                    "getFileStatuses" -> {
+                        Thread {
+                            val response = Mobile.getFileStatuses()
+                            runOnUiThread { result.success(response) }
+                        }.start()
+                    }
                     "getContact" -> {
                         val peerID = call.argument<String>("peerID") ?: ""
                         Thread {
