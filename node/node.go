@@ -256,6 +256,11 @@ type Node struct {
 	fileStatusLastPush map[string]time.Time
 	fileStatusMu       sync.Mutex
 
+	// completedFiles — mediaID → true, если file_complete уже отправлен.
+	// Нужно, чтобы throttle не съедал ПЕРВЫЙ complete.
+	// Первый complete — пушим всегда. Повторные — throttle 5 сек.
+	completedFiles map[string]bool
+
 	// Батч [DELIVERED] — буфер refs по отправителю.
 	// Копим msg_id чанков, отправляем одним [DELIVERED] с Refs.
 	pendingDelivered   map[string][]string
@@ -303,6 +308,7 @@ func NewNode(cfg Config) *Node {
 		pendingDelivered:        make(map[string][]string),
 		deliveredCount:          make(map[string]int),
 		pendingDeliveredTimers:  make(map[string]*time.Timer),
+		completedFiles:          make(map[string]bool),
 	}
 }
 
@@ -1196,17 +1202,24 @@ func (n *Node) pushFileStatus(mediaID string, delivered, total int) {
 	n.fileStatusMu.Lock()
 	last := n.fileStatusLastPush[mediaID]
 	complete := delivered >= total
-	// Файл завершён — повторно не пушим (throttle 5 сек).
-	// Без этого retry-эхо слало file_complete много раз.
-	if complete && !last.IsZero() && time.Since(last) < 5*time.Second {
-		n.fileStatusMu.Unlock()
-		return
+	alreadyCompleted := n.completedFiles[mediaID]
+	// Первый complete — всегда пушим (даже если last только что был).
+	// Иначе throttle съедает file_complete → UI застревает на 97%.
+	// Повторный complete (retry-эхо) — throttle 5 сек.
+	if complete && alreadyCompleted {
+		if !last.IsZero() && time.Since(last) < 5*time.Second {
+			n.fileStatusMu.Unlock()
+			return
+		}
 	}
 	if !complete && time.Since(last) < time.Second {
 		n.fileStatusMu.Unlock()
 		return
 	}
 	n.fileStatusLastPush[mediaID] = time.Now()
+	if complete {
+		n.completedFiles[mediaID] = true
+	}
 	n.fileStatusMu.Unlock()
 
 	if n.messageHook == nil {
@@ -3454,6 +3467,11 @@ func (n *Node) DeleteFile(mediaID string) int {
 	n.deliveredCountMu.Lock()
 	delete(n.deliveredCount, mediaID)
 	n.deliveredCountMu.Unlock()
+	// Очищаем состояние завершённости.
+	n.fileStatusMu.Lock()
+	delete(n.completedFiles, mediaID)
+	delete(n.fileStatusLastPush, mediaID)
+	n.fileStatusMu.Unlock()
 
 	if removed > 0 {
 		log.Printf("[DELETE] file %s — removed %d chunks", mediaID, removed)
