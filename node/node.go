@@ -86,11 +86,23 @@ const (
 	StatusRead      MessageStatus = 4 // прочитано (высший приоритет)
 )
 
-// retryInfo — информация о чанке, ожидающем подтверждения.
+// retryInfo — метаданные чанка, ожидающего подтверждения.
+// Не хранит Message целиком: для больших файлов (10700 чанков) это давало
+// ~1 ГБ памяти. Метаданные — ~200 байт на чанк (2 МБ на 10700).
+// Восстановление Message — в retryUnacked через fillFileChunkFromSent.
 type retryInfo struct {
-	msg      Message   // сам чанк
-	attempts int       // число попыток переотправки
-	lastSent time.Time // время последней отправки
+	mediaID    string
+	chunkIndex int
+	recipient  string
+	msgID      string
+	fileName   string
+	fileSize   int64
+	chunkTotal int
+	ttlSeconds int
+	ttlMode    string
+	expiresAt  time.Time
+	attempts   int
+	lastSent   time.Time
 }
 
 // announcedPeer — запись о пире: список его multiaddr + когда последний раз видели.
@@ -1148,10 +1160,20 @@ func (n *Node) chunkWorker() {
 			log.Printf("[CHUNK] marshal failed id=%s: %v", msg.ID, err)
 			continue
 		}
-		// Кладём в unackedChunks — ждём [DELIVERED].
+		// Кладём метаданные в unackedChunks — ждём [DELIVERED].
+		// Сам Message (с base64) не храним: память O(1) на чанк.
 		n.unackedChunksMu.Lock()
 		info := n.unackedChunks[msg.ID]
-		info.msg = msg
+		info.mediaID = msg.MediaID
+		info.chunkIndex = msg.ChunkIndex
+		info.recipient = msg.Recipient
+		info.msgID = msg.ID
+		info.fileName = msg.FileName
+		info.fileSize = msg.FileSize
+		info.chunkTotal = msg.ChunkTotal
+		info.ttlSeconds = msg.TtlPeriodSeconds
+		info.ttlMode = msg.TtlMode
+		info.expiresAt = msg.ExpiresAt
 		if info.lastSent.IsZero() {
 			info.attempts = 0
 		}
@@ -1231,11 +1253,12 @@ func (n *Node) retryLoop() {
 // attempts++ происходит ТОЛЬКО при успешной постановке в chunkQueue.
 // Если chunkQueue полна — ждём до 2 секунд, потом откладываем на следующий тик.
 // Не дропаем: потеря чанка = незавершённая передача файла.
+// Message восстанавливается из sent/<mediaID>.bin через fillFileChunkFromSent.
 func (n *Node) retryUnacked() {
 	now := time.Now()
 	type retryItem struct {
-		id  string
-		msg Message
+		id   string
+		info retryInfo
 	}
 	var toRetry []retryItem
 
@@ -1249,13 +1272,23 @@ func (n *Node) retryUnacked() {
 			delete(n.unackedChunks, id)
 			continue
 		}
-		toRetry = append(toRetry, retryItem{id: id, msg: info.msg})
+		toRetry = append(toRetry, retryItem{id: id, info: info})
 	}
 	n.unackedChunksMu.Unlock()
 
 	for _, item := range toRetry {
+		// Восстанавливаем Message из sent/<mediaID>.bin.
+		msg, err := n.restoreChunkMessage(item.info)
+		if err != nil {
+			log.Printf("[RETRY] restore %s failed: %v", item.id, err)
+			// Не удалось восстановить — удаляем. Иначе зациклится.
+			n.unackedChunksMu.Lock()
+			delete(n.unackedChunks, item.id)
+			n.unackedChunksMu.Unlock()
+			continue
+		}
 		select {
-		case n.chunkQueue <- item.msg:
+		case n.chunkQueue <- msg:
 			// Успешная постановка — только теперь увеличиваем attempts.
 			n.unackedChunksMu.Lock()
 			if info, ok := n.unackedChunks[item.id]; ok {
@@ -1270,6 +1303,40 @@ func (n *Node) retryUnacked() {
 			log.Printf("[RETRY] chunkQueue busy, deferring %s", item.id)
 		}
 	}
+}
+
+// restoreChunkMessage — восстанавливает Message файлового чанка
+// из метаданных retryInfo и sent/<mediaID>.bin.
+// Используется в retryUnacked (Message не хранится в unackedChunks).
+func (n *Node) restoreChunkMessage(info retryInfo) (Message, error) {
+	if info.mediaID == "" || info.recipient == "" {
+		return Message{}, fmt.Errorf("incomplete retryInfo")
+	}
+	msg := Message{
+		ID:               info.msgID,
+		Sender:           n.host.ID().String(),
+		Recipient:        info.recipient,
+		Version:          MESSAGE_VERSION_E2E,
+		Type:             TypeMessage,
+		MediaType:        "file",
+		MediaID:          info.mediaID,
+		ChunkIndex:       info.chunkIndex,
+		ChunkTotal:       info.chunkTotal,
+		FileName:         info.fileName,
+		FileSize:         info.fileSize,
+		TtlPeriodSeconds: info.ttlSeconds,
+		TtlMode:          info.ttlMode,
+		ExpiresAt:        info.expiresAt,
+		Time:             time.Now().UTC().Format("2006-01-02T15:04:05"),
+		IsOwn:            true,
+		Weight:           0.5,
+	}
+	readEnabled := n.myReadEnabled
+	msg.ReadEnabled = &readEnabled
+	if err := n.fillFileChunkFromSent(&msg); err != nil {
+		return Message{}, fmt.Errorf("fillFileChunkFromSent: %w", err)
+	}
+	return msg, nil
 }
 
 // sendReplicaToPeer — отправка данных пиру.
@@ -3066,6 +3133,10 @@ func (n *Node) InitP2P() error {
 		_ = os.MkdirAll(n.sentDirPath(), 0700)
 	}
 
+	// Восстановление незавершённых файловых отправок после перезапуска.
+	// Восстанавливает deliveredCount и unackedChunks.
+	go n.resumeIncompleteFiles()
+
 	// Инициализация E2E-ключей (Ed25519 + X25519).
 	n.loadOrGenerateE2EKeys()
 
@@ -3872,7 +3943,7 @@ func (n *Node) handleDeliveredRef(ref, sender string) {
 					// Очищаем unackedChunks этого mediaID — retry-эхо не нужно.
 					n.unackedChunksMu.Lock()
 					for id, info := range n.unackedChunks {
-						if info.msg.MediaID == mediaID {
+						if info.mediaID == mediaID {
 							delete(n.unackedChunks, id)
 						}
 					}

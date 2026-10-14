@@ -8,6 +8,7 @@ import (
 	"io"
 	"log"
 	"os"
+	"strings"
 	"sync"
 	"time"
 )
@@ -277,6 +278,97 @@ func (n *Node) sendFileChunksAsync(peerID, mediaID, fileName string, fileSize in
 	log.Printf("[FILE] sent %s (%s, %d bytes, %d chunks) to %s",
 		mediaID, fileName, fileSize, chunkTotal, peerID)
 	go n.saveState()
+}
+
+// resumeIncompleteFiles — восстановление незавершённых файловых отправок
+// после перезапуска приложения.
+// Обходит sent/<mediaID>.bin: для каждого файла восстанавливает
+// deliveredCount (из Status чанков в memory) и unackedChunks
+// (для чанков со Status < StatusDelivered).
+// Идемпотентно: retryUnacked досылает те же msgID, получатель подтверждает.
+func (n *Node) resumeIncompleteFiles() {
+	dir := n.sentDirPath()
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return
+	}
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".bin") {
+			continue
+		}
+		mediaID := strings.TrimSuffix(e.Name(), ".bin")
+		n.resumeFile(mediaID)
+	}
+}
+
+// resumeFile — восстановление одного файла по mediaID.
+// deliveredCount — из Status чанков в memory (источник истины).
+// unackedChunks — для чанков со Status < StatusDelivered.
+func (n *Node) resumeFile(mediaID string) {
+	if mediaID == "" {
+		return
+	}
+	all := n.memory.GetAll()
+	var chunks []Message
+	for _, m := range all {
+		if m.MediaID == mediaID && m.MediaType == "file" {
+			chunks = append(chunks, m)
+		}
+	}
+	if len(chunks) == 0 {
+		// Нет метаданных — нечего восстанавливать.
+		return
+	}
+	first := chunks[0]
+	total := first.ChunkTotal
+	recipient := first.Recipient
+	if total <= 0 || recipient == "" {
+		return
+	}
+
+	// Восстанавливаем deliveredCount по Status чанков.
+	delivered := 0
+	for _, c := range chunks {
+		if c.Status >= StatusDelivered {
+			delivered++
+		}
+	}
+	n.deliveredCountMu.Lock()
+	n.deliveredCount[mediaID] = delivered
+	n.deliveredCountMu.Unlock()
+
+	if delivered >= total {
+		log.Printf("[RESUME] %s already delivered (%d/%d)", mediaID, delivered, total)
+		return
+	}
+
+	log.Printf("[RESUME] %s incomplete (%d/%d) — resuming", mediaID, delivered, total)
+
+	// Восстанавливаем unackedChunks для неподтверждённых чанков.
+	restored := 0
+	for _, c := range chunks {
+		if c.Status >= StatusDelivered {
+			continue
+		}
+		n.unackedChunksMu.Lock()
+		n.unackedChunks[c.ID] = retryInfo{
+			mediaID:    c.MediaID,
+			chunkIndex: c.ChunkIndex,
+			recipient:  c.Recipient,
+			msgID:      c.ID,
+			fileName:   c.FileName,
+			fileSize:   c.FileSize,
+			chunkTotal: c.ChunkTotal,
+			ttlSeconds: c.TtlPeriodSeconds,
+			ttlMode:    c.TtlMode,
+			expiresAt:  c.ExpiresAt,
+			attempts:   0,
+			lastSent:   time.Now(),
+		}
+		n.unackedChunksMu.Unlock()
+		restored++
+	}
+	log.Printf("[RESUME] %s: restored %d chunks to unackedChunks", mediaID, restored)
 }
 
 // SendFile — отправляет файл. Режет на чанки по 64 КБ (сырых байтов),
