@@ -373,9 +373,66 @@ class _FileRow extends StatelessWidget {
     final name = message.fileName.isNotEmpty ? message.fileName : 'Файл';
     final ready = message.localFilePath.isNotEmpty;
 
+    // Состояние файла (по приоритету):
+    // 1. Готов (localFilePath есть) → «Открыть».
+    // 2. Сборка идёт (progress == 100, но не готов) → «Сборка…».
+    // 3. Прогресс 0-99 → прогресс-бар + «N%».
+    // 4. Прогресс неизвестен (progress < 0) → «Подготовка…».
+    Widget statusWidget;
+    if (ready) {
+      statusWidget = GestureDetector(
+        onTap: _open,
+        child: const Text(
+          'Открыть',
+          style: TextStyle(
+            fontSize: 12,
+            fontWeight: FontWeight.w600,
+            color: Color(0xFF4CAF50),
+          ),
+        ),
+      );
+    } else if (progress >= 100) {
+  // Все чанки есть.
+  // Отправитель: «Отправлено» (у него файла на диске не будет).
+  // Получатель: «Сборка…» (tryAssemble идёт, скоро будет готов).
+  statusWidget = Text(
+    message.isOwn ? 'Отправлено' : 'Сборка…',
+    style: const TextStyle(fontSize: 12, color: Colors.black54),
+  );
+} else if (progress > 0) {
+      // Прогресс 1-99: бар + текст.
+      final label = message.isOwn ? 'Отправка' : 'Получение';
+      statusWidget = Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            '$label $progress%',
+            style: const TextStyle(fontSize: 11, color: Colors.black54),
+          ),
+          const SizedBox(height: 3),
+          ClipRRect(
+            borderRadius: BorderRadius.circular(3),
+            child: LinearProgressIndicator(
+              value: (progress / 100).clamp(0.0, 1.0),
+              minHeight: 4,
+              backgroundColor: Colors.grey.shade300,
+              valueColor: const AlwaysStoppedAnimation<Color>(Color(0xFF4CAF50)),
+            ),
+          ),
+        ],
+      );
+    } else {
+      // progress < 0 (неизвестно) или 0 (ещё не началось) → «Подготовка…».
+      statusWidget = const Text(
+        'Подготовка…',
+        style: TextStyle(fontSize: 12, color: Colors.black54),
+      );
+    }
+
     return SizedBox(
       width: 220,
       child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Container(
             width: 36,
@@ -403,32 +460,7 @@ class _FileRow extends StatelessWidget {
                   style: const TextStyle(fontSize: 11, color: Colors.black54),
                 ),
                 const SizedBox(height: 4),
-                if (ready)
-                  GestureDetector(
-                    onTap: _open,
-                    child: const Text(
-                      'Открыть',
-                      style: TextStyle(
-                        fontSize: 12,
-                        fontWeight: FontWeight.w600,
-                        color: Color(0xFF4CAF50),
-                      ),
-                    ),
-                  )
-                else if (message.isOwn)
-                  Text(
-                    progress >= 100
-                        ? 'Отправлено'
-                        : progress > 0
-                            ? 'Отправка $progress%'
-                            : 'Отправляется…',
-                    style: const TextStyle(fontSize: 12, color: Colors.black54),
-                  )
-                else
-                  Text(
-                    progress > 0 ? 'Получение $progress%' : 'Ожидание…',
-                    style: const TextStyle(fontSize: 12, color: Colors.black54),
-                  ),
+                statusWidget,
               ],
             ),
           ),

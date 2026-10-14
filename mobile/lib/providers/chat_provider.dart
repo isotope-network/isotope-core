@@ -1394,6 +1394,9 @@ class ChatProvider extends ChangeNotifier {
       if (agg == null) {
         // Первый чанк — создаём агрегат.
         _fileMessages[msg.mediaId] = msg;
+        // Восстанавливаем _chunkCounts с диска (после перезапуска).
+        // Асинхронно — когда отработает, перерисуем UI.
+        _recountChunksAsync(msg.mediaId);
       } else if (msg.localFilePath.isNotEmpty && agg.localFilePath.isEmpty) {
         // Файл собран — обновляем localFilePath.
         _fileMessages[msg.mediaId] = agg.withLocalFilePath(msg.localFilePath);
@@ -1574,24 +1577,44 @@ class ChatProvider extends ChangeNotifier {
     }
   }
 
-  /// Прогресс передачи файла (0-100). Целое.
-  /// Отправитель: по доставленным чанкам (status >= 2).
-  /// Получатель: по числу сохранённых чанков на диске.
+  /// Восстанавливает _chunkCounts с диска (асинхронно).
+  /// Вызывается при первом чанке файла — до этого кэш пуст.
+  Future<void> _recountChunksAsync(String mediaId) async {
+    try {
+      await MediaStorage.recountChunks(mediaId);
+      if (_fileMessages.containsKey(mediaId)) {
+        _safeNotify();
+      }
+    } catch (_) {}
+  }
+
+  /// Прогресс передачи файла (-1..100). Целое.
+  /// -1 — неизвестно (нет данных, ещё не началось).
+  /// 0 — известно, но 0% (ещё ни одного чанка).
+  /// 1-99 — прогресс.
+  /// 100 — все чанки собраны (файл готов или собирается).
+  ///
+  /// Отправитель: push [FILE_STATUS] из Go → _fileProgress.
+  /// Получатель: число сохранённых чанков на диске (кэш _chunkCounts).
   int fileProgress(String mediaId) {
-    if (mediaId.isEmpty) return 0;
+    if (mediaId.isEmpty) return -1;
 
     // Отправитель: push [FILE_STATUS] из Go → _fileProgress.
     final pushed = _fileProgress[mediaId];
     if (pushed != null) return pushed;
 
+    // Файл собран на диске → 100.
+    final agg = _fileMessages[mediaId];
+    if (agg == null) return -1;
+    if (agg.localFilePath.isNotEmpty) return 100;
+
     // Получатель: число сохранённых чанков на диске.
     final chunks = MediaStorage.chunksCount(mediaId);
     if (chunks < 0) return 100; // маркер «собран»
+    if (chunks == 0) return -1; // неизвестно — recountChunks ещё не отработал
 
-    final agg = _fileMessages[mediaId];
-    if (agg == null) return 0;
     final total = agg.chunkTotal;
-    if (total <= 0) return 0;
+    if (total <= 0) return -1;
     return ((chunks / total) * 100).clamp(0, 100).round();
   }
 
