@@ -105,6 +105,14 @@ type retryInfo struct {
 	lastSent   time.Time
 }
 
+// hookAckWindow — окно неподтверждённых чанков для одного mediaID.
+// Dart шлёт fileAck(mediaID, indices) после saveChunk на диск.
+// Go очищает base64 (ClearFileChunk) и удаляет индексы из окна.
+// Если ack не пришёл за hookAckTimeout — лог [ACK_TIMEOUT], удаление из окна.
+type hookAckWindow struct {
+	Indices map[int]time.Time // chunkIndex → время добавления
+}
+
 // announcedPeer — запись о пире: список его multiaddr + когда последний раз видели.
 type announcedPeer struct {
 	Multiaddrs []string  `json:"multiaddrs"`
@@ -271,6 +279,12 @@ type Node struct {
 	// Без этого: time.AfterFunc на каждый ref → 10 таймеров/сек → flood.
 	pendingDeliveredTimers map[string]*time.Timer
 
+	// pendingHookAcks — окно чанков, отправленных в hook, но не подтверждённых Dart.
+	// Ключ — mediaID. Заполняется в handleStream при формировании hookMsg.
+	// Очищается в FileAck (по индексам) или в cleanupPendingAcksLoop (по таймауту).
+	pendingHookAcks   map[string]*hookAckWindow
+	pendingHookAcksMu sync.Mutex
+
 	// deliveredCount — счётчик доставленных чанков по MediaID (отправитель).
 	// Когда == ChunkTotal — удаляем sent/<MediaID>.bin.
 	// O(1) вместо O(N) проверки всех чанков на каждый [DELIVERED].
@@ -309,6 +323,7 @@ func NewNode(cfg Config) *Node {
 		deliveredCount:          make(map[string]int),
 		pendingDeliveredTimers:  make(map[string]*time.Timer),
 		completedFiles:          make(map[string]bool),
+		pendingHookAcks:         make(map[string]*hookAckWindow),
 	}
 }
 
@@ -1855,6 +1870,14 @@ func (n *Node) handleStream(stream network.Stream) {
 							if hookMsg.MediaType == "file" && hookMsg.ChunkTotal > 0 {
 								hookMsg.Text = ""
 								hookMsg.PlainText = ""
+								n.pendingHookAcksMu.Lock()
+								w := n.pendingHookAcks[hookMsg.MediaID]
+								if w == nil {
+									w = &hookAckWindow{Indices: make(map[int]time.Time)}
+									n.pendingHookAcks[hookMsg.MediaID] = w
+								}
+								w.Indices[hookMsg.ChunkIndex] = time.Now()
+								n.pendingHookAcksMu.Unlock()
 							}
 							data, _ := json.Marshal(hookMsg)
 							n.messageHook(string(data))
@@ -2545,6 +2568,33 @@ func (n *Node) cleanupLoop() {
 				log.Printf("[DIAG] goroutines=%d, heap=%d KB, sys=%d KB",
 					runtime.NumGoroutine(), m.HeapAlloc/1024, m.Sys/1024)
 			}
+		}
+	}()
+}
+
+// cleanupPendingAcksLoop — раз в 30 сек проверяет окно pendingHookAcks.
+// Чанки старше hookAckTimeout (120 сек) — логирует [ACK_TIMEOUT] и удаляет
+// из окна. base64 не очищает: чанк не подтверждён — может ещё понадобиться.
+func (n *Node) cleanupPendingAcksLoop() {
+	go func() {
+		const hookAckTimeout = 120 * time.Second
+		ticker := time.NewTicker(30 * time.Second)
+		defer ticker.Stop()
+		for range ticker.C {
+			now := time.Now()
+			n.pendingHookAcksMu.Lock()
+			for mediaID, w := range n.pendingHookAcks {
+				for idx, addedAt := range w.Indices {
+					if now.Sub(addedAt) > hookAckTimeout {
+						log.Printf("[ACK_TIMEOUT] mediaID=%s idx=%d", mediaID, idx)
+						delete(w.Indices, idx)
+					}
+				}
+				if len(w.Indices) == 0 {
+					delete(n.pendingHookAcks, mediaID)
+				}
+			}
+			n.pendingHookAcksMu.Unlock()
 		}
 	}()
 }
@@ -3329,6 +3379,9 @@ func (n *Node) InitP2P() error {
 	n.announceLoop()
 	n.cleanupLoop()
 	n.cleanupSentLoop()
+	if !n.isRelay {
+		n.cleanupPendingAcksLoop()
+	}
 	n.relayLoop()
 	n.StartAdaptation()
 
@@ -3432,6 +3485,34 @@ func (n *Node) ClearChunkData(mediaID string, chunkIndex int) bool {
 	return n.memory.ClearFileChunk(mediaID, chunkIndex)
 }
 
+// FileAck — подтверждает приём группы чанков файла от Dart.
+// Dart вызывает после saveChunk на диск. Go очищает base64 (ClearFileChunk)
+// и удаляет индексы из окна pendingHookAcks.
+// Идемпотентно: если чанк уже очищен / не в окне — не ошибка.
+// Вызывается из mobile.go (уже под nodeMu).
+func (n *Node) FileAck(mediaID string, indices []int) {
+	if mediaID == "" || len(indices) == 0 {
+		return
+	}
+
+	for _, idx := range indices {
+		n.memory.ClearFileChunk(mediaID, idx)
+	}
+
+	n.pendingHookAcksMu.Lock()
+	if w := n.pendingHookAcks[mediaID]; w != nil {
+		for _, idx := range indices {
+			delete(w.Indices, idx)
+		}
+		if len(w.Indices) == 0 {
+			delete(n.pendingHookAcks, mediaID)
+		}
+	}
+	n.pendingHookAcksMu.Unlock()
+
+	log.Printf("[ACK] mediaID=%s count=%d", mediaID, len(indices))
+}
+
 // DeleteFile — удаляет все чанки файла из memory по mediaID.
 // Также удаляет sent/<MediaID>.bin (если есть) и счётчик deliveredCount.
 // Используется при удалении файла из чата (свайп).
@@ -3461,6 +3542,10 @@ func (n *Node) DeleteFile(mediaID string) int {
 	delete(n.completedFiles, mediaID)
 	delete(n.fileStatusLastPush, mediaID)
 	n.fileStatusMu.Unlock()
+	// Очищаем окно ack.
+	n.pendingHookAcksMu.Lock()
+	delete(n.pendingHookAcks, mediaID)
+	n.pendingHookAcksMu.Unlock()
 
 	if removed > 0 {
 		log.Printf("[DELETE] file %s — removed %d chunks", mediaID, removed)

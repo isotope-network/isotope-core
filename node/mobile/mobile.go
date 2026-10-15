@@ -255,6 +255,34 @@ func ClearChunkData(mediaID string, chunkIndex int) string {
 	return `{"status":"ok"}`
 }
 
+// FileAck — подтверждает получение группы чанков файла.
+// Заменяет поштучный ClearChunkData: Dart шлёт батч принятых индексов,
+// Go очищает base64 для каждого и снимает с окна неподтверждённых.
+// indicesJSON — JSON-массив int, например "[1,2,3]".
+// Возвращает {"status":"ok","cleared":N} или errorJSON.
+func FileAck(mediaID string, indicesJSON string) string {
+	nodeMu.Lock()
+	defer nodeMu.Unlock()
+
+	if node == nil {
+		return errorJSON("node not started")
+	}
+	if mediaID == "" {
+		return errorJSON("mediaID is required")
+	}
+
+	var indices []int
+	if err := json.Unmarshal([]byte(indicesJSON), &indices); err != nil {
+		return errorJSON("invalid indices JSON: " + err.Error())
+	}
+	if len(indices) == 0 {
+		return `{"status":"ok","cleared":0}`
+	}
+
+	node.FileAck(mediaID, indices)
+	return fmt.Sprintf(`{"status":"ok","cleared":%d}`, len(indices))
+}
+
 // DeleteFile — удаляет все чанки файла из memory по mediaID.
 // Также удаляет sent/<MediaID>.bin (если есть) и счётчик.
 // Возвращает {"status":"ok","removed":N} или errorJSON.

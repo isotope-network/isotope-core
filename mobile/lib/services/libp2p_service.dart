@@ -296,6 +296,24 @@ class LibP2PService {
     }
   }
 
+  /// Подтверждает получение группы чанков файла.
+  /// Заменяет поштучный clearChunkData: Dart шлёт батч принятых индексов,
+  /// Go очищает base64 для каждого и снимает с окна неподтверждённых.
+  static Future<Map<String, dynamic>> fileAck({
+    required String mediaID,
+    required List<int> indices,
+  }) async {
+    try {
+      final response = await _channel.invokeMethod<String>('fileAck', {
+        'mediaID': mediaID,
+        'indices': jsonEncode(indices),
+      });
+      return _safeDecode(response);
+    } on PlatformException catch (e) {
+      return {'error': e.message ?? 'platform_error', 'operation': 'file_ack'};
+    }
+  }
+
   /// Возвращает статусы всех файловых отправок:
   /// [{"media_id":"...","delivered":N,"total":M}, ...].
   /// Используется при старте — восстановить прогресс после перезапуска.

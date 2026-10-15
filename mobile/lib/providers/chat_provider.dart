@@ -1458,6 +1458,13 @@ class ChatProvider extends ChangeNotifier {
   final Map<String, Set<int>> _chunkQueue = {};
   Timer? _chunkQueueTimer;
 
+  // Буфер ack: mediaId → Set<chunkIndex>, ожидающих подтверждения.
+  // Dart шлёт fileAck батчами (10 индексов или раз в секунду) — Go
+  // очищает base64 и снимает с окна pendingHookAcks.
+  // Заменяет поштучный clearChunkData.
+  final Map<String, Set<int>> _ackBuffer = {};
+  Timer? _ackFlushTimer;
+
   /// Ставит чанк в очередь на получение base64 из Go.
   /// Реальный вызов getChunk — в _flushChunkQueue (таймер 100 мс).
   /// Свои чанки (isOwn) — не сохраняем: файл у отправителя на диске (sent/).
@@ -1546,9 +1553,17 @@ class ChatProvider extends ChangeNotifier {
     );
     if (!ok) return;
 
-    // Чанк сохранён на диск — base64 в Go-памяти больше не нужен.
-    // Очищаем, чтобы memory у получателя не раздувалась на больших файлах.
-    LibP2PService.clearChunkData(mediaID: mediaId, chunkIndex: chunkIndex);
+    // Чанк сохранён на диск. Добавляем в буфер ack — Go очистит base64
+    // сам после получения fileAck. Батч: 10 индексов или раз в секунду.
+    _ackBuffer.putIfAbsent(mediaId, () => <int>{}).add(chunkIndex);
+    if (_ackBuffer[mediaId]!.length >= 10) {
+      _flushAcks(mediaId);
+    } else {
+      _ackFlushTimer ??= Timer(const Duration(seconds: 1), () {
+        _ackFlushTimer = null;
+        _flushAllAcks();
+      });
+    }
 
     // Защита: только один поток собирает файл для данного mediaId.
     if (_assembling.contains(mediaId)) return;
@@ -1611,6 +1626,27 @@ class ChatProvider extends ChangeNotifier {
       }
     } catch (e) {
       LogService.log('ChatProvider: _loadFileStatuses ERROR: $e');
+    }
+  }
+
+  /// Отправляет накопленные ack для одного mediaId.
+  /// Fire-and-forget: ошибки логируются, не блокируют.
+  Future<void> _flushAcks(String mediaId) async {
+    final indices = _ackBuffer.remove(mediaId);
+    if (indices == null || indices.isEmpty) return;
+    final r = await LibP2PService.fileAck(
+      mediaID: mediaId,
+      indices: indices.toList(),
+    );
+    if (r.containsKey('error')) {
+      LogService.log('P2P: fileAck failed $mediaId: ${r['error']}');
+    }
+  }
+
+  /// Отправляет все накопленные ack (по таймеру 1 сек).
+  Future<void> _flushAllAcks() async {
+    for (final mediaId in _ackBuffer.keys.toList()) {
+      await _flushAcks(mediaId);
     }
   }
 
@@ -2138,6 +2174,7 @@ class ChatProvider extends ChangeNotifier {
     _statusTimer?.cancel();
     _purgeTimer?.cancel();
     _chunkQueueTimer?.cancel();
+    _ackFlushTimer?.cancel();
     for (final t in _pendingTimers.values) {
       t.cancel();
     }

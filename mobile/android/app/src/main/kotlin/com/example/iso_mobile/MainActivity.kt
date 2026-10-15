@@ -274,6 +274,14 @@ class MainActivity : FlutterActivity() {
                             runOnUiThread { result.success(response) }
                         }.start()
                     }
+                    "fileAck" -> {
+                        val mediaID = call.argument<String>("mediaID") ?: ""
+                        val indicesJson = call.argument<String>("indices") ?: "[]"
+                        Thread {
+                            val response = Mobile.fileAck(mediaID, indicesJson)
+                            runOnUiThread { result.success(response) }
+                        }.start()
+                    }
                     "getPeers" -> {
                         Thread {
                             val response = Mobile.getPeers()
