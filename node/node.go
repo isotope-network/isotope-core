@@ -3410,16 +3410,14 @@ func (n *Node) GetChunk(mediaID string, chunkIndex int) (string, error) {
 	if mediaID == "" {
 		return "", fmt.Errorf("mediaID is required")
 	}
-	all := n.memory.GetAll()
-	for _, m := range all {
-		if m.MediaID == mediaID && m.ChunkIndex == chunkIndex {
-			if m.IsOwn {
-				return m.PlainText, nil
-			}
-			return m.Text, nil
-		}
+	msg, ok := n.memory.GetFileChunk(mediaID, chunkIndex)
+	if !ok {
+		return "", fmt.Errorf("chunk not found: mediaID=%s index=%d", mediaID, chunkIndex)
 	}
-	return "", fmt.Errorf("chunk not found: mediaID=%s index=%d", mediaID, chunkIndex)
+	if msg.IsOwn {
+		return msg.PlainText, nil
+	}
+	return msg.Text, nil
 }
 
 // ClearChunkData — очищает Text/PlainText у конкретного чанка в memory.
@@ -3431,16 +3429,7 @@ func (n *Node) ClearChunkData(mediaID string, chunkIndex int) bool {
 	if mediaID == "" {
 		return false
 	}
-	all := n.memory.GetAll()
-	for _, m := range all {
-		if m.MediaID == mediaID && m.ChunkIndex == chunkIndex {
-			if m.Text == "" && m.PlainText == "" {
-				return true // уже очищен
-			}
-			return n.memory.ClearChunkData(m.ID)
-		}
-	}
-	return false
+	return n.memory.ClearFileChunk(mediaID, chunkIndex)
 }
 
 // DeleteFile — удаляет все чанки файла из memory по mediaID.

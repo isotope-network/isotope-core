@@ -86,9 +86,11 @@ type Message struct {
 
 // Memory — потокобезопасное хранилище сообщений (без лимита)
 type Memory struct {
-	mu       sync.Mutex
-	messages []Message
-	seen     map[string]bool
+	mu         sync.Mutex
+	messages   []Message
+	seen       map[string]bool
+	byID       map[string]int         // msgID → позиция (лениво)
+	fileChunks map[string]map[int]int // mediaID → chunkIndex → позиция (лениво)
 }
 
 // Add — добавляет сообщение, если оно не дубликат и не истекло.
@@ -117,6 +119,23 @@ func (m *Memory) Add(msg Message) bool {
 		msg.Created = time.Now()
 	}
 
+	if m.byID == nil {
+		m.byID = make(map[string]int)
+	}
+	if m.fileChunks == nil {
+		m.fileChunks = make(map[string]map[int]int)
+	}
+
+	pos := len(m.messages)
+	m.byID[msg.ID] = pos
+	if msg.MediaType == "file" && msg.ChunkTotal > 0 && msg.MediaID != "" {
+		fc := m.fileChunks[msg.MediaID]
+		if fc == nil {
+			fc = make(map[int]int)
+			m.fileChunks[msg.MediaID] = fc
+		}
+		fc[msg.ChunkIndex] = pos
+	}
 	m.messages = append(m.messages, msg)
 	return true
 }
@@ -126,13 +145,12 @@ func (m *Memory) Add(msg Message) bool {
 func (m *Memory) SetExpiresAt(id string, expiresAt time.Time) bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	for i := range m.messages {
-		if m.messages[i].ID == id {
-			m.messages[i].ExpiresAt = expiresAt
-			return true
-		}
+	pos, ok := m.byID[id]
+	if !ok || pos < 0 || pos >= len(m.messages) {
+		return false
 	}
-	return false
+	m.messages[pos].ExpiresAt = expiresAt
+	return true
 }
 
 // SetStatus — устанавливает статус сообщения по ID.
@@ -141,23 +159,21 @@ func (m *Memory) SetExpiresAt(id string, expiresAt time.Time) bool {
 func (m *Memory) SetStatus(id string, status MessageStatus) bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	for i := range m.messages {
-		if m.messages[i].ID != id {
-			continue
-		}
-		cur := m.messages[i].Status
-		// hidden — терминальное состояние. Не повышается.
-		if cur == StatusHidden {
-			return false
-		}
-		// Не понижаем.
-		if cur >= status {
-			return false
-		}
-		m.messages[i].Status = status
-		return true
+	pos, ok := m.byID[id]
+	if !ok || pos < 0 || pos >= len(m.messages) {
+		return false
 	}
-	return false
+	cur := m.messages[pos].Status
+	// hidden — терминальное состояние. Не повышается.
+	if cur == StatusHidden {
+		return false
+	}
+	// Не понижаем.
+	if cur >= status {
+		return false
+	}
+	m.messages[pos].Status = status
+	return true
 }
 
 // MarkReadLocally — помечает входящие сообщения как прочитанные локально.
@@ -194,14 +210,54 @@ func (m *Memory) MarkReadLocally(refs []string) int {
 func (m *Memory) ClearChunkData(id string) bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	for i := range m.messages {
-		if m.messages[i].ID == id {
-			m.messages[i].Text = ""
-			m.messages[i].PlainText = ""
-			return true
-		}
+	pos, ok := m.byID[id]
+	if !ok || pos < 0 || pos >= len(m.messages) {
+		return false
 	}
-	return false
+	m.messages[pos].Text = ""
+	m.messages[pos].PlainText = ""
+	return true
+}
+
+// ClearFileChunk — O(1) очистка Text/PlainText по mediaID + chunkIndex.
+// Заменяет Node.ClearChunkData-цикл (был O(N) через GetAll).
+// Возвращает true, если чанк найден.
+func (m *Memory) ClearFileChunk(mediaID string, chunkIndex int) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.fileChunks == nil {
+		return false
+	}
+	fc := m.fileChunks[mediaID]
+	if fc == nil {
+		return false
+	}
+	pos, ok := fc[chunkIndex]
+	if !ok || pos < 0 || pos >= len(m.messages) {
+		return false
+	}
+	m.messages[pos].Text = ""
+	m.messages[pos].PlainText = ""
+	return true
+}
+
+// GetFileChunk — O(1) получение копии файлового чанка по mediaID + chunkIndex.
+// Возвращает копию Message и true, если найден.
+func (m *Memory) GetFileChunk(mediaID string, chunkIndex int) (Message, bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.fileChunks == nil {
+		return Message{}, false
+	}
+	fc := m.fileChunks[mediaID]
+	if fc == nil {
+		return Message{}, false
+	}
+	pos, ok := fc[chunkIndex]
+	if !ok || pos < 0 || pos >= len(m.messages) {
+		return Message{}, false
+	}
+	return m.messages[pos], true
 }
 
 // Remove — удаляет сообщение по ID. Возвращает true, если было.
@@ -210,14 +266,37 @@ func (m *Memory) Remove(id string) bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	for i, msg := range m.messages {
-		if msg.ID == id {
-			m.messages = append(m.messages[:i], m.messages[i+1:]...)
-			delete(m.seen, id)
-			return true
+	pos, ok := m.byID[id]
+	if !ok {
+		return false
+	}
+
+	removed := m.messages[pos] // ДО swap — нужно для удаления из fileChunks
+
+	last := len(m.messages) - 1
+	if pos != last {
+		m.messages[pos] = m.messages[last]
+		moved := m.messages[pos]
+		m.byID[moved.ID] = pos
+		if moved.MediaType == "file" && moved.ChunkTotal > 0 && moved.MediaID != "" {
+			if fc := m.fileChunks[moved.MediaID]; fc != nil {
+				fc[moved.ChunkIndex] = pos
+			}
 		}
 	}
-	return false
+	m.messages = m.messages[:last]
+
+	delete(m.byID, id)
+	if removed.MediaType == "file" && removed.ChunkTotal > 0 && removed.MediaID != "" {
+		if fc := m.fileChunks[removed.MediaID]; fc != nil {
+			delete(fc, removed.ChunkIndex)
+			if len(fc) == 0 {
+				delete(m.fileChunks, removed.MediaID)
+			}
+		}
+	}
+	delete(m.seen, id)
+	return true
 }
 
 // GetByID — возвращает сообщение по ID без копирования всего среза.
@@ -228,12 +307,11 @@ func (m *Memory) Remove(id string) bool {
 func (m *Memory) GetByID(id string) (Message, bool) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	for i := range m.messages {
-		if m.messages[i].ID == id {
-			return m.messages[i], true
-		}
+	pos, ok := m.byID[id]
+	if !ok || pos < 0 || pos >= len(m.messages) {
+		return Message{}, false
 	}
-	return Message{}, false
+	return m.messages[pos], true
 }
 
 // GetAll — возвращает все сообщения
@@ -256,6 +334,26 @@ func (m *Memory) GetSeenCopy() map[string]bool {
 		result[k] = v
 	}
 	return result
+}
+
+// rebuildIndexes — пересобирает byID и fileChunks с нуля.
+// Вызывать после операций, которые пересобирают m.messages через append
+// (DeleteExpired, PurgeDead) — там позиции сдвигаются.
+// Вызывается под m.mu (вызывающий держит лок).
+func (m *Memory) rebuildIndexes() {
+	m.byID = make(map[string]int, len(m.messages))
+	m.fileChunks = make(map[string]map[int]int)
+	for pos, msg := range m.messages {
+		m.byID[msg.ID] = pos
+		if msg.MediaType == "file" && msg.ChunkTotal > 0 && msg.MediaID != "" {
+			fc := m.fileChunks[msg.MediaID]
+			if fc == nil {
+				fc = make(map[int]int)
+				m.fileChunks[msg.MediaID] = fc
+			}
+			fc[msg.ChunkIndex] = pos
+		}
+	}
 }
 
 // GetActiveMessages — возвращает неархивированные сообщения с весом >= threshold
@@ -304,34 +402,35 @@ func (m *Memory) ArchiveOld(threshold float64) int {
 func (m *Memory) RestoreFromArchive(id string) bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	for i := range m.messages {
-		if m.messages[i].ID == id && m.messages[i].Archived {
-			m.messages[i].Archived = false
-			m.messages[i].Weight = 0.5
-			m.messages[i].Created = time.Now()
-			return true
-		}
+	pos, ok := m.byID[id]
+	if !ok || pos < 0 || pos >= len(m.messages) {
+		return false
 	}
-	return false
+	if !m.messages[pos].Archived {
+		return false
+	}
+	m.messages[pos].Archived = false
+	m.messages[pos].Weight = 0.5
+	m.messages[pos].Created = time.Now()
+	return true
 }
 
 // UpdateWeight — обновляет вес сообщения по ID
 func (m *Memory) UpdateWeight(id string, delta float64) bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	for i := range m.messages {
-		if m.messages[i].ID == id {
-			m.messages[i].Weight += delta
-			if m.messages[i].Weight > 1.0 {
-				m.messages[i].Weight = 1.0
-			}
-			if m.messages[i].Weight < 0.0 {
-				m.messages[i].Weight = 0.0
-			}
-			return true
-		}
+	pos, ok := m.byID[id]
+	if !ok || pos < 0 || pos >= len(m.messages) {
+		return false
 	}
-	return false
+	m.messages[pos].Weight += delta
+	if m.messages[pos].Weight > 1.0 {
+		m.messages[pos].Weight = 1.0
+	}
+	if m.messages[pos].Weight < 0.0 {
+		m.messages[pos].Weight = 0.0
+	}
+	return true
 }
 
 // Count — возвращает количество сообщений
@@ -401,6 +500,9 @@ func (m *Memory) PurgeDead(threshold float64) int {
 		}
 	}
 	m.messages = alive
+	if removed > 0 {
+		m.rebuildIndexes()
+	}
 	return removed
 }
 
@@ -429,6 +531,9 @@ func (m *Memory) DeleteExpired() int {
 		}
 	}
 	m.messages = alive
+	if removed > 0 {
+		m.rebuildIndexes()
+	}
 	return removed
 }
 
