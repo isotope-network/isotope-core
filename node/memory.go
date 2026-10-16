@@ -37,6 +37,10 @@ const (
 	// TypeTtlUpdate — обновление TTL от отправителя получателю.
 	// Открытое (Version=0). Payload: expires_in_seconds в Text. Ref = msg_id.
 	TypeTtlUpdate MessageType = 8
+	// TypeFileComplete — получатель → отправитель: файл успешно собран на диске.
+	// Открытое (Version=0). Ref = media_id. Payload не нужен (media_id в Ref).
+	// Используется для удержания sent/ (Этап 2).
+	TypeFileComplete MessageType = 9
 )
 
 // ============================================================

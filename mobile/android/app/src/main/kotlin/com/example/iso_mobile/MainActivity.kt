@@ -402,6 +402,14 @@ class MainActivity : FlutterActivity() {
                             runOnUiThread { result.success(response) }
                         }.start()
                     }
+                    "sendFileComplete" -> {
+                        val mediaID = call.argument<String>("mediaID") ?: ""
+                        val recipient = call.argument<String>("recipient") ?: ""
+                        Thread {
+                            val response = Mobile.sendFileComplete(mediaID, recipient)
+                            runOnUiThread { result.success(response) }
+                        }.start()
+                    }
                     "sendReadBatch" -> {
                         val refsJson = call.argument<String>("refs") ?: "[]"
                         val recipient = call.argument<String>("recipient") ?: ""

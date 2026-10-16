@@ -851,6 +851,23 @@ class LibP2PService {
     }
   }
 
+  /// Получатель → отправитель: файл успешно собран на диске.
+  /// Используется для удержания sent/ (Этап 2).
+  static Future<Map<String, dynamic>> sendFileComplete({
+    required String mediaID,
+    required String recipient,
+  }) async {
+    try {
+      final response = await _channel.invokeMethod<String>('sendFileComplete', {
+        'mediaID': mediaID,
+        'recipient': recipient,
+      });
+      return _safeDecode(response);
+    } on PlatformException catch (e) {
+      return {'error': e.message ?? 'platform_error', 'operation': 'send_file_complete'};
+    }
+  }
+
   /// Помечает входящие сообщения как прочитанные локально (ReadLocally=true).
   /// Вызывается при открытии чата — до отправки [READ] собеседнику.
   /// refs — список msg_id.

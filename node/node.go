@@ -2039,7 +2039,7 @@ func (n *Node) findMyMessageByID(id string) (Message, bool) {
 func (n *Node) isServiceType(t MessageType) bool {
 	switch t {
 	case TypeDelivered, TypeRead, TypeContactRequest, TypeContactAccept, TypeContactReject,
-		TypeContactHello, TypeContactHelloAck, TypeTtlUpdate:
+		TypeContactHello, TypeContactHelloAck, TypeTtlUpdate, TypeFileComplete:
 		return true
 	}
 	return false
@@ -2137,7 +2137,54 @@ func (n *Node) handleServiceMessage(m Message) {
 
 	case TypeTtlUpdate:
 		n.handleTtlUpdate(m)
+
+	case TypeFileComplete:
+		n.handleFileComplete(m)
 	}
+}
+
+// handleFileComplete — получатель подтвердил сборку файла.
+// Пока (A) — только лог. B (удержание sent/) — отдельно.
+func (n *Node) handleFileComplete(m Message) {
+	if m.Ref == "" {
+		log.Printf("[FILE_COMPLETE] empty ref, dropped")
+		return
+	}
+	log.Printf("[FILE_COMPLETE] mediaID=%s from=%s", m.Ref, m.Sender)
+
+	// TODO (B): удалить sent/<mediaID>.bin, если он ещё есть.
+	// TODO (B): memory.Remove чанков этого mediaID.
+	// TODO (B): push [FILE_COMPLETE] в Dart (для галочек).
+}
+
+// SendFileComplete — получатель → отправитель: файл собран.
+// Ref = mediaID. Отправка через bootstrap (как сервисное).
+func (n *Node) SendFileComplete(mediaID, recipient string) error {
+	if n.host == nil {
+		return fmt.Errorf("node not started")
+	}
+	if mediaID == "" || recipient == "" {
+		return fmt.Errorf("mediaID and recipient are required")
+	}
+	id := generateMsgID(fmt.Sprintf("file_complete:%s:%d", mediaID, time.Now().UnixNano()))
+	readEnabled := n.myReadEnabled
+	msg := Message{
+		ID:          id,
+		Text:        "",
+		Sender:      n.host.ID().String(),
+		Recipient:   recipient,
+		Type:        TypeFileComplete,
+		Ref:         mediaID,
+		Version:     0,
+		Time:        time.Now().UTC().Format("2006-01-02T15:04:05"),
+		ReadEnabled: &readEnabled,
+	}
+	if err := n.sendServiceViaBootstrap(msg); err != nil {
+		log.Printf("[FILE_COMPLETE] send failed mediaID=%s: %v", mediaID, err)
+		return err
+	}
+	log.Printf("[FILE_COMPLETE] sent mediaID=%s to=%s", mediaID, recipient)
+	return nil
 }
 
 // handleTtlUpdate — обновляет ExpiresAt для сообщения по ref.

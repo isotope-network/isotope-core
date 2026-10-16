@@ -157,6 +157,26 @@ func Start(ethHash string, bootstrapPeers string, enableMDNS bool) string {
 }
 
 // Stop — останавливает узел
+// SendFileComplete — получатель → отправитель: файл собран.
+func SendFileComplete(mediaID string, recipient string) string {
+	nodeMu.Lock()
+	defer nodeMu.Unlock()
+
+	if node == nil {
+		return errorJSON("node not started")
+	}
+	if mediaID == "" {
+		return errorJSON("mediaID is required")
+	}
+	if recipient == "" {
+		return errorJSON("recipient is required")
+	}
+	if err := node.SendFileComplete(mediaID, recipient); err != nil {
+		return errorJSON(err.Error())
+	}
+	return `{"status":"ok"}`
+}
+
 func Stop() string {
 	nodeMu.Lock()
 	defer nodeMu.Unlock()

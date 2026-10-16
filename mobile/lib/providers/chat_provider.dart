@@ -701,6 +701,10 @@ class ChatProvider extends ChangeNotifier {
         if (type == 8) {
           return;
         }
+        // Type=9 — [FILE_COMPLETE]: служебное, обрабатывается в Go.
+        if (type == 9) {
+          return;
+        }
 
         final previewText = (map['text'] as String? ?? '');
         final preview = previewText.length > 40 ? '${previewText.substring(0, 40)}…' : previewText;
@@ -1582,6 +1586,16 @@ class ChatProvider extends ChangeNotifier {
       _fileMessages[mediaId] = agg.withLocalFilePath(path);
       LogService.log('MEDIA: file ready $path');
       _safeNotify();
+    }
+
+    // Файл собран — отправляем [FILE_COMPLETE] отправителю.
+    // Получатель (мы) → отправитель. Только для входящих файлов (не своих).
+    final aggAfter = _fileMessages[mediaId];
+    if (aggAfter != null && !aggAfter.isOwn && aggAfter.sender.isNotEmpty) {
+      LibP2PService.sendFileComplete(
+        mediaID: mediaId,
+        recipient: aggAfter.sender,
+      ).catchError((_) => <String, dynamic>{});
     }
 
     // Файл собран — если чат открыт, отправляем [READ] по последнему чанку.
