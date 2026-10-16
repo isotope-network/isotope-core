@@ -3092,25 +3092,77 @@ func migrateTime(t string) string {
 }
 
 func (n *Node) loadBootstrapPeers() []string {
+	var raw []string
 	if len(n.configBootstrap) > 0 {
-		return n.configBootstrap
-	}
-	var peers []string
-	if envPeers := os.Getenv("ISOTOPE_BOOTSTRAP_PEERS"); envPeers != "" {
-		for _, p := range strings.Split(envPeers, ",") {
-			if p = strings.TrimSpace(p); p != "" {
-				peers = append(peers, p)
+		raw = n.configBootstrap
+	} else {
+		if envPeers := os.Getenv("ISOTOPE_BOOTSTRAP_PEERS"); envPeers != "" {
+			for _, p := range strings.Split(envPeers, ",") {
+				if p = strings.TrimSpace(p); p != "" {
+					raw = append(raw, p)
+				}
+			}
+		}
+		if data, err := os.ReadFile("bootstrap.txt"); err == nil {
+			for _, line := range strings.Split(string(data), "\n") {
+				if line = strings.TrimSpace(line); line != "" {
+					raw = append(raw, line)
+				}
 			}
 		}
 	}
-	if data, err := os.ReadFile("bootstrap.txt"); err == nil {
-		for _, line := range strings.Split(string(data), "\n") {
-			if line = strings.TrimSpace(line); line != "" {
-				peers = append(peers, line)
-			}
-		}
+
+	// Расширяем: для каждого адреса — оба транспорта (WS + TCP).
+	// TODO: remove when obfuscation is in place (see roadmap).
+	expanded := make([]string, 0, len(raw)*2)
+	for _, addr := range raw {
+		expanded = append(expanded, expandTransportAlternatives(addr)...)
 	}
-	return peers
+	return expanded
+}
+
+// expandTransportAlternatives — возвращает список multiaddr для одного peer:
+// оригинал + альтернативный транспорт (WS ↔ TCP).
+// Порт вычисляется динамически (разница 1): VPS слушает port (TCP) и port+1 (WS).
+// Пример: /ip4/1.2.3.4/tcp/9001/ws/p2p/QmX →
+//
+//	[/ip4/1.2.3.4/tcp/9001/ws/p2p/QmX, /ip4/1.2.3.4/tcp/9000/p2p/QmX]
+//
+// TODO: remove when obfuscation is in place (see roadmap).
+func expandTransportAlternatives(addr string) []string {
+	result := []string{addr}
+
+	const tcpMark = "/tcp/"
+	i := strings.Index(addr, tcpMark)
+	if i < 0 {
+		return result
+	}
+	portStart := i + len(tcpMark)
+	portEnd := portStart
+	for portEnd < len(addr) && addr[portEnd] >= '0' && addr[portEnd] <= '9' {
+		portEnd++
+	}
+	port, err := strconv.Atoi(addr[portStart:portEnd])
+	if err != nil {
+		return result
+	}
+
+	if strings.Contains(addr, "/ws") {
+		// WS → TCP: убрать "/ws", порт -1.
+		altPort := strconv.Itoa(port - 1)
+		prefix := addr[:portStart]
+		suffix := addr[portEnd:]
+		suffix = strings.Replace(suffix, "/ws", "", 1)
+		result = append(result, prefix+altPort+suffix)
+	} else {
+		// TCP → WS: порт +1, вставить "/ws" после порта.
+		altPort := strconv.Itoa(port + 1)
+		prefix := addr[:portStart]
+		suffix := addr[portEnd:]
+		result = append(result, prefix+altPort+"/ws"+suffix)
+	}
+
+	return result
 }
 
 func (n *Node) loadState() error {
