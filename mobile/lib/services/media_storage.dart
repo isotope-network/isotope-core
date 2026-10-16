@@ -19,6 +19,12 @@ class MediaStorage {
   /// Инкрементируется в saveChunk. Сбрасывается при init.
   static final Map<String, int> _chunkCounts = {};
 
+  /// Кэш: mediaId → путь к собранному файлу (или null, если не собран).
+  /// Нужен для getFilePath — без кэша каждый вызов сканирует files/.
+  /// Инвалидация: invalidatePathCache(mediaId), init() → clear().
+  /// Обновляется в tryAssemble при успешной сборке.
+  static final Map<String, String?> _pathCache = {};
+
   /// Количество сохранённых чанков для mediaId (из кэша).
   static int chunksCount(String mediaId) => _chunkCounts[mediaId] ?? 0;
 
@@ -35,6 +41,7 @@ class MediaStorage {
       await _filesDir!.create(recursive: true);
     }
     _chunkCounts.clear();
+    _pathCache.clear();
     LogService.log('MEDIA: init done');
   }
 
@@ -173,6 +180,7 @@ class MediaStorage {
       } catch (_) {}
 
       _chunkCounts.remove(mediaId);
+      _pathCache[mediaId] = outPath;
       LogService.log('MEDIA: assembled $mediaId → $outPath');
       return outPath;
     } catch (e) {
@@ -196,10 +204,18 @@ class MediaStorage {
 
   /// Возвращает путь к собранному файлу, если он есть.
   /// Ищет с любым расширением: <mediaId>.*
+  /// Кэширует результат (включая null) — иначе 26870 чанков одного
+  /// mediaId вызывают 26870 сканирований files/.
   static Future<String?> getFilePath(String mediaId) async {
     if (mediaId.isEmpty) return null;
+    if (_pathCache.containsKey(mediaId)) {
+      return _pathCache[mediaId];
+    }
     final dir = _filesRoot;
-    if (!await dir.exists()) return null;
+    if (!await dir.exists()) {
+      _pathCache[mediaId] = null;
+      return null;
+    }
     try {
       await for (final e in dir.list()) {
         if (e is File) {
@@ -207,14 +223,25 @@ class MediaStorage {
           if (name.startsWith(mediaId) &&
               (name.length == mediaId.length ||
                   name[mediaId.length] == '.')) {
+            _pathCache[mediaId] = e.path;
             return e.path;
           }
         }
       }
     } catch (_) {
+      _pathCache[mediaId] = null;
       return null;
     }
+    _pathCache[mediaId] = null;
     return null;
+  }
+
+  /// Инвалидирует кэш пути для mediaId.
+  /// Вызывается при удалении файла — иначе getFilePath вернёт
+  /// устаревший путь.
+  static void invalidatePathCache(String mediaId) {
+    if (mediaId.isEmpty) return;
+    _pathCache.remove(mediaId);
   }
 
   /// Очистка: удаляет чанки старше N часов. По умолчанию — 24.

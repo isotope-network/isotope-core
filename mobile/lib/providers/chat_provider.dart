@@ -1202,6 +1202,9 @@ class ChatProvider extends ChangeNotifier {
                 });
               }
             }
+            // ВАЖНО: этот блок — только для ПЕРВОГО чанка mediaID.
+            // Все последующие 26869 чанков — continue БЕЗ getFilePath.
+            // (localFilePath обновляется в tryAssemble → _fileMessages + _pathCache).
             final agg = Message(
               id: map['id'] ?? '',
               text: '',
@@ -1227,12 +1230,6 @@ class ChatProvider extends ChangeNotifier {
               localFilePath: localPath,
             );
             _fileMessages[mid] = agg;
-          } else if (existing.localFilePath.isEmpty) {
-            // Файл мог быть собран после первого чанка.
-            final p = await MediaStorage.getFilePath(mid);
-            if (p != null) {
-              _fileMessages[mid] = existing.withLocalFilePath(p);
-            }
           }
           // Не добавляем в result — UI получит агрегат из _fileMessages.
           continue;
@@ -1748,6 +1745,7 @@ class ChatProvider extends ChangeNotifier {
         _lastMessageByPeer.remove(chatPeer);
       }
       LibP2PService.deleteFile(mediaId).catchError((_) => <String, dynamic>{});
+      MediaStorage.invalidatePathCache(mediaId);
       LogService.log('DELETE file $mediaId');
       _safeNotify();
       return;
