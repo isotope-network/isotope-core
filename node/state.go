@@ -2,6 +2,8 @@
 package core
 
 import (
+	"bytes"
+	"compress/gzip"
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/rand"
@@ -126,6 +128,18 @@ func (n *Node) saveState() error {
 		return err
 	}
 
+	// gzip — сжатие state (24 МБ → ~5 МБ). Быстрая победа для диска и I/O.
+	// Обратная совместимость: loadStateData определяет gzip по magic (1F 8B).
+	var buf bytes.Buffer
+	gz := gzip.NewWriter(&buf)
+	if _, err := gz.Write(data); err != nil {
+		return err
+	}
+	if err := gz.Close(); err != nil {
+		return err
+	}
+	data = buf.Bytes()
+
 	password := os.Getenv("ISOTOPE_STATE_PASSWORD")
 	if password != "" {
 		data, err = encryptData(data, password)
@@ -150,6 +164,21 @@ func (n *Node) loadStateData() ([]byte, error) {
 		if err != nil {
 			return nil, err
 		}
+	}
+
+	// Обратная совместимость: старые файлы — plain JSON, новые — gzip.
+	// Gzip magic: 0x1F 0x8B.
+	if len(data) >= 2 && data[0] == 0x1F && data[1] == 0x8B {
+		gz, err := gzip.NewReader(bytes.NewReader(data))
+		if err != nil {
+			return nil, err
+		}
+		defer gz.Close()
+		plain, err := io.ReadAll(gz)
+		if err != nil {
+			return nil, err
+		}
+		return plain, nil
 	}
 
 	return data, nil
