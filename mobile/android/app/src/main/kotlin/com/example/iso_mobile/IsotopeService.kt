@@ -65,7 +65,8 @@ class IsotopeService : Service() {
     }
 
     override fun onDestroy() {
-        Log.d(TAG, "onDestroy()")
+        Log.d(TAG, "onDestroy() — останавливаем Go-ядро (saveState)")
+        runCatching { mobile.Mobile.stop() }
         releaseWakeLock()
         super.onDestroy()
     }
