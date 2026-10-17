@@ -2851,6 +2851,12 @@ func (n *Node) replicateMessage(msg Message) {
 			// На relay очереди нет — воркеры не запущены.
 			n.chunkQueue <- msg
 		} else {
+			// На relay файловые чанки — через семафор, чтобы не забить
+			// libp2p-стримы и не блокировать сервисные ([DELIVERED]/[READ]).
+			if isFileChunk && n.isRelay {
+				n.sendSem <- struct{}{}
+				defer func() { <-n.sendSem }()
+			}
 			n.sendToRecipient(msg, data, isFileChunk)
 		}
 		// В offline-очередь — только НЕ-сервисные, НЕ файловые чанки и только на клиенте.
