@@ -1313,10 +1313,20 @@ func (n *Node) retryUnacked() {
 		// Восстанавливаем Message из sent/<mediaID>.bin.
 		msg, err := n.restoreChunkMessage(item.info)
 		if err != nil {
-			log.Printf("[RETRY] restore %s failed: %v", item.id, err)
-			// Не удалось восстановить — удаляем. Иначе зациклится.
+			// attempts++ при fail — иначе giving up не срабатывает (мёртвый код).
+			// После 3 fail — delete. Между fail — чанк остаётся в unackedChunks,
+			// но с растущим attempts. Это защита от бесконечного restore-цикла.
 			n.unackedChunksMu.Lock()
-			delete(n.unackedChunks, item.id)
+			info := n.unackedChunks[item.id]
+			info.attempts++
+			if info.attempts >= 3 {
+				log.Printf("[RETRY] giving up on %s after %d failed restores: %v", item.id, info.attempts, err)
+				delete(n.unackedChunks, item.id)
+			} else {
+				log.Printf("[RETRY] restore %s failed (attempt %d): %v", item.id, info.attempts, err)
+				info.lastSent = time.Now()
+				n.unackedChunks[item.id] = info
+			}
 			n.unackedChunksMu.Unlock()
 			continue
 		}
