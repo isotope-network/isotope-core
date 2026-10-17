@@ -2075,7 +2075,9 @@ func (n *Node) handleServiceMessage(m Message) {
 		}
 		// Обновляем read_enabled контакта один раз на всё сообщение.
 		if m.ReadEnabled != nil && n.contacts != nil {
-			_ = n.SetContactReadEnabled(m.Sender, *m.ReadEnabled)
+			if cur, ok := n.GetContact(m.Sender); ok && cur.ReadEnabled != *m.ReadEnabled {
+				_ = n.SetContactReadEnabled(m.Sender, *m.ReadEnabled)
+			}
 		}
 		for _, ref := range refs {
 			n.handleDeliveredRef(ref, m.Sender)
@@ -2834,6 +2836,9 @@ func (n *Node) replicateMessage(msg Message) {
 	isFileChunk := msg.MediaType == "file" && msg.ChunkTotal > 0
 	msg.ReplicatedFrom = msg.Sender
 	msg.IsOwn = false
+	// PlainText — открытый текст. Получатель расшифрует Text сам.
+	// По сети не передаём (экономия трафика). Локально в memory — остаётся.
+	msg.PlainText = ""
 	data, err := json.Marshal(msg)
 	if err != nil {
 		return
