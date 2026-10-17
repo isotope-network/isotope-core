@@ -1175,6 +1175,11 @@ func (n *Node) fallbackSend(recipient string, data []byte, isFileChunk bool) boo
 // Читает из chunkQueue, маршалит, отправляет через sendToRecipient.
 // 10 воркеров запускаются в InitP2P.
 func (n *Node) chunkWorker() {
+	if n.isRelay {
+		// Relay — не отправитель. sent/<mediaID>.bin у него нет.
+		// unackedChunks копить не нужно. Воркер на relay — вреден.
+		return
+	}
 	for msg := range n.chunkQueue {
 		data, err := json.Marshal(msg)
 		if err != nil {
@@ -2823,8 +2828,9 @@ func (n *Node) replicateMessage(msg Message) {
 
 	if msg.Recipient != "" {
 		// Адресное сообщение.
-		if isFileChunk {
+		if isFileChunk && !n.isRelay {
 			// Файловый чанк — в очередь воркеров (не создаём горутину).
+			// На relay очереди нет — воркеры не запущены.
 			n.chunkQueue <- msg
 		} else {
 			n.sendToRecipient(msg, data, isFileChunk)
@@ -3466,10 +3472,14 @@ func (n *Node) InitP2P() error {
 
 	// Воркер-пул для файловых чанков (10 воркеров).
 	// Защита от 10 700 горутин: чанки идут через chunkQueue, не через go func.
-	for i := 0; i < SendSemaphoreCapacity; i++ {
-		go n.chunkWorker()
+	// На relay воркеры не запускаются: relay не отправитель, sent/ у него нет,
+	// unackedChunks копить не нужно. См. HANDOFF-2026-10-16 (дополнение 2).
+	if !n.isRelay {
+		for i := 0; i < SendSemaphoreCapacity; i++ {
+			go n.chunkWorker()
+		}
+		n.retryLoop()
 	}
-	n.retryLoop()
 
 	n.pingPeers()
 	if !n.isRelay {
