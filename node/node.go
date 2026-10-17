@@ -2164,17 +2164,32 @@ func (n *Node) handleServiceMessage(m Message) {
 }
 
 // handleFileComplete — получатель подтвердил сборку файла.
-// Пока (A) — только лог. B (удержание sent/) — отдельно.
+// sent/ можно удалять: файл собран. Push в Dart — галочка «собрано».
 func (n *Node) handleFileComplete(m Message) {
 	if m.Ref == "" {
 		log.Printf("[FILE_COMPLETE] empty ref, dropped")
 		return
 	}
-	log.Printf("[FILE_COMPLETE] mediaID=%s from=%s", m.Ref, m.Sender)
+	mediaID := m.Ref
+	log.Printf("[FILE_COMPLETE] mediaID=%s from=%s", mediaID, m.Sender)
 
-	// TODO (B): удалить sent/<mediaID>.bin, если он ещё есть.
-	// TODO (B): memory.Remove чанков этого mediaID.
-	// TODO (B): push [FILE_COMPLETE] в Dart (для галочек).
+	// Удаляем sent/<mediaID>.bin — файл собран у получателя.
+	sentPath := n.sentPath(mediaID)
+	if err := os.Remove(sentPath); err == nil {
+		log.Printf("[SENT] removed sent file %s (file_complete from %s)", mediaID, m.Sender)
+	}
+
+	// Push в Dart — для галочки «собрано».
+	if n.messageHook != nil {
+		payload := map[string]interface{}{
+			"file_assembled": map[string]interface{}{
+				"mediaID": mediaID,
+			},
+		}
+		if data, err := json.Marshal(payload); err == nil {
+			n.messageHook(string(data))
+		}
+	}
 }
 
 // SendFileComplete — получатель → отправитель: файл собран.
@@ -4163,7 +4178,8 @@ func (n *Node) handleDeliveredRef(ref, sender string) {
 
 				if cur >= total {
 					// Не удаляем счётчик — оставляем как маркер «завершено».
-					// delete(n.deliveredCount, mediaID) — УБРАНО.
+					// sent/ НЕ удаляем здесь — ждём [FILE_COMPLETE] от получателя.
+					// Иначе файл может быть не собран (чанки дошли, но сборка fail).
 
 					// Очищаем unackedChunks этого mediaID — retry-эхо не нужно.
 					n.unackedChunksMu.Lock()
@@ -4173,11 +4189,6 @@ func (n *Node) handleDeliveredRef(ref, sender string) {
 						}
 					}
 					n.unackedChunksMu.Unlock()
-
-					sentPath := n.sentPath(mediaID)
-					if err := os.Remove(sentPath); err == nil {
-						log.Printf("[SENT] removed sent file %s (all %d chunks delivered)", mediaID, total)
-					}
 				}
 			}
 		}
