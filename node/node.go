@@ -1181,6 +1181,9 @@ func (n *Node) chunkWorker() {
 		return
 	}
 	for msg := range n.chunkQueue {
+		// PlainText — открытый текст. Получатель расшифрует Text сам.
+		// В JSON не передаём — экономия ~64 КБ на чанк.
+		msg.PlainText = ""
 		data, err := json.Marshal(msg)
 		if err != nil {
 			log.Printf("[CHUNK] marshal failed id=%s: %v", msg.ID, err)
