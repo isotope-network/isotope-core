@@ -233,7 +233,7 @@ func (n *Node) sendFileChunksAsync(peerID, mediaID, fileName string, fileSize in
 		msg := Message{
 			ID:               id,
 			Text:             encrypted,
-			PlainText:        chunkB64,
+			PlainText:        "",
 			Sender:           myID,
 			Recipient:        peerID,
 			Version:          MESSAGE_VERSION_E2E,
