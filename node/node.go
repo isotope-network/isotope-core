@@ -2173,22 +2173,25 @@ func (n *Node) handleFileComplete(m Message) {
 	mediaID := m.Ref
 	log.Printf("[FILE_COMPLETE] mediaID=%s from=%s", mediaID, m.Sender)
 
+	// Ставим статус на ВСЕ чанки файла: delivered (2) или hidden (3).
+	// Скрыто — если я или получатель не делимся read_enabled.
+	// Это — вторая галочка для файла (не [DELIVERED], а сборка).
+	statusToSet := StatusDelivered
+	peerReadEnabled := n.getPeerReadEnabled(m.Sender)
+	if !n.myReadEnabled || !peerReadEnabled {
+		statusToSet = StatusHidden
+	}
+	all := n.memory.GetAll()
+	for _, cm := range all {
+		if cm.MediaID == mediaID {
+			n.setMessageStatus(cm.ID, statusToSet)
+		}
+	}
+
 	// Удаляем sent/<mediaID>.bin — файл собран у получателя.
 	sentPath := n.sentPath(mediaID)
 	if err := os.Remove(sentPath); err == nil {
 		log.Printf("[SENT] removed sent file %s (file_complete from %s)", mediaID, m.Sender)
-	}
-
-	// Push в Dart — для галочки «собрано».
-	if n.messageHook != nil {
-		payload := map[string]interface{}{
-			"file_assembled": map[string]interface{}{
-				"mediaID": mediaID,
-			},
-		}
-		if data, err := json.Marshal(payload); err == nil {
-			n.messageHook(string(data))
-		}
 	}
 }
 
@@ -4176,12 +4179,9 @@ func (n *Node) handleDeliveredRef(ref, sender string) {
 				// Push агрегата в Dart (throttled).
 				n.pushFileStatus(mediaID, cur, total)
 
+				// Статус для файла ставит [FILE_COMPLETE] (handleFileComplete),
+				// не [DELIVERED]. Здесь — только счётчик и очистка unacked.
 				if cur >= total {
-					// Не удаляем счётчик — оставляем как маркер «завершено».
-					// sent/ НЕ удаляем здесь — ждём [FILE_COMPLETE] от получателя.
-					// Иначе файл может быть не собран (чанки дошли, но сборка fail).
-
-					// Очищаем unackedChunks этого mediaID — retry-эхо не нужно.
 					n.unackedChunksMu.Lock()
 					for id, info := range n.unackedChunks {
 						if info.mediaID == mediaID {

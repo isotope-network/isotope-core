@@ -82,9 +82,7 @@ class ChatProvider extends ChangeNotifier {
   // _fileProgress: mediaId → 0..100. Обновляется push'ем [FILE_STATUS] из Go.
   final Map<String, Message> _fileMessages = {};
   final Map<String, int> _fileProgress = {};
-  // Файлы, собранные у получателя (подтверждено [FILE_COMPLETE]).
-  // Отправитель: галочка «собрано». Получатель: не используется.
-  final Map<String, bool> _fileAssembled = {};
+  // (удалено: _fileAssembled — статус ставит Go через [FILE_COMPLETE])
 
   // ==== PENDING (таймер отправки) ====
   // Сообщения, ожидающие отправки через N секунд.
@@ -615,19 +613,8 @@ class ChatProvider extends ChangeNotifier {
           return;
         }
 
-        // Специальное событие: файл собран у получателя (отправитель).
-        if (messageJSON.contains('"file_assembled"')) {
-          final map = jsonDecode(messageJSON) as Map<String, dynamic>;
-          final fa = map['file_assembled'] as Map<String, dynamic>?;
-          if (fa != null) {
-            final mediaID = fa['mediaID'] as String? ?? '';
-            if (mediaID.isNotEmpty) {
-              _fileAssembled[mediaID] = true;
-              _safeNotify();
-            }
-          }
-          return;
-        }
+        // [FILE_ASSEMBLED] больше не шлётся — Go ставит статус 2/3 на все чанки,
+        // Dart получает через polling _messageStatuses.
 
         // Специальное событие: файл завершён.
         if (messageJSON.contains('"file_complete"')) {
@@ -1694,8 +1681,7 @@ class ChatProvider extends ChangeNotifier {
     } catch (_) {}
   }
 
-  /// Собран ли файл у получателя (подтверждено [FILE_COMPLETE]).
-  bool fileAssembled(String mediaId) => _fileAssembled[mediaId] ?? false;
+  // (удалено: fileAssembled — статус ставит Go)
 
   int fileProgress(String mediaId) {
     if (mediaId.isEmpty) return -1;
@@ -1772,7 +1758,6 @@ class ChatProvider extends ChangeNotifier {
       _fileMessages.remove(mediaId);
       _fileProgress.remove(mediaId);
       _fileCompleteSent.remove(mediaId);
-      _fileAssembled.remove(mediaId);
       final chatPeer = fileMsg.isOwn ? fileMsg.recipient : fileMsg.sender;
       if (chatPeer.isNotEmpty) {
         _lastMessageByPeer.remove(chatPeer);
@@ -1821,7 +1806,6 @@ class ChatProvider extends ChangeNotifier {
       _fileMessages.remove(mediaId);
       _fileProgress.remove(mediaId);
       _fileCompleteSent.remove(mediaId);
-      _fileAssembled.remove(mediaId);
     }
 
     // 2. Кэш последнего сообщения.
