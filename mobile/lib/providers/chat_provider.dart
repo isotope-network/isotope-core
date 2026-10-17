@@ -1459,6 +1459,9 @@ class ChatProvider extends ChangeNotifier {
   final Map<String, Set<int>> _chunkQueue = {};
   Timer? _chunkQueueTimer;
 
+  // Файлы, по которым [FILE_COMPLETE] уже отправлен. Защита от дубля.
+  final Set<String> _fileCompleteSent = {};
+
   // Буфер ack: mediaId → Set<chunkIndex>, ожидающих подтверждения.
   // Dart шлёт fileAck батчами (10 индексов или раз в секунду) — Go
   // очищает base64 и снимает с окна pendingHookAcks.
@@ -1592,10 +1595,12 @@ class ChatProvider extends ChangeNotifier {
     // Получатель (мы) → отправитель. Только для входящих файлов (не своих).
     final aggAfter = _fileMessages[mediaId];
     if (aggAfter != null && !aggAfter.isOwn && aggAfter.sender.isNotEmpty) {
-      LibP2PService.sendFileComplete(
-        mediaID: mediaId,
-        recipient: aggAfter.sender,
-      ).catchError((_) => <String, dynamic>{});
+      if (_fileCompleteSent.add(mediaId)) {
+        LibP2PService.sendFileComplete(
+          mediaID: mediaId,
+          recipient: aggAfter.sender,
+        ).catchError((_) => <String, dynamic>{});
+      }
     }
 
     // Файл собран — если чат открыт, отправляем [READ] по последнему чанку.
@@ -1754,6 +1759,7 @@ class ChatProvider extends ChangeNotifier {
       final mediaId = fileMsg.mediaId;
       _fileMessages.remove(mediaId);
       _fileProgress.remove(mediaId);
+      _fileCompleteSent.remove(mediaId);
       final chatPeer = fileMsg.isOwn ? fileMsg.recipient : fileMsg.sender;
       if (chatPeer.isNotEmpty) {
         _lastMessageByPeer.remove(chatPeer);
@@ -1801,6 +1807,7 @@ class ChatProvider extends ChangeNotifier {
     for (final mediaId in fileToRemove) {
       _fileMessages.remove(mediaId);
       _fileProgress.remove(mediaId);
+      _fileCompleteSent.remove(mediaId);
     }
 
     // 2. Кэш последнего сообщения.
