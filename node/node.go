@@ -4684,6 +4684,7 @@ type FileStatusEntry struct {
 	MediaID   string `json:"media_id"`
 	Delivered int    `json:"delivered"`
 	Total     int    `json:"total"`
+	Status    int    `json:"status"` // max по чанкам: 1=sent, 2=delivered, 3=hidden, 4=read
 }
 
 // GetFileStatuses — статус всех файловых отправок (delivered/total).
@@ -4694,6 +4695,7 @@ func (n *Node) GetFileStatuses() []FileStatusEntry {
 	type acc struct {
 		total     int
 		delivered int
+		status    MessageStatus
 	}
 	m := make(map[string]*acc)
 	for _, msg := range all {
@@ -4708,6 +4710,10 @@ func (n *Node) GetFileStatuses() []FileStatusEntry {
 		if msg.Status >= StatusDelivered {
 			a.delivered++
 		}
+		// Статус файла — максимум по чанкам (read > hidden > delivered > sent).
+		if msg.Status > a.status {
+			a.status = msg.Status
+		}
 	}
 	result := make([]FileStatusEntry, 0, len(m))
 	for id, a := range m {
@@ -4715,6 +4721,7 @@ func (n *Node) GetFileStatuses() []FileStatusEntry {
 			MediaID:   id,
 			Delivered: a.delivered,
 			Total:     a.total,
+			Status:    int(a.status),
 		})
 	}
 	return result

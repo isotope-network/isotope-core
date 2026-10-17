@@ -82,7 +82,9 @@ class ChatProvider extends ChangeNotifier {
   // _fileProgress: mediaId → 0..100. Обновляется push'ем [FILE_STATUS] из Go.
   final Map<String, Message> _fileMessages = {};
   final Map<String, int> _fileProgress = {};
-  // (удалено: _fileAssembled — статус ставит Go через [FILE_COMPLETE])
+  // Статус файла по mediaID (1=sent, 2=delivered, 3=hidden, 4=read).
+  // Источник — GetFileStatuses (Go). Один на файл, не на чанк.
+  final Map<String, int> _fileStatuses = {};
 
   // ==== PENDING (таймер отправки) ====
   // Сообщения, ожидающие отправки через N секунд.
@@ -217,7 +219,9 @@ class ChatProvider extends ChangeNotifier {
             weight: m.weight,
             archived: m.archived,
             deliveryStatus: m.deliveryStatus,
-            messageStatus: _messageStatuses[m.id],
+            messageStatus: m.isFile && m.mediaId.isNotEmpty && _fileStatuses.containsKey(m.mediaId)
+                ? _fileStatuses[m.mediaId]
+                : _messageStatuses[m.id],
             channel: m.channel,
             ttlPeriodSeconds: m.ttlPeriodSeconds,
             ttlMode: m.ttlMode,
@@ -811,7 +815,30 @@ class ChatProvider extends ChangeNotifier {
     _statusTimer?.cancel();
     _statusTimer = Timer.periodic(const Duration(seconds: 3), (_) async {
       await refreshMessageStatuses();
+      await refreshFileStatuses();
     });
+  }
+
+  /// Обновляет статусы файлов из Go (один на файл, не на чанк).
+  Future<void> refreshFileStatuses() async {
+    if (!_libp2pStarted) return;
+    try {
+      final list = await LibP2PService.getFileStatuses();
+      if (list.isEmpty) return;
+      bool changed = false;
+      for (final item in list) {
+        if (item is! Map) continue;
+        final mediaID = item['media_id'] as String? ?? '';
+        final status = (item['status'] as num?)?.toInt() ?? 0;
+        if (mediaID.isEmpty || status <= 0) continue;
+        final prev = _fileStatuses[mediaID] ?? 0;
+        if (status > prev) {
+          _fileStatuses[mediaID] = status;
+          changed = true;
+        }
+      }
+      if (changed) _safeNotify();
+    } catch (_) {}
   }
 
   Timer? _purgeTimer;
@@ -1631,6 +1658,7 @@ class ChatProvider extends ChangeNotifier {
         final mediaID = item['media_id'] as String? ?? '';
         final delivered = (item['delivered'] as num?)?.toInt() ?? 0;
         final total = (item['total'] as num?)?.toInt() ?? 0;
+        final status = (item['status'] as num?)?.toInt() ?? 0;
         if (mediaID.isEmpty || total <= 0) continue;
         final percent = ((delivered / total) * 100).clamp(0, 100).round();
         // Не понижаем: если уже 100 — оставляем.
@@ -1638,6 +1666,13 @@ class ChatProvider extends ChangeNotifier {
         if (percent > cur) {
           _fileProgress[mediaID] = percent;
           updated++;
+        }
+        if (status > 0) {
+          final prevStatus = _fileStatuses[mediaID] ?? 0;
+          if (status > prevStatus) {
+            _fileStatuses[mediaID] = status;
+            updated++;
+          }
         }
       }
       if (updated > 0) {
@@ -1683,6 +1718,11 @@ class ChatProvider extends ChangeNotifier {
 
   // (удалено: fileAssembled — статус ставит Go)
 
+  /// Статус файла (1=sent, 2=delivered, 3=hidden, 4=read).
+  /// 0 — неизвестен. Источник — GetFileStatuses (Go).
+  int fileStatus(String mediaId) => _fileStatuses[mediaId] ?? 0;
+
+  /// Прогресс передачи файла (-1..100). Целое.
   int fileProgress(String mediaId) {
     if (mediaId.isEmpty) return -1;
 
@@ -1758,6 +1798,7 @@ class ChatProvider extends ChangeNotifier {
       _fileMessages.remove(mediaId);
       _fileProgress.remove(mediaId);
       _fileCompleteSent.remove(mediaId);
+      _fileStatuses.remove(mediaId);
       final chatPeer = fileMsg.isOwn ? fileMsg.recipient : fileMsg.sender;
       if (chatPeer.isNotEmpty) {
         _lastMessageByPeer.remove(chatPeer);
@@ -1806,6 +1847,7 @@ class ChatProvider extends ChangeNotifier {
       _fileMessages.remove(mediaId);
       _fileProgress.remove(mediaId);
       _fileCompleteSent.remove(mediaId);
+      _fileStatuses.remove(mediaId);
     }
 
     // 2. Кэш последнего сообщения.
