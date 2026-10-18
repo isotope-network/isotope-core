@@ -1817,6 +1817,13 @@ class _ConnectScreenState extends State<ConnectScreen> {
                       final lastTime = _lastMessageTime(node, chatProvider);
                       final badge = _verifiedBadge(node.peerID);
                       final kind = _contactSubtitleKind(node, chatProvider);
+                      final lastMsg = chatProvider.getLastMessageForPeer(node.peerID);
+                      final fileProgress = (lastMsg != null &&
+                              lastMsg.isFile &&
+                              lastMsg.mediaId.isNotEmpty)
+                          ? chatProvider.fileProgress(lastMsg.mediaId)
+                          : -1;
+                      final showFileProgress = fileProgress >= 0 && fileProgress < 100;
                       final subtitleColor = kind == ContactSubtitleKind.draft
                           ? Colors.green
                           : kind == ContactSubtitleKind.request
@@ -1851,30 +1858,44 @@ class _ConnectScreenState extends State<ConnectScreen> {
                               ],
                             ],
                           ),
-                          subtitle: kind == ContactSubtitleKind.request
-                              ? GestureDetector(
-                                  onTap: () => _onSubtitleTap(node),
-                                  child: Text(
-                                    subtitleText,
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
-                                    style: TextStyle(
-                                      fontSize: 13,
-                                      color: subtitleColor,
-                                      fontWeight: subtitleWeight,
+                          subtitle: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              kind == ContactSubtitleKind.request
+                                  ? GestureDetector(
+                                      onTap: () => _onSubtitleTap(node),
+                                      child: Text(
+                                        subtitleText,
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                        style: TextStyle(
+                                          fontSize: 13,
+                                          color: subtitleColor,
+                                          fontWeight: subtitleWeight,
+                                        ),
+                                      ),
+                                    )
+                                  : Text(
+                                      subtitleText,
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: TextStyle(
+                                        fontSize: 13,
+                                        color: subtitleColor,
+                                        fontWeight: subtitleWeight,
+                                      ),
                                     ),
-                                  ),
-                                )
-                              : Text(
-                                  subtitleText,
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: TextStyle(
-                                    fontSize: 13,
-                                    color: subtitleColor,
-                                    fontWeight: subtitleWeight,
+                              if (showFileProgress)
+                                Padding(
+                                  padding: const EdgeInsets.only(top: 4),
+                                  child: LinearProgressIndicator(
+                                    value: fileProgress / 100.0,
+                                    minHeight: 2,
                                   ),
                                 ),
+                            ],
+                          ),
                           trailing: Column(
                             mainAxisAlignment: MainAxisAlignment.center,
                             crossAxisAlignment: CrossAxisAlignment.end,
