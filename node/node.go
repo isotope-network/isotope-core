@@ -4185,37 +4185,38 @@ func (n *Node) handleDeliveredRef(ref, sender string) {
 			n.setMessageStatus(ref, StatusDelivered)
 			log.Printf("[SERVICE] delivered ack ref=%s from=%s", ref, sender)
 		}
+	}
 
-		// Счётчик доставленных чанков для файлового mediaID.
-		// Когда все чанки доставлены — удаляем sent/<MediaID>.bin.
-		if msg, ok := n.findMyMessageByID(ref); ok {
-			if msg.MediaType == "file" && msg.ChunkTotal > 0 && msg.MediaID != "" {
-				n.deliveredCountMu.Lock()
-				// Идемпотентность: не увеличиваем счётчик выше total.
-				// Иначе повторные [DELIVERED] (retry-эхо) дают delivered > total.
-				cur := n.deliveredCount[msg.MediaID]
-				total := msg.ChunkTotal
-				mediaID := msg.MediaID
-				if cur < total {
-					n.deliveredCount[msg.MediaID] = cur + 1
-					cur = cur + 1
-				}
-				n.deliveredCountMu.Unlock()
+	// Счётчик доставленных чанков для файлового mediaID.
+	// Работает в обеих ветках (hidden и visible) — прогресс-бар в UI
+	// должен идти при любом read_enabled. Статус файла (2/3) ставит
+	// только handleFileComplete. Здесь — только счётчик и очистка unacked.
+	if msg, ok := n.findMyMessageByID(ref); ok {
+		if msg.MediaType == "file" && msg.ChunkTotal > 0 && msg.MediaID != "" {
+			n.deliveredCountMu.Lock()
+			// Идемпотентность: не увеличиваем счётчик выше total.
+			// Иначе повторные [DELIVERED] (retry-эхо) дают delivered > total.
+			cur := n.deliveredCount[msg.MediaID]
+			total := msg.ChunkTotal
+			mediaID := msg.MediaID
+			if cur < total {
+				n.deliveredCount[msg.MediaID] = cur + 1
+				cur = cur + 1
+			}
+			n.deliveredCountMu.Unlock()
 
-				// Push агрегата в Dart (throttled).
-				n.pushFileStatus(mediaID, cur, total)
+			// Push агрегата в Dart (throttled).
+			n.pushFileStatus(mediaID, cur, total)
 
-				// Статус для файла ставит [FILE_COMPLETE] (handleFileComplete),
-				// не [DELIVERED]. Здесь — только счётчик и очистка unacked.
-				if cur >= total {
-					n.unackedChunksMu.Lock()
-					for id, info := range n.unackedChunks {
-						if info.mediaID == mediaID {
-							delete(n.unackedChunks, id)
-						}
+			// Все чанки доставлены — очищаем unacked.
+			if cur >= total {
+				n.unackedChunksMu.Lock()
+				for id, info := range n.unackedChunks {
+					if info.mediaID == mediaID {
+						delete(n.unackedChunks, id)
 					}
-					n.unackedChunksMu.Unlock()
 				}
+				n.unackedChunksMu.Unlock()
 			}
 		}
 	}

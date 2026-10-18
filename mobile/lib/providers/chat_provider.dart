@@ -370,11 +370,13 @@ class ChatProvider extends ChangeNotifier {
       refs.add(msg.id);
     }
     // Файловые сообщения — отдельно. В _messagesMap их нет.
-    // Для [READ] шлём mediaID (общий для отправителя и получателя).
+    // [READ] шлём mediaID только если файл СОБРАН (есть localFilePath).
+    // Иначе — зелёные галочки появятся до сборки (Пункт 1).
     for (final agg in _fileMessages.values) {
       if (agg.isOwn) continue;
       if (agg.sender != peerID) continue;
       if (agg.readLocally) continue;
+      if (agg.localFilePath.isEmpty) continue;
       if (agg.mediaId.isNotEmpty) {
         refs.add(agg.mediaId);
       }
