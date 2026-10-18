@@ -199,7 +199,11 @@ func (n *Node) sendFileChunksAsync(peerID, mediaID, fileName string, fileSize in
 	const chunkSize = 64 * 1024
 	chunkTotal := (fileSize + chunkSize - 1) / chunkSize
 
+	// Начальный прогресс: Dart сразу покажет "Отправка 0%", не "Подготовка…".
+	n.pushFileStatus(mediaID, 0, int(chunkTotal))
+
 	src, err := os.Open(n.sentPath(mediaID))
+
 	if err != nil {
 		log.Printf("[FILE] open sent copy failed for %s: %v", mediaID, err)
 		return

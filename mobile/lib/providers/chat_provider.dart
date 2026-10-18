@@ -85,6 +85,8 @@ class ChatProvider extends ChangeNotifier {
   // Статус файла по mediaID (1=sent, 2=delivered, 3=hidden, 4=read).
   // Источник — GetFileStatuses (Go). Один на файл, не на чанк.
   final Map<String, int> _fileStatuses = {};
+  // ID последнего чанка файла (для [READ]). Источник — GetFileStatuses (Go).
+  final Map<String, String> _fileLastChunkId = {};
 
   // ==== PENDING (таймер отправки) ====
   // Сообщения, ожидающие отправки через N секунд.
@@ -366,6 +368,17 @@ class ChatProvider extends ChangeNotifier {
       if (msg.sender != peerID) continue;
       if (msg.readLocally) continue;
       refs.add(msg.id);
+    }
+    // Файловые сообщения — отдельно. В _messagesMap их нет.
+    // Для [READ] нужен ID последнего чанка (Go фильтрует по нему).
+    for (final agg in _fileMessages.values) {
+      if (agg.isOwn) continue;
+      if (agg.sender != peerID) continue;
+      if (agg.readLocally) continue;
+      final lastId = _fileLastChunkId[agg.mediaId];
+      if (lastId != null && lastId.isNotEmpty) {
+        refs.add(lastId);
+      }
     }
     if (refs.isEmpty) return;
     // Локально — пометить прочитанными (источник истины — Go).
@@ -830,7 +843,11 @@ class ChatProvider extends ChangeNotifier {
         if (item is! Map) continue;
         final mediaID = item['media_id'] as String? ?? '';
         final status = (item['status'] as num?)?.toInt() ?? 0;
+        final lastChunkId = item['last_chunk_id'] as String? ?? '';
         if (mediaID.isEmpty || status <= 0) continue;
+        if (lastChunkId.isNotEmpty) {
+          _fileLastChunkId[mediaID] = lastChunkId;
+        }
         final prev = _fileStatuses[mediaID] ?? 0;
         if (status > prev) {
           _fileStatuses[mediaID] = status;
@@ -1659,7 +1676,11 @@ class ChatProvider extends ChangeNotifier {
         final delivered = (item['delivered'] as num?)?.toInt() ?? 0;
         final total = (item['total'] as num?)?.toInt() ?? 0;
         final status = (item['status'] as num?)?.toInt() ?? 0;
+        final lastChunkId = item['last_chunk_id'] as String? ?? '';
         if (mediaID.isEmpty || total <= 0) continue;
+        if (lastChunkId.isNotEmpty) {
+          _fileLastChunkId[mediaID] = lastChunkId;
+        }
         final percent = ((delivered / total) * 100).clamp(0, 100).round();
         // Не понижаем: если уже 100 — оставляем.
         final cur = _fileProgress[mediaID] ?? 0;
@@ -1799,6 +1820,7 @@ class ChatProvider extends ChangeNotifier {
       _fileProgress.remove(mediaId);
       _fileCompleteSent.remove(mediaId);
       _fileStatuses.remove(mediaId);
+      _fileLastChunkId.remove(mediaId);
       final chatPeer = fileMsg.isOwn ? fileMsg.recipient : fileMsg.sender;
       if (chatPeer.isNotEmpty) {
         _lastMessageByPeer.remove(chatPeer);
@@ -1848,6 +1870,7 @@ class ChatProvider extends ChangeNotifier {
       _fileProgress.remove(mediaId);
       _fileCompleteSent.remove(mediaId);
       _fileStatuses.remove(mediaId);
+      _fileLastChunkId.remove(mediaId);
     }
 
     // 2. Кэш последнего сообщения.
@@ -1893,6 +1916,8 @@ class ChatProvider extends ChangeNotifier {
     _fileMessages.removeWhere((mediaId, m) {
       if (m.isExpired) {
         _fileProgress.remove(mediaId);
+        _fileStatuses.remove(mediaId);
+        _fileLastChunkId.remove(mediaId);
         return true;
       }
       return false;

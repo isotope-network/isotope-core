@@ -4157,8 +4157,14 @@ func (n *Node) handleDeliveredRef(ref, sender string) {
 			}
 		}
 	} else {
-		n.setMessageStatus(ref, StatusDelivered)
-		log.Printf("[SERVICE] delivered ack ref=%s from=%s", ref, sender)
+		isFileChunk := false
+		if msg, ok := n.findMyMessageByID(ref); ok && msg.MediaType == "file" && msg.ChunkTotal > 0 {
+			isFileChunk = true
+		}
+		if !isFileChunk {
+			n.setMessageStatus(ref, StatusDelivered)
+			log.Printf("[SERVICE] delivered ack ref=%s from=%s", ref, sender)
+		}
 
 		// Счётчик доставленных чанков для файлового mediaID.
 		// Когда все чанки доставлены — удаляем sent/<MediaID>.bin.
@@ -4681,10 +4687,11 @@ func (n *Node) GetMessageStatuses() map[string]MessageStatus {
 // Восстановление прогресса после перезапуска: Dart получает
 // delivered/total для каждого mediaID и заполняет _fileProgress.
 type FileStatusEntry struct {
-	MediaID   string `json:"media_id"`
-	Delivered int    `json:"delivered"`
-	Total     int    `json:"total"`
-	Status    int    `json:"status"` // max по чанкам: 1=sent, 2=delivered, 3=hidden, 4=read
+	MediaID     string `json:"media_id"`
+	Delivered   int    `json:"delivered"`
+	Total       int    `json:"total"`
+	Status      int    `json:"status"`        // max по чанкам: 1=sent, 2=delivered, 3=hidden, 4=read
+	LastChunkID string `json:"last_chunk_id"` // ID последнего чанка (для [READ])
 }
 
 // GetFileStatuses — статус всех файловых отправок (delivered/total).
@@ -4693,9 +4700,10 @@ type FileStatusEntry struct {
 func (n *Node) GetFileStatuses() []FileStatusEntry {
 	all := n.memory.GetAll()
 	type acc struct {
-		total     int
-		delivered int
-		status    MessageStatus
+		total       int
+		delivered   int
+		status      MessageStatus
+		lastChunkID string
 	}
 	m := make(map[string]*acc)
 	for _, msg := range all {
@@ -4714,14 +4722,19 @@ func (n *Node) GetFileStatuses() []FileStatusEntry {
 		if msg.Status > a.status {
 			a.status = msg.Status
 		}
+		// ID последнего чанка — для [READ] из Dart.
+		if msg.ChunkIndex == msg.ChunkTotal-1 {
+			a.lastChunkID = msg.ID
+		}
 	}
 	result := make([]FileStatusEntry, 0, len(m))
 	for id, a := range m {
 		result = append(result, FileStatusEntry{
-			MediaID:   id,
-			Delivered: a.delivered,
-			Total:     a.total,
-			Status:    int(a.status),
+			MediaID:     id,
+			Delivered:   a.delivered,
+			Total:       a.total,
+			Status:      int(a.status),
+			LastChunkID: a.lastChunkID,
 		})
 	}
 	return result
