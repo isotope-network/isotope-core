@@ -2114,8 +2114,22 @@ func (n *Node) handleServiceMessage(m Message) {
 					log.Printf("[SERVICE] read ack ref=%s from=%s", ref, m.Sender)
 				}
 			} else {
-				n.setMessageStatus(ref, statusToSet)
-				log.Printf("[SERVICE] read ack ref=%s (not found in memory) from=%s", ref, m.Sender)
+				// Fallback: для файлов [READ] приходит с mediaID, не с ID чанка.
+				// mediaID — общий для отправителя и получателя.
+				all := n.memory.GetAll()
+				found := false
+				for _, cm := range all {
+					if cm.MediaID == ref {
+						n.setMessageStatus(cm.ID, statusToSet)
+						found = true
+					}
+				}
+				if found {
+					log.Printf("[SERVICE] read ack (file mediaID=%s) from=%s", ref, m.Sender)
+				} else {
+					n.setMessageStatus(ref, statusToSet)
+					log.Printf("[SERVICE] read ack ref=%s (not found in memory) from=%s", ref, m.Sender)
+				}
 			}
 
 			// Режим after_read: сообщение получателя прочитано — запускаем
@@ -4134,8 +4148,14 @@ func (n *Node) handleDeliveredRef(ref, sender string) {
 
 	peerReadEnabled := n.getPeerReadEnabled(sender)
 	if !n.myReadEnabled || !peerReadEnabled {
-		n.setMessageStatus(ref, StatusHidden)
-		log.Printf("[SERVICE] delivered ack (hidden) ref=%s from=%s", ref, sender)
+		isFileChunkHidden := false
+		if msg, ok := n.findMyMessageByID(ref); ok && msg.MediaType == "file" && msg.ChunkTotal > 0 {
+			isFileChunkHidden = true
+		}
+		if !isFileChunkHidden {
+			n.setMessageStatus(ref, StatusHidden)
+			log.Printf("[SERVICE] delivered ack (hidden) ref=%s from=%s", ref, sender)
+		}
 
 		if msg, ok := n.findMyMessageByID(ref); ok {
 			if msg.TtlMode == "after_read" && msg.ExpiresAt.IsZero() && msg.TtlPeriodSeconds > 0 {
@@ -4302,14 +4322,13 @@ func (n *Node) SendReadBatch(refs []string, recipient string) error {
 	for _, ref := range refs {
 		if msg, ok := n.findMyMessageByID(ref); ok {
 			if msg.MediaType == "file" && msg.ChunkTotal > 0 {
-				// Оставляем только последний чанк.
-				if msg.ChunkIndex != msg.ChunkTotal-1 {
-					continue
-				}
+				// Для файлов [READ] шлём с mediaID (общий для отправителя и получателя).
 				if seenMedia[msg.MediaID] {
 					continue
 				}
 				seenMedia[msg.MediaID] = true
+				filtered = append(filtered, msg.MediaID)
+				continue
 			}
 		}
 		filtered = append(filtered, ref)

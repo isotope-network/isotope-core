@@ -269,7 +269,6 @@ func (n *Node) sendFileChunksAsync(peerID, mediaID, fileName string, fileSize in
 		memMsg.Text = ""
 		memMsg.PlainText = ""
 		if n.memory.Add(memMsg) {
-			n.setMessageStatus(id, StatusSent)
 			if n.messageHook != nil {
 				data, _ := json.Marshal(memMsg)
 				n.messageHook(string(data))

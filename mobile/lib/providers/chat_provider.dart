@@ -370,14 +370,13 @@ class ChatProvider extends ChangeNotifier {
       refs.add(msg.id);
     }
     // Файловые сообщения — отдельно. В _messagesMap их нет.
-    // Для [READ] нужен ID последнего чанка (Go фильтрует по нему).
+    // Для [READ] шлём mediaID (общий для отправителя и получателя).
     for (final agg in _fileMessages.values) {
       if (agg.isOwn) continue;
       if (agg.sender != peerID) continue;
       if (agg.readLocally) continue;
-      final lastId = _fileLastChunkId[agg.mediaId];
-      if (lastId != null && lastId.isNotEmpty) {
-        refs.add(lastId);
+      if (agg.mediaId.isNotEmpty) {
+        refs.add(agg.mediaId);
       }
     }
     if (refs.isEmpty) return;
