@@ -15,6 +15,9 @@ class PrivacySettingsScreen extends StatefulWidget {
 class _PrivacySettingsScreenState extends State<PrivacySettingsScreen> {
   bool _myReadEnabled = true;
   bool _showNotificationContent = true;
+  bool _notifCount = false;
+  bool _notifNames = false;
+  bool _notifProgress = false;
   bool _loading = true;
 
   @override
@@ -27,10 +30,14 @@ class _PrivacySettingsScreenState extends State<PrivacySettingsScreen> {
     try {
       final readEnabled = await LibP2PService.getMyReadEnabled();
       final showContent = await LibP2PService.getShowNotificationContent();
+      final notifSettings = await LibP2PService.getNotificationSettings();
       if (mounted) {
         setState(() {
           _myReadEnabled = readEnabled;
           _showNotificationContent = showContent;
+          _notifCount = notifSettings['count'] ?? false;
+          _notifNames = notifSettings['names'] ?? false;
+          _notifProgress = notifSettings['progress'] ?? false;
           _loading = false;
         });
       }
@@ -59,6 +66,61 @@ class _PrivacySettingsScreenState extends State<PrivacySettingsScreen> {
     } catch (e) {
       LogService.log('PrivacySettings: set exception: $e');
       if (mounted) setState(() => _myReadEnabled = !value);
+    }
+  }
+
+  Future<void> _setNotifSetting(String key, bool value) async {
+    // Оптимистичное обновление.
+    final prev = {
+      'count': _notifCount,
+      'names': _notifNames,
+      'progress': _notifProgress,
+    };
+    setState(() {
+      switch (key) {
+        case 'count':
+          _notifCount = value;
+          break;
+        case 'names':
+          _notifNames = value;
+          break;
+        case 'progress':
+          _notifProgress = value;
+          break;
+      }
+    });
+    try {
+      final settings = {
+        'count': _notifCount,
+        'names': _notifNames,
+        'progress': _notifProgress,
+      };
+      final result = await LibP2PService.setNotificationSettings(settings);
+      if (result.containsKey('error')) {
+        LogService.log('PrivacySettings: setNotifSetting failed: ${result['error']}');
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Ошибка: ${result['error']}')),
+          );
+          // Откат.
+          setState(() {
+            _notifCount = prev['count']!;
+            _notifNames = prev['names']!;
+            _notifProgress = prev['progress']!;
+          });
+        }
+      } else {
+        LogService.log('PrivacySettings: $key=$value');
+      }
+    } catch (e) {
+      LogService.log('PrivacySettings: setNotifSetting exception: $e');
+      if (mounted) {
+        setState(() {
+          _notifCount = prev['count']!;
+          _notifNames = prev['names']!;
+          _notifProgress = prev['progress']!;
+        });
+      }
     }
   }
 
@@ -110,6 +172,39 @@ class _PrivacySettingsScreenState extends State<PrivacySettingsScreen> {
                   ),
                   value: _showNotificationContent,
                   onChanged: _setShowContent,
+                ),
+                const Divider(),
+                const Padding(
+                  padding: EdgeInsets.fromLTRB(16, 16, 16, 8),
+                  child: Text(
+                    'Уведомление «Сеть активна»',
+                    style: TextStyle(fontWeight: FontWeight.bold),
+                  ),
+                ),
+                const Padding(
+                  padding: EdgeInsets.symmetric(horizontal: 16),
+                  child: Text(
+                    'Что показывать в постоянном уведомлении, пока приложение в фоне.',
+                    style: TextStyle(fontSize: 12, color: Colors.grey),
+                  ),
+                ),
+                SwitchListTile(
+                  title: const Text('Показывать количество'),
+                  subtitle: const Text('«3 непрочитанных»'),
+                  value: _notifCount,
+                  onChanged: (v) => _setNotifSetting('count', v),
+                ),
+                SwitchListTile(
+                  title: const Text('Показывать имена контактов'),
+                  subtitle: const Text('«Иван (2), Пётр (1)»'),
+                  value: _notifNames,
+                  onChanged: (v) => _setNotifSetting('names', v),
+                ),
+                SwitchListTile(
+                  title: const Text('Показывать прогресс файлов'),
+                  subtitle: const Text('«📎 file.pdf 45%» + прогресс-бар'),
+                  value: _notifProgress,
+                  onChanged: (v) => _setNotifSetting('progress', v),
                 ),
               ],
             ),

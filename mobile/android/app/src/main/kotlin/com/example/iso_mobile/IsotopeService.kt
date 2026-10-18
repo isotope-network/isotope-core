@@ -45,6 +45,44 @@ class IsotopeService : Service() {
             context.stopService(intent)
             Log.d(TAG, "stop() called")
         }
+
+        /**
+         * Обновляет foreground-уведомление «Сеть активна».
+         * title — заголовок (обычно «ISOTOPE»).
+         * text — строка состояния (непрочитанные, имена, файл).
+         * progress — 0..100, или -1 (без прогресс-бара).
+         * Вызывается из MainActivity по MethodChannel при изменении
+         * непрочитанных/прогресса файлов.
+         */
+        fun updateNotification(context: Context, title: String, text: String, progress: Int) {
+            try {
+                val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+                val pendingIntent = PendingIntent.getActivity(
+                    context,
+                    0,
+                    Intent(context, MainActivity::class.java).apply {
+                        flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
+                    },
+                    PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+                )
+
+                val builder = NotificationCompat.Builder(context, CHANNEL_ID)
+                    .setContentTitle(title.ifEmpty { "ISOTOPE" })
+                    .setContentText(text)
+                    .setSmallIcon(android.R.drawable.stat_sys_data_bluetooth)
+                    .setContentIntent(pendingIntent)
+                    .setOngoing(true)
+                    .setPriority(NotificationCompat.PRIORITY_LOW)
+
+                if (progress in 0..100) {
+                    builder.setProgress(100, progress, false)
+                }
+
+                manager.notify(NOTIFICATION_ID, builder.build())
+            } catch (e: Exception) {
+                Log.e(TAG, "updateNotification failed: ${e.message}")
+            }
+        }
     }
 
     override fun onBind(intent: Intent?): IBinder? {

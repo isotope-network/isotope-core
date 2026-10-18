@@ -489,6 +489,28 @@ class MainActivity : FlutterActivity() {
                             runOnUiThread { result.success(response) }
                         }.start()
                     }
+                    "getNotificationSettings" -> {
+                        Thread {
+                            val response = Mobile.getNotificationSettings()
+                            runOnUiThread { result.success(response) }
+                        }.start()
+                    }
+                    "setNotificationSettings" -> {
+                        val settingsJson = call.argument<String>("settings") ?: "{}"
+                        Thread {
+                            val response = Mobile.setNotificationSettings(settingsJson)
+                            runOnUiThread { result.success(response) }
+                        }.start()
+                    }
+                    "updateForegroundNotification" -> {
+                        val title = call.argument<String>("title") ?: "ISOTOPE"
+                        val text = call.argument<String>("text") ?: "Сеть активна"
+                        val progress = call.argument<Int>("progress") ?: -1
+                        runOnUiThread {
+                            IsotopeService.updateNotification(this, title, text, progress)
+                            result.success("ok")
+                        }
+                    }
                     "setTtl" -> {
                         val period = call.argument<String>("period") ?: "forever"
                         val mode = call.argument<String>("mode") ?: ""

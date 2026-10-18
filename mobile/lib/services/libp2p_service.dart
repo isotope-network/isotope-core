@@ -577,6 +577,60 @@ class LibP2PService {
     }
   }
 
+  /// Возвращает три настройки шторки:
+  /// {"count":bool,"names":bool,"progress":bool}.
+  /// count — показывать количество непрочитанных.
+  /// names — показывать имена контактов.
+  /// progress — показывать прогресс передачи файла.
+  static Future<Map<String, bool>> getNotificationSettings() async {
+    try {
+      final response = await _channel.invokeMethod<String>('getNotificationSettings');
+      final decoded = _safeDecode(response,
+          fallback: '{"count":false,"names":false,"progress":false}');
+      return {
+        'count': decoded['count'] as bool? ?? false,
+        'names': decoded['names'] as bool? ?? false,
+        'progress': decoded['progress'] as bool? ?? false,
+      };
+    } on PlatformException {
+      return {'count': false, 'names': false, 'progress': false};
+    }
+  }
+
+  /// Устанавливает три настройки шторки.
+  /// settings — {"count":bool,"names":bool,"progress":bool}.
+  /// Отсутствующие поля — не меняются.
+  static Future<Map<String, dynamic>> setNotificationSettings(Map<String, bool> settings) async {
+    try {
+      final response = await _channel.invokeMethod<String>('setNotificationSettings', {
+        'settings': jsonEncode(settings),
+      });
+      return _safeDecode(response);
+    } on PlatformException catch (e) {
+      return {'error': e.message ?? 'platform_error', 'operation': 'set_notification_settings'};
+    }
+  }
+
+  /// Обновляет foreground-уведомление «Сеть активна» (шторка).
+  /// title — заголовок (обычно «ISOTOPE»).
+  /// text — строка состояния. progress — 0..100, или -1 (без прогресс-бара).
+  /// Fire-and-forget: ошибки не критичны.
+  static Future<void> updateForegroundNotification({
+    required String title,
+    required String text,
+    int progress = -1,
+  }) async {
+    try {
+      await _channel.invokeMethod<String>('updateForegroundNotification', {
+        'title': title,
+        'text': text,
+        'progress': progress,
+      });
+    } on PlatformException {
+      // Тихо — не критично.
+    }
+  }
+
   /// Возвращает peerID для открытия чата (после тапа по уведомлению).
   /// Одноразовый: возвращает и очищает. Пустая строка — нет.
   static Future<String> getPendingOpenChat() async {

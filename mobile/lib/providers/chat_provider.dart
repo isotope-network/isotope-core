@@ -88,6 +88,18 @@ class ChatProvider extends ChangeNotifier {
   // ID последнего чанка файла (для [READ]). Источник — GetFileStatuses (Go).
   final Map<String, String> _fileLastChunkId = {};
 
+  // ==== FOREGROUND NOTIFICATION (шторка) ====
+  // Настройки из Go: показывать количество / имена / прогресс.
+  Map<String, bool> _notifSettings = {
+    'count': false,
+    'names': false,
+    'progress': false,
+  };
+  // Throttle для обновления шторки.
+  Timer? _notifTimer;
+  String _lastNotifText = '';
+  int _lastNotifProgress = -1;
+
   // ==== PENDING (таймер отправки) ====
   // Сообщения, ожидающие отправки через N секунд.
   // ID → Message (с pendingState = 'pending').
@@ -815,6 +827,11 @@ class ChatProvider extends ChangeNotifier {
       _startPurgeTimer();
       await loadTtl();
 
+      // Настройки шторки — из Go.
+      try {
+        _notifSettings = await LibP2PService.getNotificationSettings();
+      } catch (_) {}
+
       _safeNotify();
     } catch (e) {
       LogService.log('libp2p: ИСКЛЮЧЕНИЕ при старте: $e');
@@ -985,6 +1002,94 @@ class ChatProvider extends ChangeNotifier {
 
   void _safeNotify() {
     notifyListeners();
+    _scheduleNotificationUpdate();
+  }
+
+  /// Throttle 500 мс: обновить foreground-уведомление.
+  void _scheduleNotificationUpdate() {
+    if (_notifTimer != null) return;
+    _notifTimer = Timer(const Duration(milliseconds: 500), () {
+      _notifTimer = null;
+      _flushNotificationUpdate();
+    });
+  }
+
+  /// Собирает текст шторки и вызывает MethodChannel.
+  /// Дедупликация по text + progress: если не изменилось — не вызывать.
+  void _flushNotificationUpdate() {
+    final text = _buildNotificationText();
+    final progress = _buildNotificationProgress();
+    if (text == _lastNotifText && progress == _lastNotifProgress) return;
+    _lastNotifText = text;
+    _lastNotifProgress = progress;
+    LibP2PService.updateForegroundNotification(
+      title: 'ISOTOPE',
+      text: text,
+      progress: progress,
+    ).catchError((_) {});
+  }
+
+  /// Текст для шторки.
+  /// count → «3 непрочитанных»
+  /// names → «Иван (2), Пётр (1)» (или «Иван, Пётр» без count)
+  /// progress → «📎 file.pdf 45%» (если имена) или «📎 Файл 45%» (если нет)
+  String _buildNotificationText() {
+    final parts = <String>[];
+    final count = _notifSettings['count'] ?? false;
+    final names = _notifSettings['names'] ?? false;
+    final progressOn = _notifSettings['progress'] ?? false;
+
+    // Непрочитанные.
+    final unreadPeers = <String>[];
+    int totalUnread = 0;
+    for (final e in _unreadByPeer.entries) {
+      if (e.value > 0) {
+        unreadPeers.add(e.key);
+        totalUnread += e.value;
+      }
+    }
+    if (count && totalUnread > 0) {
+      parts.add('$totalUnread непрочитанных');
+    }
+    if (names && unreadPeers.isNotEmpty) {
+      final list = unreadPeers.map((p) {
+        final n = _peerNames[p] ?? (p.length > 8 ? p.substring(0, 8) : p);
+        final c = _unreadByPeer[p] ?? 0;
+        return count ? '$n ($c)' : n;
+      }).join(', ');
+      parts.add(list);
+    }
+
+    // Прогресс файла.
+    if (progressOn) {
+      for (final e in _fileProgress.entries) {
+        final p = e.value;
+        if (p >= 0 && p < 100) {
+          final msg = _fileMessages[e.key];
+          String name = 'Файл';
+          if (names && msg != null && msg.fileName.isNotEmpty) {
+            name = msg.fileName;
+          }
+          final short = name.length > 20 ? '${name.substring(0, 20)}…' : name;
+          parts.add('📎 $short $p%');
+          break;
+        }
+      }
+    }
+
+    return parts.isEmpty ? 'Сеть активна' : parts.join(' · ');
+  }
+
+  /// Прогресс для нативной полосы. -1 — нет полосы.
+  int _buildNotificationProgress() {
+    if (!(_notifSettings['progress'] ?? false)) return -1;
+    for (final e in _fileProgress.entries) {
+      final p = e.value;
+      if (p >= 0 && p < 100) {
+        return p;
+      }
+    }
+    return -1;
   }
 
   Future<Map<String, dynamic>> sendViaLibP2P(String text) async {
@@ -2260,6 +2365,7 @@ class ChatProvider extends ChangeNotifier {
     _purgeTimer?.cancel();
     _chunkQueueTimer?.cancel();
     _ackFlushTimer?.cancel();
+    _notifTimer?.cancel();
     for (final t in _pendingTimers.values) {
       t.cancel();
     }

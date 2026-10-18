@@ -27,6 +27,13 @@ type Settings struct {
 	// ShowNotificationContent — показывать ли текст сообщения в уведомлении.
 	// true (дефолт) — имя + превью. false — «Новое сообщение».
 	ShowNotificationContent bool `json:"show_notification_content"`
+	// Foreground-уведомление «Сеть активна» (шторка). Три независимых тумблера.
+	// ShowNotificationCount — показывать количество непрочитанных.
+	ShowNotificationCount bool `json:"show_notification_count"`
+	// ShowNotificationNames — показывать имена контактов с непрочитанными.
+	ShowNotificationNames bool `json:"show_notification_names"`
+	// ShowNotificationProgress — показывать прогресс-бар передачи файла.
+	ShowNotificationProgress bool `json:"show_notification_progress"`
 }
 
 // SETTINGS_VERSION — текущая версия формата.
@@ -45,9 +52,12 @@ func NewSettingsStore(file string) *SettingsStore {
 	s := &SettingsStore{
 		file: file,
 		data: Settings{
-			V:                       SETTINGS_VERSION,
-			MyReadEnabled:           true, // дефолт: делюсь статусом прочтения
-			ShowNotificationContent: true, // дефолт: показывать содержимое
+			V:                        SETTINGS_VERSION,
+			MyReadEnabled:            true,  // дефолт: делюсь статусом прочтения
+			ShowNotificationContent:  true,  // дефолт: показывать содержимое
+			ShowNotificationCount:    false, // дефолт: не показывать количество
+			ShowNotificationNames:    false, // дефолт: не показывать имена
+			ShowNotificationProgress: false, // дефолт: не показывать прогресс
 		},
 	}
 	if err := s.Load(); err != nil {
@@ -192,6 +202,63 @@ func (s *SettingsStore) SetShowNotificationContent(enabled bool) error {
 		return nil
 	}
 	s.data.ShowNotificationContent = enabled
+	s.mu.Unlock()
+	return s.Save()
+}
+
+// GetNotificationCount — показывать ли количество непрочитанных в шторке.
+func (s *SettingsStore) GetNotificationCount() bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.data.ShowNotificationCount
+}
+
+// SetNotificationCount — устанавливает и сохраняет.
+func (s *SettingsStore) SetNotificationCount(enabled bool) error {
+	s.mu.Lock()
+	if s.data.ShowNotificationCount == enabled {
+		s.mu.Unlock()
+		return nil
+	}
+	s.data.ShowNotificationCount = enabled
+	s.mu.Unlock()
+	return s.Save()
+}
+
+// GetNotificationNames — показывать ли имена контактов в шторке.
+func (s *SettingsStore) GetNotificationNames() bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.data.ShowNotificationNames
+}
+
+// SetNotificationNames — устанавливает и сохраняет.
+func (s *SettingsStore) SetNotificationNames(enabled bool) error {
+	s.mu.Lock()
+	if s.data.ShowNotificationNames == enabled {
+		s.mu.Unlock()
+		return nil
+	}
+	s.data.ShowNotificationNames = enabled
+	s.mu.Unlock()
+	return s.Save()
+}
+
+// GetNotificationProgress — показывать ли прогресс передачи в шторке.
+func (s *SettingsStore) GetNotificationProgress() bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.data.ShowNotificationProgress
+}
+
+// SetNotificationProgress — устанавливает и сохраняет.
+func (s *SettingsStore) SetNotificationProgress(enabled bool) error {
+	s.mu.Lock()
+	if s.data.ShowNotificationProgress == enabled {
+		s.mu.Unlock()
+		return nil
+	}
+	s.data.ShowNotificationProgress = enabled
 	s.mu.Unlock()
 	return s.Save()
 }

@@ -749,6 +749,61 @@ func SetShowNotificationContent(enabled bool) string {
 	return `{"status":"ok"}`
 }
 
+// GetNotificationSettings — возвращает JSON с тремя настройками шторки:
+// {"count":bool,"names":bool,"progress":bool}.
+// Используется Dart при загрузке раздела «Приватность».
+func GetNotificationSettings() string {
+	nodeMu.Lock()
+	defer nodeMu.Unlock()
+
+	if node == nil {
+		return `{"count":false,"names":false,"progress":false}`
+	}
+	result := map[string]bool{
+		"count":    node.GetNotificationCount(),
+		"names":    node.GetNotificationNames(),
+		"progress": node.GetNotificationProgress(),
+	}
+	data, _ := json.Marshal(result)
+	return string(data)
+}
+
+// SetNotificationSettings — устанавливает три настройки шторки.
+// settingsJSON — {"count":bool,"names":bool,"progress":bool}.
+// Отсутствующие поля — не меняются. Возвращает {"status":"ok"} или errorJSON.
+func SetNotificationSettings(settingsJSON string) string {
+	nodeMu.Lock()
+	defer nodeMu.Unlock()
+
+	if node == nil {
+		return errorJSON("node not started")
+	}
+
+	var settings map[string]bool
+	if err := json.Unmarshal([]byte(settingsJSON), &settings); err != nil {
+		return errorJSON("invalid JSON: " + err.Error())
+	}
+
+	if v, ok := settings["count"]; ok {
+		if err := node.SetNotificationCount(v); err != nil {
+			return errorJSON(err.Error())
+		}
+	}
+	if v, ok := settings["names"]; ok {
+		if err := node.SetNotificationNames(v); err != nil {
+			return errorJSON(err.Error())
+		}
+	}
+	if v, ok := settings["progress"]; ok {
+		if err := node.SetNotificationProgress(v); err != nil {
+			return errorJSON(err.Error())
+		}
+	}
+
+	addLog("[SETTINGS] notification settings set: %v", settings)
+	return `{"status":"ok"}`
+}
+
 // GetMyDisplayName — возвращает представление по умолчанию.
 func GetMyDisplayName() string {
 	nodeMu.Lock()

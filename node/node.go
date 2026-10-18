@@ -5057,6 +5057,54 @@ func (n *Node) SetShowNotificationContent(enabled bool) error {
 	return n.settingsStore.SetShowNotificationContent(enabled)
 }
 
+// GetNotificationCount — показывать ли количество непрочитанных в шторке.
+func (n *Node) GetNotificationCount() bool {
+	if n.settingsStore == nil {
+		return false
+	}
+	return n.settingsStore.GetNotificationCount()
+}
+
+// SetNotificationCount — устанавливает и сохраняет.
+func (n *Node) SetNotificationCount(enabled bool) error {
+	if n.settingsStore == nil {
+		return fmt.Errorf("settings store not initialized")
+	}
+	return n.settingsStore.SetNotificationCount(enabled)
+}
+
+// GetNotificationNames — показывать ли имена контактов в шторке.
+func (n *Node) GetNotificationNames() bool {
+	if n.settingsStore == nil {
+		return false
+	}
+	return n.settingsStore.GetNotificationNames()
+}
+
+// SetNotificationNames — устанавливает и сохраняет.
+func (n *Node) SetNotificationNames(enabled bool) error {
+	if n.settingsStore == nil {
+		return fmt.Errorf("settings store not initialized")
+	}
+	return n.settingsStore.SetNotificationNames(enabled)
+}
+
+// GetNotificationProgress — показывать ли прогресс передачи в шторке.
+func (n *Node) GetNotificationProgress() bool {
+	if n.settingsStore == nil {
+		return false
+	}
+	return n.settingsStore.GetNotificationProgress()
+}
+
+// SetNotificationProgress — устанавливает и сохраняет.
+func (n *Node) SetNotificationProgress(enabled bool) error {
+	if n.settingsStore == nil {
+		return fmt.Errorf("settings store not initialized")
+	}
+	return n.settingsStore.SetNotificationProgress(enabled)
+}
+
 // GetDeletedPeers — возвращает список удалённых peerID (для Dart).
 // Dart фильтрует _discoveredNodes по этому списку — удалённые не показываются.
 func (n *Node) GetDeletedPeers() []string {
