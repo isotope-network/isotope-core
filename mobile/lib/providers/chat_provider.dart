@@ -1033,6 +1033,23 @@ class ChatProvider extends ChangeNotifier {
     });
   }
 
+  /// Иконка по типу файла. photo → 📷, image → 🎨, video → 🎬, иначе → 📎.
+  String _fileTypeIcon(String fileName, String mediaType) {
+    if (mediaType == 'photo') return '📷';
+    final lower = fileName.toLowerCase();
+    if (lower.endsWith('.jpg') || lower.endsWith('.jpeg') ||
+        lower.endsWith('.png') || lower.endsWith('.gif') ||
+        lower.endsWith('.webp') || lower.endsWith('.bmp')) {
+      return '🎨';
+    }
+    if (lower.endsWith('.mp4') || lower.endsWith('.mov') ||
+        lower.endsWith('.mkv') || lower.endsWith('.avi') ||
+        lower.endsWith('.webm') || lower.endsWith('.3gp')) {
+      return '🎬';
+    }
+    return '📎';
+  }
+
   /// Текст для шторки.
   /// count → «3 непрочитанных»
   /// names → «Иван (2), Пётр (1)» (или «Иван, Пётр» без count)
@@ -1070,12 +1087,13 @@ class ChatProvider extends ChangeNotifier {
         final p = e.value;
         if (p >= 0 && p < 100) {
           final msg = _fileMessages[e.key];
+          final icon = _fileTypeIcon(msg?.fileName ?? '', msg?.mediaType ?? '');
           String name = 'Файл';
           if (names && msg != null && msg.fileName.isNotEmpty) {
             name = msg.fileName;
           }
           final short = name.length > 20 ? '${name.substring(0, 20)}…' : name;
-          parts.add('📎 $short $p%');
+          parts.add('$icon $short $p%');
           break;
         }
       }

@@ -7,6 +7,8 @@ import 'package:flutter/material.dart';
 import 'package:just_audio/just_audio.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:open_file/open_file.dart';
+import 'package:video_player/video_player.dart';
+import 'package:video_thumbnail/video_thumbnail.dart';
 import '../models/message.dart';
 import '../utils/time_format.dart';
 import '../services/log_service.dart';
@@ -100,10 +102,7 @@ class MessageBubble extends StatelessWidget {
                     if (message.isVoice)
                       _VoicePlayer(message: message)
                     else if (message.isFile)
-                      _FileRow(
-                        message: message,
-                        progress: _progressFor(message.mediaId),
-                      )
+                      _buildFileView(context)
                     else if (message.isPhoto)
                       _PhotoView(message: message)
                     else
@@ -170,6 +169,21 @@ class MessageBubble extends StatelessWidget {
           ],
         ),
       ),
+    );
+  }
+
+  /// Выбор виджета для файла: изображение, видео или обычный файл.
+  Widget _buildFileView(BuildContext context) {
+    final kind = _fileKind(message.fileName);
+    if (kind == _FileKind.image) {
+      return _ImageFileView(message: message);
+    }
+    if (kind == _FileKind.video) {
+      return _VideoFileView(message: message);
+    }
+    return _FileRow(
+      message: message,
+      progress: _progressFor(message.mediaId),
     );
   }
 
@@ -245,6 +259,25 @@ class MessageBubble extends StatelessWidget {
         return '';
     }
   }
+}
+
+/// Тип файла по расширению.
+enum _FileKind { image, video, other }
+
+/// Определяет тип файла по расширению. Нечувствительно к регистру.
+_FileKind _fileKind(String fileName) {
+  final lower = fileName.toLowerCase();
+  if (lower.endsWith('.jpg') || lower.endsWith('.jpeg') ||
+      lower.endsWith('.png') || lower.endsWith('.gif') ||
+      lower.endsWith('.webp') || lower.endsWith('.bmp')) {
+    return _FileKind.image;
+  }
+  if (lower.endsWith('.mp4') || lower.endsWith('.mov') ||
+      lower.endsWith('.mkv') || lower.endsWith('.avi') ||
+      lower.endsWith('.webm') || lower.endsWith('.3gp')) {
+    return _FileKind.video;
+  }
+  return _FileKind.other;
 }
 
 /// Отображение фото: миниатюра + тап для полноэкранного просмотра.
@@ -339,6 +372,273 @@ class _PhotoFullscreen extends StatelessWidget {
                   gaplessPlayback: true,
                 ),
               ),
+      ),
+    );
+  }
+}
+
+/// Отображение файла-изображения: миниатюра из localFilePath + fullscreen.
+/// Пока файл не собран — прогресс через _FileRow.
+class _ImageFileView extends StatelessWidget {
+  final Message message;
+
+  const _ImageFileView({required this.message});
+
+  @override
+  Widget build(BuildContext context) {
+    final path = message.localFilePath;
+    if (path.isEmpty) {
+      return _FileRow(message: message, progress: 0);
+    }
+    final file = File(path);
+    return GestureDetector(
+      onTap: () {
+        Navigator.of(context).push(
+          MaterialPageRoute(
+            builder: (_) => _ImageFileFullscreen(filePath: path),
+          ),
+        );
+      },
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(8),
+        child: Image.file(
+          file,
+          width: 200,
+          height: 200,
+          fit: BoxFit.cover,
+          errorBuilder: (_, __, ___) => _FileRow(message: message, progress: 0),
+        ),
+      ),
+    );
+  }
+}
+
+/// Полноэкранный просмотр изображения-файла. InteractiveViewer — zoom, pan.
+class _ImageFileFullscreen extends StatelessWidget {
+  final String filePath;
+
+  const _ImageFileFullscreen({required this.filePath});
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: Colors.black,
+      appBar: AppBar(
+        backgroundColor: Colors.black,
+        foregroundColor: Colors.white,
+        elevation: 0,
+      ),
+      body: Center(
+        child: InteractiveViewer(
+          minScale: 1.0,
+          maxScale: 5.0,
+          child: Image.file(
+            File(filePath),
+            fit: BoxFit.contain,
+            gaplessPlayback: true,
+            errorBuilder: (_, __, ___) => const Text(
+              'Ошибка изображения',
+              style: TextStyle(color: Colors.white),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Отображение видео-файла: первый кадр (thumbnail) + иконка play + fullscreen.
+/// Пока файл не собран — прогресс через _FileRow.
+class _VideoFileView extends StatefulWidget {
+  final Message message;
+
+  const _VideoFileView({required this.message});
+
+  @override
+  State<_VideoFileView> createState() => _VideoFileViewState();
+}
+
+class _VideoFileViewState extends State<_VideoFileView> {
+  Uint8List? _thumbnail;
+  bool _loading = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _generateThumbnail();
+  }
+
+  Future<void> _generateThumbnail() async {
+    final path = widget.message.localFilePath;
+    if (path.isEmpty) return;
+    if (_loading) return;
+    _loading = true;
+    try {
+      final bytes = await VideoThumbnail.thumbnailData(
+        video: path,
+        imageFormat: ImageFormat.JPEG,
+        maxWidth: 400,
+        quality: 75,
+      );
+      if (mounted) {
+        setState(() => _thumbnail = bytes);
+      }
+    } catch (_) {
+      // Тихо — покажем иконку без превью.
+    } finally {
+      _loading = false;
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final path = widget.message.localFilePath;
+    if (path.isEmpty) {
+      return _FileRow(message: widget.message, progress: 0);
+    }
+    final thumb = _thumbnail;
+    return GestureDetector(
+      onTap: () {
+        Navigator.of(context).push(
+          MaterialPageRoute(
+            builder: (_) => _VideoFileFullscreen(filePath: path),
+          ),
+        );
+      },
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(8),
+        child: SizedBox(
+          width: 200,
+          height: 200,
+          child: Stack(
+            fit: StackFit.expand,
+            children: [
+              if (thumb != null)
+                Image.memory(thumb, fit: BoxFit.cover, gaplessPlayback: true)
+              else
+                Container(
+                  color: Colors.black26,
+                  child: const Center(
+                    child: Icon(Icons.videocam, color: Colors.white, size: 48),
+                  ),
+                ),
+              const Center(
+                child: Icon(
+                  Icons.play_circle_fill,
+                  color: Colors.white,
+                  size: 56,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Полноэкранное воспроизведение видео-файла.
+class _VideoFileFullscreen extends StatefulWidget {
+  final String filePath;
+
+  const _VideoFileFullscreen({required this.filePath});
+
+  @override
+  State<_VideoFileFullscreen> createState() => _VideoFileFullscreenState();
+}
+
+class _VideoFileFullscreenState extends State<_VideoFileFullscreen> {
+  VideoPlayerController? _controller;
+  bool _initialized = false;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    _init();
+  }
+
+  Future<void> _init() async {
+    try {
+      final c = VideoPlayerController.file(File(widget.filePath));
+      await c.initialize();
+      if (!mounted) {
+        c.dispose();
+        return;
+      }
+      c.setLooping(false);
+      await c.play();
+      setState(() {
+        _controller = c;
+        _initialized = true;
+      });
+    } catch (e) {
+      if (mounted) {
+        setState(() => _error = e.toString());
+      }
+    }
+  }
+
+  @override
+  void dispose() {
+    _controller?.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: Colors.black,
+      appBar: AppBar(
+        backgroundColor: Colors.black,
+        foregroundColor: Colors.white,
+        elevation: 0,
+      ),
+      body: Center(
+        child: _error != null
+            ? Text(
+                'Ошибка видео: $_error',
+                style: const TextStyle(color: Colors.white),
+              )
+            : !_initialized || _controller == null
+                ? const CircularProgressIndicator(color: Colors.white)
+                : AspectRatio(
+                    aspectRatio: _controller!.value.aspectRatio,
+                    child: Stack(
+                      alignment: Alignment.bottomCenter,
+                      children: [
+                        VideoPlayer(_controller!),
+                        VideoProgressIndicator(
+                          _controller!,
+                          allowScrubbing: true,
+                          colors: const VideoProgressColors(
+                            playedColor: Color(0xFF4CAF50),
+                          ),
+                        ),
+                        Positioned(
+                          bottom: 8,
+                          child: IconButton(
+                            icon: Icon(
+                              _controller!.value.isPlaying
+                                  ? Icons.pause_circle_filled
+                                  : Icons.play_circle_fill,
+                              color: Colors.white,
+                              size: 56,
+                            ),
+                            onPressed: () {
+                              setState(() {
+                                if (_controller!.value.isPlaying) {
+                                  _controller!.pause();
+                                } else {
+                                  _controller!.play();
+                                }
+                              });
+                            },
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
       ),
     );
   }

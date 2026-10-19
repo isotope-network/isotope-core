@@ -1450,6 +1450,23 @@ class _ConnectScreenState extends State<ConnectScreen> {
     }
   }
 
+  /// Иконка по типу файла. photo → 📷, image → 🎨, video → 🎬, иначе → 📎.
+  String _fileTypeIcon(String fileName, String mediaType) {
+    if (mediaType == 'photo') return '📷';
+    final lower = fileName.toLowerCase();
+    if (lower.endsWith('.jpg') || lower.endsWith('.jpeg') ||
+        lower.endsWith('.png') || lower.endsWith('.gif') ||
+        lower.endsWith('.webp') || lower.endsWith('.bmp')) {
+      return '🎨';
+    }
+    if (lower.endsWith('.mp4') || lower.endsWith('.mov') ||
+        lower.endsWith('.mkv') || lower.endsWith('.avi') ||
+        lower.endsWith('.webm') || lower.endsWith('.3gp')) {
+      return '🎬';
+    }
+    return '📎';
+  }
+
   String _lastMessagePreview(NodeInfo node, ChatProvider chatProvider) {
     try {
       final peerID = node.peerID;
@@ -1474,7 +1491,8 @@ class _ConnectScreenState extends State<ConnectScreen> {
       if (last.isFile) {
         final name = last.fileName.isNotEmpty ? last.fileName : 'Файл';
         final short = name.length > 30 ? '${name.substring(0, 30)}...' : name;
-        return '📎 $short';
+        final icon = _fileTypeIcon(last.fileName, last.mediaType);
+        return '$icon $short';
       }
       final raw = last.displayText;
       final text = raw.length > 40 ? '${raw.substring(0, 40)}...' : raw;
