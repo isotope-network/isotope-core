@@ -30,6 +30,17 @@ class LibP2PService {
     return '$filesDir/isotope_state.json';
   }
 
+  /// Возвращает filesDir Android (тот же, что использует Go-ядро).
+  /// Нужен MediaStorage — чтобы files/ совпадал с Go files/.
+  static Future<String> getFilesDir() async {
+    try {
+      final dir = await _channel.invokeMethod<String>('getFilesDir');
+      return dir ?? '';
+    } on PlatformException {
+      return '';
+    }
+  }
+
   static Future<List<String>> getCoreLogs() async {
     try {
       final response = await _channel.invokeMethod<String>('getLogs');

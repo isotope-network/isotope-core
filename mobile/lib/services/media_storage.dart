@@ -1,8 +1,8 @@
 // mobile/lib/services/media_storage.dart
 import 'dart:convert';
 import 'dart:io';
-import 'package:path_provider/path_provider.dart';
 import 'log_service.dart';
+import 'libp2p_service.dart';
 
 /// Хранилище медиа-файлов (чанковая сборка).
 /// Структура на диске:
@@ -30,8 +30,10 @@ class MediaStorage {
 
   /// Инициализация. Вызывается один раз при старте приложения.
   static Future<void> init() async {
-    final appDir = await getApplicationDocumentsDirectory();
-    _root = Directory('${appDir.path}/isotope_media');
+    // Тот же filesDir, что использует Go-ядро. Иначе files/ у Go и Dart
+    // разные — отправитель не видит свои файлы (превью, «Открыть»).
+    final baseDir = await LibP2PService.getFilesDir();
+    _root = Directory('$baseDir/isotope_media');
     _chunksDir = Directory('${_root!.path}/chunks');
     _filesDir = Directory('${_root!.path}/files');
     if (!await _chunksDir!.exists()) {

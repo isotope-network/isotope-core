@@ -1607,8 +1607,9 @@ class ChatProvider extends ChangeNotifier {
         // Файл собран — обновляем localFilePath.
         _fileMessages[msg.mediaId] = agg.withLocalFilePath(msg.localFilePath);
       } else if (msg.chunkIndex == msg.chunkTotal - 1) {
-        // Последний чанк — обновляем time (для сортировки и lastMessage).
-        _fileMessages[msg.mediaId] = msg;
+        // Последний чанк — обновляем time (для сортировки и lastMessage),
+        // СОХРАНЯЯ localFilePath (иначе превью исчезает у отправителя).
+        _fileMessages[msg.mediaId] = msg.withLocalFilePath(agg.localFilePath);
       }
 
       // lastMessageByPeer — по последнему чанку.
@@ -1884,6 +1885,9 @@ class ChatProvider extends ChangeNotifier {
   /// после первого чанка из hook. Обновляет агрегат localFilePath.
   Future<void> _restoreOwnFilePathAsync(String mediaId) async {
     try {
+      // Инвалидируем кэш: getFilePath мог закэшировать null до того,
+      // как Go создал files/<mediaID>.<ext> (loadMessages при старте).
+      MediaStorage.invalidatePathCache(mediaId);
       final path = await MediaStorage.getFilePath(mediaId);
       if (path == null || path.isEmpty) return;
       final agg = _fileMessages[mediaId];

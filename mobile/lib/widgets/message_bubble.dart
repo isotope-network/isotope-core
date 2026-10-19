@@ -172,24 +172,57 @@ class MessageBubble extends StatelessWidget {
     );
   }
 
-  /// Выбор виджета для файла: изображение, видео или обычный файл.
-  /// Пока файл не собран (нет localFilePath) — прогресс через _FileRow
-  /// для ВСЕХ типов. Превью (миниатюра/первый кадр) — только после сборки.
   Widget _buildFileView(BuildContext context) {
     final p = _progressFor(message.mediaId);
-    if (message.localFilePath.isEmpty) {
-      return _FileRow(
-        message: message,
-        progress: p,
+    final kind = _fileKind(message.fileName);
+    final hasPreview = message.localFilePath.isNotEmpty &&
+        (kind == _FileKind.image || kind == _FileKind.video);
+    final showProgress = p >= 0 && p < 100;
+
+    // Превью + прогресс-бар под ним (пока идёт отправка/приём).
+    if (hasPreview && showProgress) {
+      return Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          kind == _FileKind.image
+              ? _ImageFileView(message: message)
+              : _VideoFileView(message: message),
+          const SizedBox(height: 4),
+          SizedBox(
+            width: 200,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  message.isOwn ? 'Отправка $p%' : 'Получение $p%',
+                  style: const TextStyle(fontSize: 11, color: Colors.black54),
+                ),
+                const SizedBox(height: 2),
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(3),
+                  child: LinearProgressIndicator(
+                    value: (p / 100).clamp(0.0, 1.0),
+                    minHeight: 4,
+                    backgroundColor: Colors.grey.shade300,
+                    valueColor: const AlwaysStoppedAnimation<Color>(Color(0xFF4CAF50)),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
       );
     }
-    final kind = _fileKind(message.fileName);
-    if (kind == _FileKind.image) {
-      return _ImageFileView(message: message);
+
+    // Превью без прогресса (готово).
+    if (hasPreview) {
+      return kind == _FileKind.image
+          ? _ImageFileView(message: message)
+          : _VideoFileView(message: message);
     }
-    if (kind == _FileKind.video) {
-      return _VideoFileView(message: message);
-    }
+
+    // Нет превью — обычный файл с прогрессом.
     return _FileRow(
       message: message,
       progress: p,
@@ -687,47 +720,62 @@ class _FileRow extends StatelessWidget {
     // 3. Прогресс 0-99 → прогресс-бар + «N%».
     // 4. Прогресс неизвестен (progress < 0) → «Подготовка…».
     Widget statusWidget;
-    if (ready) {
-      statusWidget = GestureDetector(
-        onTap: _open,
-        child: const Text(
-          'Открыть',
-          style: TextStyle(
-            fontSize: 12,
-            fontWeight: FontWeight.w600,
-            color: Color(0xFF4CAF50),
-          ),
-        ),
-      );
-    } else if (progress >= 100) {
-  // Все чанки есть.
-  // Отправитель: «Отправлено» (у него файла на диске не будет).
-  // Получатель: «Сборка…» (tryAssemble идёт, скоро будет готов).
-  statusWidget = Text(
-    message.isOwn ? 'Отправлено' : 'Сборка…',
-    style: const TextStyle(fontSize: 12, color: Colors.black54),
-  );
-} else if (progress > 0) {
-      // Прогресс 1-99: бар + текст.
-      final label = message.isOwn ? 'Отправка' : 'Получение';
+    final openWidget = ready
+        ? GestureDetector(
+            onTap: _open,
+            child: const Text(
+              'Открыть',
+              style: TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
+                color: Color(0xFF4CAF50),
+              ),
+            ),
+          )
+        : null;
+    final progressBar = (progress >= 0 && progress < 100)
+        ? Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                '${message.isOwn ? "Отправка" : "Получение"} $progress%',
+                style: const TextStyle(fontSize: 11, color: Colors.black54),
+              ),
+              const SizedBox(height: 3),
+              ClipRRect(
+                borderRadius: BorderRadius.circular(3),
+                child: LinearProgressIndicator(
+                  value: (progress / 100).clamp(0.0, 1.0),
+                  minHeight: 4,
+                  backgroundColor: Colors.grey.shade300,
+                  valueColor: const AlwaysStoppedAnimation<Color>(Color(0xFF4CAF50)),
+                ),
+              ),
+            ],
+          )
+        : null;
+
+    if (openWidget != null && progressBar != null) {
+      // Файл уже на диске, но передача ещё идёт: «Открыть» + бар.
       statusWidget = Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(
-            '$label $progress%',
-            style: const TextStyle(fontSize: 11, color: Colors.black54),
-          ),
+          openWidget,
           const SizedBox(height: 3),
-          ClipRRect(
-            borderRadius: BorderRadius.circular(3),
-            child: LinearProgressIndicator(
-              value: (progress / 100).clamp(0.0, 1.0),
-              minHeight: 4,
-              backgroundColor: Colors.grey.shade300,
-              valueColor: const AlwaysStoppedAnimation<Color>(Color(0xFF4CAF50)),
-            ),
-          ),
+          progressBar,
         ],
+      );
+    } else if (openWidget != null) {
+      statusWidget = openWidget;
+    } else if (progressBar != null) {
+      statusWidget = progressBar;
+    } else if (progress >= 100) {
+      // Все чанки есть.
+      // Отправитель: «Отправлено» (у него файла на диске не будет).
+      // Получатель: «Сборка…» (tryAssemble идёт, скоро будет готов).
+      statusWidget = Text(
+        message.isOwn ? 'Отправлено' : 'Сборка…',
+        style: const TextStyle(fontSize: 12, color: Colors.black54),
       );
     } else {
       // progress < 0 (неизвестно) или 0 (ещё не началось) → «Подготовка…».
