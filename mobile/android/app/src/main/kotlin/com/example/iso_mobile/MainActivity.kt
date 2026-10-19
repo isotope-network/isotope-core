@@ -506,6 +506,7 @@ class MainActivity : FlutterActivity() {
                         val title = call.argument<String>("title") ?: "ISOTOPE"
                         val text = call.argument<String>("text") ?: "Сеть активна"
                         val progress = call.argument<Int>("progress") ?: -1
+                        Log.d("MainActivity", "updateForegroundNotification: title=$title text=$text progress=$progress")
                         runOnUiThread {
                             IsotopeService.updateNotification(this, title, text, progress)
                             result.success("ok")

@@ -830,7 +830,10 @@ class ChatProvider extends ChangeNotifier {
       // Настройки шторки — из Go.
       try {
         _notifSettings = await LibP2PService.getNotificationSettings();
-      } catch (_) {}
+        LogService.log('NOTIF: loaded settings=$_notifSettings');
+      } catch (e) {
+        LogService.log('NOTIF: load settings failed: $e');
+      }
 
       _safeNotify();
     } catch (e) {
@@ -1022,11 +1025,14 @@ class ChatProvider extends ChangeNotifier {
     if (text == _lastNotifText && progress == _lastNotifProgress) return;
     _lastNotifText = text;
     _lastNotifProgress = progress;
+    LogService.log('NOTIF: update text="$text" progress=$progress');
     LibP2PService.updateForegroundNotification(
       title: 'ISOTOPE',
       text: text,
       progress: progress,
-    ).catchError((_) {});
+    ).catchError((e) {
+      LogService.log('NOTIF: update failed: $e');
+    });
   }
 
   /// Текст для шторки.
@@ -1556,6 +1562,15 @@ class ChatProvider extends ChangeNotifier {
         // Восстанавливаем _chunkCounts с диска (после перезапуска).
         // Асинхронно — когда отработает, перерисуем UI.
         _recountChunksAsync(msg.mediaId);
+        // lastMessageByPeer — сразу при первом чанке, чтобы превью в
+        // контактах показывало «📎 file.pdf» + прогресс, пока файл идёт.
+        final firstChatPeer = msg.isOwn ? msg.recipient : msg.sender;
+        if (firstChatPeer.isNotEmpty && firstChatPeer != '🌐 Сеть') {
+          final existing = _lastMessageByPeer[firstChatPeer];
+          if (existing == null || msg.time.compareTo(existing.time) > 0) {
+            _lastMessageByPeer[firstChatPeer] = msg;
+          }
+        }
       } else if (msg.localFilePath.isNotEmpty && agg.localFilePath.isEmpty) {
         // Файл собран — обновляем localFilePath.
         _fileMessages[msg.mediaId] = agg.withLocalFilePath(msg.localFilePath);

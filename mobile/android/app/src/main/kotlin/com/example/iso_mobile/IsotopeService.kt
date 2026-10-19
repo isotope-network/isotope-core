@@ -78,6 +78,7 @@ class IsotopeService : Service() {
                     builder.setProgress(100, progress, false)
                 }
 
+                Log.d(TAG, "updateNotification: title=$title text=$text progress=$progress")
                 manager.notify(NOTIFICATION_ID, builder.build())
             } catch (e: Exception) {
                 Log.e(TAG, "updateNotification failed: ${e.message}")

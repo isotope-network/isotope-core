@@ -290,6 +290,11 @@ type Node struct {
 	// O(1) вместо O(N) проверки всех чанков на каждый [DELIVERED].
 	deliveredCount   map[string]int
 	deliveredCountMu sync.Mutex
+
+	// acceptedCount — счётчик принятых чанков по MediaID (получатель).
+	// Инкремент при memory.Add (added == true). pushFileStatus — прогресс в Dart.
+	acceptedCount   map[string]int
+	acceptedCountMu sync.Mutex
 }
 
 // NewNode — создаёт новый узел
@@ -321,6 +326,7 @@ func NewNode(cfg Config) *Node {
 		fileStatusLastPush:      make(map[string]time.Time),
 		pendingDelivered:        make(map[string][]string),
 		deliveredCount:          make(map[string]int),
+		acceptedCount:           make(map[string]int),
 		pendingDeliveredTimers:  make(map[string]*time.Timer),
 		completedFiles:          make(map[string]bool),
 		pendingHookAcks:         make(map[string]*hookAckWindow),
@@ -1881,6 +1887,15 @@ func (n *Node) handleStream(stream network.Stream) {
 					replicaMsg.SenderName = n.nameForPeer(replicaMsg.Sender)
 					added := n.memory.Add(replicaMsg)
 					if added {
+						// Получатель: прогресс приёма файла — источник истины Go.
+						// pushFileStatus → Dart → шторка/контакты.
+						if replicaMsg.MediaType == "file" && replicaMsg.ChunkTotal > 0 && replicaMsg.MediaID != "" {
+							n.acceptedCountMu.Lock()
+							n.acceptedCount[replicaMsg.MediaID]++
+							accepted := n.acceptedCount[replicaMsg.MediaID]
+							n.acceptedCountMu.Unlock()
+							n.pushFileStatus(replicaMsg.MediaID, accepted, replicaMsg.ChunkTotal)
+						}
 						if n.messageHook != nil {
 							// Файловые чанки: не шлём base64 в Dart (OOM).
 							// Метаданные — в hook. base64 — через getChunk по запросу.
@@ -3698,10 +3713,13 @@ func (n *Node) DeleteFile(mediaID string) int {
 	// Удаляем sent/<MediaID>.bin, если остался.
 	sentPath := n.sentPath(mediaID)
 	_ = os.Remove(sentPath)
-	// Очищаем счётчик.
+	// Очищаем счётчики.
 	n.deliveredCountMu.Lock()
 	delete(n.deliveredCount, mediaID)
 	n.deliveredCountMu.Unlock()
+	n.acceptedCountMu.Lock()
+	delete(n.acceptedCount, mediaID)
+	n.acceptedCountMu.Unlock()
 	// Очищаем состояние завершённости.
 	n.fileStatusMu.Lock()
 	delete(n.completedFiles, mediaID)
