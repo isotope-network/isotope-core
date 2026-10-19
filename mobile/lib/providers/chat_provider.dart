@@ -830,7 +830,6 @@ class ChatProvider extends ChangeNotifier {
       // Настройки шторки — из Go.
       try {
         _notifSettings = await LibP2PService.getNotificationSettings();
-        LogService.log('NOTIF: loaded settings=$_notifSettings');
       } catch (e) {
         LogService.log('NOTIF: load settings failed: $e');
       }
@@ -1025,7 +1024,6 @@ class ChatProvider extends ChangeNotifier {
     if (text == _lastNotifText && progress == _lastNotifProgress) return;
     _lastNotifText = text;
     _lastNotifProgress = progress;
-    LogService.log('NOTIF: update text="$text" progress=$progress');
     LibP2PService.updateForegroundNotification(
       title: 'ISOTOPE',
       text: text,
