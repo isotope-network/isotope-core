@@ -8,7 +8,7 @@ import 'package:just_audio/just_audio.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:open_file/open_file.dart';
 import 'package:video_player/video_player.dart';
-import 'package:video_thumbnail/video_thumbnail.dart';
+import 'package:zero_cached_thumbnail/zero_cached_thumbnail.dart';
 import '../models/message.dart';
 import '../utils/time_format.dart';
 import '../services/log_service.dart';
@@ -173,7 +173,16 @@ class MessageBubble extends StatelessWidget {
   }
 
   /// Выбор виджета для файла: изображение, видео или обычный файл.
+  /// Пока файл не собран (нет localFilePath) — прогресс через _FileRow
+  /// для ВСЕХ типов. Превью (миниатюра/первый кадр) — только после сборки.
   Widget _buildFileView(BuildContext context) {
+    final p = _progressFor(message.mediaId);
+    if (message.localFilePath.isEmpty) {
+      return _FileRow(
+        message: message,
+        progress: p,
+      );
+    }
     final kind = _fileKind(message.fileName);
     if (kind == _FileKind.image) {
       return _ImageFileView(message: message);
@@ -183,7 +192,7 @@ class MessageBubble extends StatelessWidget {
     }
     return _FileRow(
       message: message,
-      progress: _progressFor(message.mediaId),
+      progress: p,
     );
   }
 
@@ -474,9 +483,8 @@ class _VideoFileViewState extends State<_VideoFileView> {
     if (_loading) return;
     _loading = true;
     try {
-      final bytes = await VideoThumbnail.thumbnailData(
-        video: path,
-        imageFormat: ImageFormat.JPEG,
+      final bytes = await ZeroCachedThumbnail.bytes(
+        ThumbnailSource.path(path),
         maxWidth: 400,
         quality: 75,
       );

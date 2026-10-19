@@ -198,6 +198,14 @@ func (n *Node) sentDirPath() string {
 	return filepath.Join(dir, "isotope_media", "sent")
 }
 
+// filesDirPath — путь к директории files/ (постоянные копии файлов).
+// У отправителя — копия при SendFileByPath. У получателя — при tryAssemble.
+// Не путать с sent/ (временная копия для retry).
+func (n *Node) filesDirPath() string {
+	dir := filepath.Dir(n.stateFile)
+	return filepath.Join(dir, "isotope_media", "files")
+}
+
 // savePrivateKey — сохраняет приватный ключ рядом с stateFile
 func (n *Node) savePrivateKey(key []byte) error {
 	keyFile := n.stateFile + ".key"

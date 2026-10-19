@@ -8,6 +8,7 @@ import (
 	"io"
 	"log"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -178,6 +179,29 @@ func (n *Node) SendFileByPath(peerID, filePath, fileName string, ttlPeriod, ttlM
 		return "", fmt.Errorf("copy to sent failed: %w", err)
 	}
 	dst.Close()
+
+	// Постоянная копия в files/<mediaID>.<ext> — для UI (превью, «Открыть»,
+	// «Сохранить»). Не зависит от sent/ (временный, для retry).
+	// Как у получателя после сборки.
+	ext := filepath.Ext(fileName)
+	if ext == "" {
+		ext = ".bin"
+	}
+	if err := os.MkdirAll(n.filesDirPath(), 0700); err != nil {
+		log.Printf("[FILE] mkdir files failed for %s: %v", mediaID, err)
+	} else if _, err := src.Seek(0, io.SeekStart); err != nil {
+		log.Printf("[FILE] seek src failed for %s: %v", mediaID, err)
+	} else {
+		permPath := filepath.Join(n.filesDirPath(), mediaID+ext)
+		if permDst, err := os.Create(permPath); err == nil {
+			if _, err := io.Copy(permDst, src); err != nil {
+				log.Printf("[FILE] copy to files failed for %s: %v", mediaID, err)
+			}
+			permDst.Close()
+		} else {
+			log.Printf("[FILE] create files copy failed for %s: %v", mediaID, err)
+		}
+	}
 
 	ttlSeconds := parsePeriod(ttlPeriod)
 	var expiresAt time.Time

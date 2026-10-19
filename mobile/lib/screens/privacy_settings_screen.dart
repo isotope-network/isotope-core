@@ -1,5 +1,7 @@
 // mobile/lib/screens/privacy_settings_screen.dart
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+import '../providers/chat_provider.dart';
 import '../services/libp2p_service.dart';
 import '../services/log_service.dart';
 
@@ -111,6 +113,12 @@ class _PrivacySettingsScreenState extends State<PrivacySettingsScreen> {
         }
       } else {
         LogService.log('PrivacySettings: $key=$value');
+        // Перечитать настройки в ChatProvider — шторка обновится сразу.
+        if (mounted) {
+          try {
+            await context.read<ChatProvider>().reloadNotificationSettings();
+          } catch (_) {}
+        }
       }
     } catch (e) {
       LogService.log('PrivacySettings: setNotifSetting exception: $e');

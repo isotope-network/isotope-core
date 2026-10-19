@@ -3713,6 +3713,13 @@ func (n *Node) DeleteFile(mediaID string) int {
 	// Удаляем sent/<MediaID>.bin, если остался.
 	sentPath := n.sentPath(mediaID)
 	_ = os.Remove(sentPath)
+	// Удаляем files/<MediaID>.* — постоянная копия (превью, «Открыть»).
+	filesPattern := filepath.Join(n.filesDirPath(), mediaID+".*")
+	if matches, err := filepath.Glob(filesPattern); err == nil {
+		for _, p := range matches {
+			_ = os.Remove(p)
+		}
+	}
 	// Очищаем счётчики.
 	n.deliveredCountMu.Lock()
 	delete(n.deliveredCount, mediaID)

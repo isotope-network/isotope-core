@@ -1033,6 +1033,17 @@ class ChatProvider extends ChangeNotifier {
     });
   }
 
+  /// Перечитывает настройки шторки из Go и обновляет уведомление.
+  /// Вызывается из PrivacySettingsScreen после изменения тумблера.
+  Future<void> reloadNotificationSettings() async {
+    try {
+      _notifSettings = await LibP2PService.getNotificationSettings();
+    } catch (_) {}
+    _lastNotifText = '';
+    _lastNotifProgress = -1;
+    _safeNotify();
+  }
+
   /// Иконка по типу файла. photo → 📷, image → 🎨, video → 🎬, иначе → 📎.
   String _fileTypeIcon(String fileName, String mediaType) {
     if (mediaType == 'photo') return '📷';
@@ -1578,6 +1589,11 @@ class ChatProvider extends ChangeNotifier {
         // Восстанавливаем _chunkCounts с диска (после перезапуска).
         // Асинхронно — когда отработает, перерисуем UI.
         _recountChunksAsync(msg.mediaId);
+        // Свои файлы: Go уже сохранил постоянную копию в files/<mediaID>.<ext>.
+        // Асинхронно находим путь — для превью/«Открыть» у отправителя.
+        if (msg.isOwn) {
+          _restoreOwnFilePathAsync(msg.mediaId);
+        }
         // lastMessageByPeer — сразу при первом чанке, чтобы превью в
         // контактах показывало «📎 file.pdf» + прогресс, пока файл идёт.
         final firstChatPeer = msg.isOwn ? msg.recipient : msg.sender;
@@ -1861,6 +1877,22 @@ class ChatProvider extends ChangeNotifier {
     for (final mediaId in _ackBuffer.keys.toList()) {
       await _flushAcks(mediaId);
     }
+  }
+
+  /// Находит локальный путь для своего файла в files/<mediaID>.<ext>.
+  /// Go сохраняет постоянную копию при SendFileByPath. Асинхронно —
+  /// после первого чанка из hook. Обновляет агрегат localFilePath.
+  Future<void> _restoreOwnFilePathAsync(String mediaId) async {
+    try {
+      final path = await MediaStorage.getFilePath(mediaId);
+      if (path == null || path.isEmpty) return;
+      final agg = _fileMessages[mediaId];
+      if (agg != null && agg.localFilePath != path) {
+        _fileMessages[mediaId] = agg.withLocalFilePath(path);
+        LogService.log('MEDIA: own file ready $path');
+        _safeNotify();
+      }
+    } catch (_) {}
   }
 
   /// Восстанавливает _chunkCounts с диска (асинхронно).
