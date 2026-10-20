@@ -49,6 +49,7 @@ const pingProtocolID = "/sbicore/ping/1.0.0"
 const OBFUSCATION_PREFIX = "[SHUF]"
 const STEGO_PREFIX = "[STEGO]"
 const REPLICA_PREFIX = "[REPLICA]"
+const SPHINX_PREFIX = "[SPHINX]"
 const RESTORE_PREFIX = "[RESTORE]"
 
 const ANNOUNCE_PREFIX = "[ANNOUNCE]"
@@ -141,6 +142,7 @@ type Config struct {
 	ListenIP          string
 	EnableRelayServer bool
 	IsRelay           bool // true для relay-узла (VPS): форвардит Version=2
+	UseOnion          bool // true — отправка через Sphinx (v2.0.1). Дефолт false.
 }
 
 // Node — основной узел сети
@@ -295,6 +297,11 @@ type Node struct {
 	// Инкремент при memory.Add (added == true). pushFileStatus — прогресс в Dart.
 	acceptedCount   map[string]int
 	acceptedCountMu sync.Mutex
+
+	// SPHINX (v2.0.1) — флаг и кэш compact_id → peer.ID.
+	useOnion        bool
+	sphinxIDCache   map[[SphinxCompactIDSize]byte]peer.ID
+	sphinxIDCacheMu sync.Mutex
 }
 
 // NewNode — создаёт новый узел
@@ -330,6 +337,8 @@ func NewNode(cfg Config) *Node {
 		pendingDeliveredTimers:  make(map[string]*time.Timer),
 		completedFiles:          make(map[string]bool),
 		pendingHookAcks:         make(map[string]*hookAckWindow),
+		useOnion:                cfg.UseOnion,
+		sphinxIDCache:           make(map[[SphinxCompactIDSize]byte]peer.ID),
 	}
 }
 
@@ -1849,8 +1858,49 @@ func (n *Node) handleStream(stream network.Stream) {
 		return
 	}
 
+	if strings.HasPrefix(msg, SPHINX_PREFIX) {
+		payload := strings.TrimPrefix(msg, SPHINX_PREFIX)
+		raw, err := base64.StdEncoding.DecodeString(strings.TrimSpace(payload))
+		if err != nil {
+			log.Printf("[SPHINX] base64 decode failed: %v", err)
+			return
+		}
+		myID := n.host.ID().String()
+		nextPeer, remainder, err := n.processSphinxPacket(raw)
+		if err == nil {
+			log.Printf("[SPHINX] relay: next=%s size=%d", nextPeer, len(remainder))
+			ctx, cancel := context.WithTimeout(context.Background(), SphinxTimeout)
+			s, serr := n.host.NewStream(ctx, nextPeer, protocolID)
+			cancel()
+			if serr != nil {
+				log.Printf("[SPHINX] relay NewStream to %s failed: %v", nextPeer, serr)
+				return
+			}
+			defer s.Close()
+			fmt.Fprintf(s, "%s%s\n", SPHINX_PREFIX, base64.StdEncoding.EncodeToString(remainder))
+			return
+		}
+		plain, err := n.extractSphinxPayload(raw)
+		if err != nil {
+			log.Printf("[SPHINX] neither relay nor recipient: %v", err)
+			return
+		}
+		var replicaMsg Message
+		if err := json.Unmarshal(plain, &replicaMsg); err != nil {
+			log.Printf("[SPHINX] recipient unmarshal failed: %v", err)
+			return
+		}
+		if replicaMsg.Recipient != myID {
+			log.Printf("[SPHINX] recipient mismatch: %s != %s", replicaMsg.Recipient, myID)
+			return
+		}
+		n.handleSphinxReplicaMsg(replicaMsg)
+		return
+	}
+
 	if strings.HasPrefix(msg, REPLICA_PREFIX) {
 		payload := strings.TrimPrefix(msg, REPLICA_PREFIX)
+
 		var replicaMsg Message
 		if err := json.Unmarshal([]byte(payload), &replicaMsg); err == nil {
 			// Сервисные сообщения (DELIVERED/READ/CONTACT_*):
@@ -2055,6 +2105,43 @@ func (n *Node) handleStream(stream network.Stream) {
 	}
 
 	n.processMessage(msg, remoteID, false)
+}
+
+// handleSphinxReplicaMsg — обработка расшифрованного Sphinx-пакета получателем.
+// Логика — как в ветке REPLICA (Version=2, Recipient==myID): E2E-расшифровка,
+// memory.Add, hook, [DELIVERED].
+func (n *Node) handleSphinxReplicaMsg(replicaMsg Message) {
+	if replicaMsg.Version == MESSAGE_VERSION_E2E {
+		plaintext, err := n.decryptFromSender(replicaMsg.Sender, replicaMsg.Text)
+		if err != nil {
+			log.Printf("[SPHINX] decrypt failed from %s: %v", replicaMsg.Sender, err)
+			return
+		}
+		replicaMsg.Text = plaintext
+	}
+	replicaMsg.SenderName = n.nameForPeer(replicaMsg.Sender)
+	replicaMsg.ReplicatedAt = time.Now()
+	replicaMsg.IsOwn = false
+	added := n.memory.Add(replicaMsg)
+	if added {
+		if replicaMsg.MediaType == "file" && replicaMsg.ChunkTotal > 0 && replicaMsg.MediaID != "" {
+			n.acceptedCountMu.Lock()
+			n.acceptedCount[replicaMsg.MediaID]++
+			accepted := n.acceptedCount[replicaMsg.MediaID]
+			n.acceptedCountMu.Unlock()
+			n.pushFileStatus(replicaMsg.MediaID, accepted, replicaMsg.ChunkTotal)
+		}
+		if n.messageHook != nil {
+			hookMsg := replicaMsg
+			if hookMsg.MediaType == "file" && hookMsg.ChunkTotal > 0 {
+				hookMsg.Text = ""
+				hookMsg.PlainText = ""
+			}
+			data, _ := json.Marshal(hookMsg)
+			n.messageHook(string(data))
+		}
+	}
+	n.queueDelivered(replicaMsg.Sender, replicaMsg.ID)
 }
 
 // findMyMessageByID — находит моё сообщение по ID в памяти.
@@ -2892,8 +2979,17 @@ func (n *Node) replicateMessage(msg Message) {
 	}
 
 	if msg.Recipient != "" {
+		// Sphinx (v2.0.1): если включён — пробуем через onion.
+		// При ошибке — fallback на sendToRecipient (доставка важнее).
+		if n.useOnion && !n.isRelay && !isFileChunk {
+			if n.sendViaSphinx(msg) {
+				return
+			}
+			log.Printf("[SPHINX] failed, fallback to direct (recipient=%s)", msg.Recipient)
+		}
 		// Адресное сообщение.
 		if isFileChunk && !n.isRelay {
+
 			// Файловый чанк — в очередь воркеров (не создаём горутину).
 			// На relay очереди нет — воркеры не запущены.
 			n.chunkQueue <- msg
@@ -3539,6 +3635,21 @@ func (n *Node) InitP2P() error {
 				n.layers[0][i] = hashVec[i] * 0.1
 			}
 		}
+	}
+
+	// Sphinx (v2.0.1): настройка из SettingsStore + кэш compact_id → peer.ID.
+	if n.settingsStore != nil {
+		n.useOnion = n.settingsStore.GetSphinxEnabled()
+	}
+	if n.useOnion {
+		if n.contacts != nil {
+			for _, c := range n.contacts.GetAll() {
+				if pid, err := peer.Decode(c.PeerID); err == nil {
+					n.sphinxCacheID(pid)
+				}
+			}
+		}
+		log.Printf("[SPHINX] enabled (relays: %d)", len(n.selectSphinxRelays()))
 	}
 
 	// Воркер-пул для файловых чанков (10 воркеров).
@@ -5022,6 +5133,14 @@ func (n *Node) RemoveContact(peerID string) error {
 	// 4. Сохраняем state (messageStatus изменился).
 	n.scheduleSaveState()
 
+	// 5. Sphinx: удалить из кэша compact_id → peer.ID.
+	if n.sphinxIDCache != nil {
+		cid := sphinxCompactID(peerID)
+		n.sphinxIDCacheMu.Lock()
+		delete(n.sphinxIDCache, cid)
+		n.sphinxIDCacheMu.Unlock()
+	}
+
 	log.Printf("[CONTACTS] removed %s + messages purged + added to deleted", peerID)
 	return nil
 }
@@ -5192,6 +5311,27 @@ func (n *Node) GetTtl() (string, string) {
 		mode = *modePtr
 	}
 	return period, mode
+}
+
+// SetSphinxEnabled — включает/выключает Sphinx на лету + сохраняет в настройках.
+func (n *Node) SetSphinxEnabled(enabled bool) error {
+	if n.settingsStore != nil {
+		if err := n.settingsStore.SetSphinxEnabled(enabled); err != nil {
+			return err
+		}
+	}
+	n.mu.Lock()
+	n.useOnion = enabled
+	n.mu.Unlock()
+	log.Printf("[SPHINX] enabled=%v", enabled)
+	return nil
+}
+
+// GetSphinxEnabled — текущее значение Sphinx.
+func (n *Node) GetSphinxEnabled() bool {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	return n.useOnion
 }
 
 // GetContacts — возвращает все контакты.

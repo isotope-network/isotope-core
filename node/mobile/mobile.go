@@ -804,6 +804,37 @@ func SetNotificationSettings(settingsJSON string) string {
 	return `{"status":"ok"}`
 }
 
+// GetSphinxEnabled — возвращает настройку Sphinx.
+// Формат: {"sphinx_enabled":true|false}.
+func GetSphinxEnabled() string {
+	nodeMu.Lock()
+	defer nodeMu.Unlock()
+
+	if node == nil {
+		return `{"sphinx_enabled":false}`
+	}
+	enabled := node.GetSphinxEnabled()
+	if enabled {
+		return `{"sphinx_enabled":true}`
+	}
+	return `{"sphinx_enabled":false}`
+}
+
+// SetSphinxEnabled — включает/выключает Sphinx на лету + сохраняет.
+func SetSphinxEnabled(enabled bool) string {
+	nodeMu.Lock()
+	defer nodeMu.Unlock()
+
+	if node == nil {
+		return errorJSON("node not started")
+	}
+	if err := node.SetSphinxEnabled(enabled); err != nil {
+		return errorJSON(err.Error())
+	}
+	addLog("[SETTINGS] sphinx_enabled set: %v", enabled)
+	return `{"status":"ok"}`
+}
+
 // GetMyDisplayName — возвращает представление по умолчанию.
 func GetMyDisplayName() string {
 	nodeMu.Lock()

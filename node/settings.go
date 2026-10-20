@@ -34,6 +34,10 @@ type Settings struct {
 	ShowNotificationNames bool `json:"show_notification_names"`
 	// ShowNotificationProgress — показывать прогресс-бар передачи файла.
 	ShowNotificationProgress bool `json:"show_notification_progress"`
+	// SphinxEnabled — использовать Sphinx-маршрутизацию (v2.0.1).
+	// true — сообщения идут через 2 relay + получатель (анонимность от relay).
+	// false — прямая доставка (как раньше). Дефолт false.
+	SphinxEnabled bool `json:"sphinx_enabled"`
 }
 
 // SETTINGS_VERSION — текущая версия формата.
@@ -259,6 +263,25 @@ func (s *SettingsStore) SetNotificationProgress(enabled bool) error {
 		return nil
 	}
 	s.data.ShowNotificationProgress = enabled
+	s.mu.Unlock()
+	return s.Save()
+}
+
+// GetSphinxEnabled — включена ли Sphinx-маршрутизация.
+func (s *SettingsStore) GetSphinxEnabled() bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.data.SphinxEnabled
+}
+
+// SetSphinxEnabled — включает/выключает Sphinx и сохраняет.
+func (s *SettingsStore) SetSphinxEnabled(enabled bool) error {
+	s.mu.Lock()
+	if s.data.SphinxEnabled == enabled {
+		s.mu.Unlock()
+		return nil
+	}
+	s.data.SphinxEnabled = enabled
 	s.mu.Unlock()
 	return s.Save()
 }

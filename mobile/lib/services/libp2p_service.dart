@@ -622,6 +622,32 @@ class LibP2PService {
     }
   }
 
+  /// Возвращает настройку Sphinx (анонимная маршрутизация, v2.0.1).
+  /// true — сообщения идут через 2 relay + получатель.
+  /// false — прямая доставка. Дефолт false.
+  static Future<bool> getSphinxEnabled() async {
+    try {
+      final response = await _channel.invokeMethod<String>('getSphinxEnabled');
+      final decoded = _safeDecode(response, fallback: '{"sphinx_enabled":false}');
+      return decoded['sphinx_enabled'] as bool? ?? false;
+    } on PlatformException {
+      return false;
+    }
+  }
+
+  /// Включает/выключает Sphinx на лету (без перезапуска).
+  /// Сохраняется в isotope_settings.json.
+  static Future<Map<String, dynamic>> setSphinxEnabled(bool enabled) async {
+    try {
+      final response = await _channel.invokeMethod<String>('setSphinxEnabled', {
+        'enabled': enabled,
+      });
+      return _safeDecode(response);
+    } on PlatformException catch (e) {
+      return {'error': e.message ?? 'platform_error', 'operation': 'set_sphinx_enabled'};
+    }
+  }
+
   /// Обновляет foreground-уведомление «Сеть активна» (шторка).
   /// title — заголовок (обычно «ISOTOPE»).
   /// text — строка состояния. progress — 0..100, или -1 (без прогресс-бара).

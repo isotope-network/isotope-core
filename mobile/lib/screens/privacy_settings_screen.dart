@@ -20,6 +20,7 @@ class _PrivacySettingsScreenState extends State<PrivacySettingsScreen> {
   bool _notifCount = false;
   bool _notifNames = false;
   bool _notifProgress = false;
+  bool _sphinxEnabled = false;
   bool _loading = true;
 
   @override
@@ -33,6 +34,7 @@ class _PrivacySettingsScreenState extends State<PrivacySettingsScreen> {
       final readEnabled = await LibP2PService.getMyReadEnabled();
       final showContent = await LibP2PService.getShowNotificationContent();
       final notifSettings = await LibP2PService.getNotificationSettings();
+      final sphinxEnabled = await LibP2PService.getSphinxEnabled();
       if (mounted) {
         setState(() {
           _myReadEnabled = readEnabled;
@@ -40,6 +42,7 @@ class _PrivacySettingsScreenState extends State<PrivacySettingsScreen> {
           _notifCount = notifSettings['count'] ?? false;
           _notifNames = notifSettings['names'] ?? false;
           _notifProgress = notifSettings['progress'] ?? false;
+          _sphinxEnabled = sphinxEnabled;
           _loading = false;
         });
       }
@@ -132,6 +135,27 @@ class _PrivacySettingsScreenState extends State<PrivacySettingsScreen> {
     }
   }
 
+  Future<void> _setSphinxEnabled(bool value) async {
+    setState(() => _sphinxEnabled = value);
+    try {
+      final result = await LibP2PService.setSphinxEnabled(value);
+      if (result.containsKey('error')) {
+        LogService.log('PrivacySettings: setSphinxEnabled failed: ${result['error']}');
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Ошибка: ${result['error']}')),
+          );
+          setState(() => _sphinxEnabled = !value);
+        }
+      } else {
+        LogService.log('PrivacySettings: sphinx_enabled=$value');
+      }
+    } catch (e) {
+      LogService.log('PrivacySettings: setSphinxEnabled exception: $e');
+      if (mounted) setState(() => _sphinxEnabled = !value);
+    }
+  }
+
   Future<void> _setShowContent(bool value) async {
     setState(() => _showNotificationContent = value);
     try {
@@ -213,6 +237,24 @@ class _PrivacySettingsScreenState extends State<PrivacySettingsScreen> {
                   subtitle: const Text('«📎 file.pdf 45%» + прогресс-бар'),
                   value: _notifProgress,
                   onChanged: (v) => _setNotifSetting('progress', v),
+                ),
+                const Divider(),
+                const Padding(
+                  padding: EdgeInsets.fromLTRB(16, 16, 16, 8),
+                  child: Text(
+                    'Анонимность',
+                    style: TextStyle(fontWeight: FontWeight.bold),
+                  ),
+                ),
+                SwitchListTile(
+                  title: const Text('Sphinx-маршрутизация'),
+                  subtitle: const Text(
+                    'Сообщения идут через 2 relay + получатель. '
+                    'Relay не видит, кто с кем. Получатель видит отправителя. '
+                    'Требует 2+ доверенных контакта. Файлы — напрямую.',
+                  ),
+                  value: _sphinxEnabled,
+                  onChanged: _setSphinxEnabled,
                 ),
               ],
             ),

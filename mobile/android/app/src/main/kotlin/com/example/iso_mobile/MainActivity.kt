@@ -502,6 +502,19 @@ class MainActivity : FlutterActivity() {
                             runOnUiThread { result.success(response) }
                         }.start()
                     }
+                    "getSphinxEnabled" -> {
+                        Thread {
+                            val response = Mobile.getSphinxEnabled()
+                            runOnUiThread { result.success(response) }
+                        }.start()
+                    }
+                    "setSphinxEnabled" -> {
+                        val enabled = call.argument<Boolean>("enabled") ?: false
+                        Thread {
+                            val response = Mobile.setSphinxEnabled(enabled)
+                            runOnUiThread { result.success(response) }
+                        }.start()
+                    }
                     "updateForegroundNotification" -> {
                         val title = call.argument<String>("title") ?: "ISOTOPE"
                         val text = call.argument<String>("text") ?: "Сеть активна"
