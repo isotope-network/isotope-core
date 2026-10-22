@@ -3649,7 +3649,7 @@ func (n *Node) InitP2P() error {
 				}
 			}
 		}
-		log.Printf("[SPHINX] enabled (relays: %d)", len(n.selectSphinxRelays()))
+		log.Printf("[SPHINX] enabled (relays: %d)", len(n.selectSphinxRelays("")))
 	}
 
 	// Воркер-пул для файловых чанков (10 воркеров).

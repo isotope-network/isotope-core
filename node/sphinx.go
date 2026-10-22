@@ -82,9 +82,11 @@ func (n *Node) sphinxLookupID(cid [SphinxCompactIDSize]byte) (peer.ID, bool) {
 	return "", false
 }
 
-// selectSphinxRelays — выбирает 2 relay по весу > 0.7 (Verified && Confirmed).
+// selectSphinxRelays — выбирает 2 relay по весу > 0.5 (Verified && Confirmed).
+// recipient исключается: получатель не может быть relay.
+// TODO: raise weight threshold to 0.7 after test (0.5 — для теста на новых контактах).
 // Возвращает nil, если < 2.
-func (n *Node) selectSphinxRelays() []peer.ID {
+func (n *Node) selectSphinxRelays(recipient peer.ID) []peer.ID {
 	if n.contacts == nil {
 		return nil
 	}
@@ -97,7 +99,10 @@ func (n *Node) selectSphinxRelays() []peer.ID {
 		if c.X25519Pub == "" {
 			continue
 		}
-		if n.getPeerWeight(c.PeerID) <= 0.7 {
+		if recipient != "" && c.PeerID == recipient.String() {
+			continue
+		}
+		if n.getPeerWeight(c.PeerID) <= 0.5 {
 			continue
 		}
 		pid, err := peer.Decode(c.PeerID)
@@ -118,7 +123,7 @@ func (n *Node) selectSphinxRelays() []peer.ID {
 // Для всех слоёв (relay'и + получатель) — DH(ephemeral_priv, X25519Pub).
 // n.x25519Priv НЕ используется — relay не знает отправителя.
 func (n *Node) buildSphinxRoute(recipient peer.ID) (*sphinxRoute, error) {
-	relays := n.selectSphinxRelays()
+	relays := n.selectSphinxRelays(recipient)
 	if len(relays) < 2 {
 		return nil, fmt.Errorf("not enough trusted relays (< 2)")
 	}
