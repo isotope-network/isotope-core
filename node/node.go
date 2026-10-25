@@ -1858,6 +1858,7 @@ func (n *Node) handleStream(stream network.Stream) {
 		return
 	}
 
+	log.Printf("[SPHINX] incoming packet: len=%d prefix=%q", len(msg), truncate(msg, 20))
 	if strings.HasPrefix(msg, SPHINX_PREFIX) {
 		payload := strings.TrimPrefix(msg, SPHINX_PREFIX)
 		raw, err := base64.StdEncoding.DecodeString(strings.TrimSpace(payload))

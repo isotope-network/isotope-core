@@ -413,9 +413,9 @@ class _ChatScreenState extends State<ChatScreen> {
   /// Base64 через MethodChannel не проходит (OOM устранён).
   Future<void> _pickAndSendFile() async {
     try {
-      final result = await FilePicker.platform.pickFiles(withData: false);
-      if (result == null || result.files.isEmpty) return;
-      final f = result.files.first;
+      final result = await FilePicker.pickFiles();
+      if (result == null || result.isEmpty) return;
+      final f = result.first;
       final path = f.path;
       if (path == null || path.isEmpty) {
         if (mounted) {
@@ -425,7 +425,7 @@ class _ChatScreenState extends State<ChatScreen> {
         }
         return;
       }
-      final size = f.size;
+      final size = f.lengthSync() ?? await f.length() ?? 0;
       final confirmed = await _confirmLargeFile(size);
       if (!confirmed) return;
       final provider = _provider;

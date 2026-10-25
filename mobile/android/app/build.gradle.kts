@@ -1,6 +1,6 @@
+// D:\isotope\mobile\android\app\build.gradle.kts
 plugins {
     id("com.android.application")
-    // The Flutter Gradle Plugin must be applied after the Android and Kotlin Gradle plugins.
     id("dev.flutter.flutter-gradle-plugin")
 }
 
@@ -42,3 +42,4 @@ flutter {
 dependencies {
     implementation(files("libs/isotope.aar"))
 }
+// D:\isotope\mobile\android\app\build.gradle.kts

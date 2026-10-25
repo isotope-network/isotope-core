@@ -1,3 +1,4 @@
+// D:\isotope\mobile\android\settings.gradle.kts
 pluginManagement {
     val flutterSdkPath =
         run {
@@ -24,3 +25,4 @@ plugins {
 }
 
 include(":app")
+// D:\isotope\mobile\android\settings.gradle.kts

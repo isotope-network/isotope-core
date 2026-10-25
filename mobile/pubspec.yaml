@@ -1,3 +1,4 @@
+# D:\isotope\mobile\pubspec.yaml
 name: iso_mobile
 description: ISOTOPE — децентрализованная P2P-сеть для обмена сообщениями
 publish_to: 'none'
@@ -13,18 +14,19 @@ dependencies:
   http: ^1.2.0
   web_socket_channel: ^3.0.3
   shared_preferences: ^2.2.3
-  flutter_secure_storage: ^9.2.4
+  flutter_secure_storage: ^11.2.0
   connectivity_plus: ^6.1.5
   permission_handler: ^11.4.0
   qr_flutter: ^4.1.0
   mobile_scanner: ^5.2.3
   flutter_blue_plus: ^2.3.12
-  multicast_dns: ^0.3.3+1
-  image_picker: ^1.1.2
+  multicast_dns: ^0.3.2+8
+  image_picker: ^1.2.4
+  image_picker_android: ^0.8.13+18
   record: ^6.2.0
   just_audio: ^0.10.6
   path_provider: ^2.1.5
-  file_picker: ^10.3.3
+  file_picker: ^13.0.0
   open_file: ^3.5.10
   zero_cached_thumbnail: ^0.2.0
   video_player: ^2.9.5
@@ -36,3 +38,4 @@ dev_dependencies:
 
 flutter:
   uses-material-design: true
+# D:\isotope\mobile\pubspec.yaml

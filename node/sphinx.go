@@ -102,7 +102,7 @@ func (n *Node) selectSphinxRelays(recipient peer.ID) []peer.ID {
 		if recipient != "" && c.PeerID == recipient.String() {
 			continue
 		}
-		if n.getPeerWeight(c.PeerID) <= 0.5 {
+		if n.getPeerWeight(c.PeerID) < 0.5 {
 			continue
 		}
 		pid, err := peer.Decode(c.PeerID)
@@ -371,6 +371,24 @@ func (n *Node) sendViaSphinx(msg Message) bool {
 	if err != nil {
 		log.Printf("[SPHINX] build packet failed: %v", err)
 		return false
+	}
+
+	// Диагностика: есть ли адреса relay1 в peerstore / VPS-справочнике?
+	peerAddrs := n.host.Peerstore().Addrs(route.Relays[0])
+	log.Printf("[SPHINX] relay1=%s peerstore_addrs=%d", route.Relays[0], len(peerAddrs))
+	if len(peerAddrs) == 0 {
+		if addrs, ferr := n.FindPeerByID(route.Relays[0].String()); ferr == nil {
+			log.Printf("[SPHINX] FindPeerByID(%s) → %d addrs", route.Relays[0], len(addrs))
+			if len(addrs) > 0 {
+				if _, cerr := n.ConnectToPeerWithFallback(addrs); cerr != nil {
+					log.Printf("[SPHINX] ConnectToPeerWithFallback failed: %v", cerr)
+				} else {
+					log.Printf("[SPHINX] connected to relay1 %s", route.Relays[0])
+				}
+			}
+		} else {
+			log.Printf("[SPHINX] FindPeerByID(%s) failed: %v", route.Relays[0], ferr)
+		}
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), SphinxTimeout)
