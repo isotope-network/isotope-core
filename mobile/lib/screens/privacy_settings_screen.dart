@@ -275,7 +275,8 @@ class _PrivacySettingsScreenState extends State<PrivacySettingsScreen> {
                   subtitle: const Text(
                     'Сообщения идут через 2 relay + получатель. '
                     'Relay не видит, кто с кем. Получатель видит отправителя. '
-                    'Требует 2+ доверенных контакта. Файлы — напрямую.',
+                    'Требует 2+ доверенных контакта. '
+                    'Файлы — через Sphinx только при включённом Mixing.',
                   ),
                   value: _sphinxEnabled,
                   onChanged: _setSphinxEnabled,
@@ -284,7 +285,9 @@ class _PrivacySettingsScreenState extends State<PrivacySettingsScreen> {
                   title: const Text('Mixing'),
                   subtitle: Text(
                     _sphinxEnabled
-                        ? 'Скрывает тайминги. Ваши сообщения идут с задержкой 13–15 сек. Работает через relay.'
+                        ? 'Скрывает тайминги. Текст: +13–15 сек. '
+                          'Файлы: ~2.7 мин на 1 МБ. '
+                          'Тип сообщения виден relay. Полное скрытие — v2.0.4.'
                         : 'Доступно только при включённом Sphinx.',
                   ),
                   value: _mixingEnabled,

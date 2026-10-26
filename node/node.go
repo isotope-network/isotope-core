@@ -248,6 +248,10 @@ type Node struct {
 	// Используется только для не-файловых сообщений.
 	sendSem chan struct{}
 
+	// mixingSem — семафор для mixing-чанков (5 одновременно).
+	// Не перегружать relay: 5 параллельных Sphinx-пакетов.
+	mixingSem chan struct{}
+
 	// chunkQueue — очередь файловых чанков для воркер-пула.
 	// Файловые чанки не создают горутину на каждый чанк (было 10 700 горутин
 	// → 4.5 ГБ heap). Вместо этого — очередь + 10 воркеров.
@@ -331,6 +335,7 @@ func NewNode(cfg Config) *Node {
 		tempContacts:            make(map[string]Contact),
 		myReadEnabled:           true,
 		sendSem:                 make(chan struct{}, SendSemaphoreCapacity),
+		mixingSem:               make(chan struct{}, 5),
 		chunkQueue:              make(chan Message, 1000),
 		unackedChunks:           make(map[string]retryInfo),
 		fileStatusLastPush:      make(map[string]time.Time),
@@ -1227,6 +1232,17 @@ func (n *Node) chunkWorker() {
 		n.unackedChunks[msg.ID] = info
 		n.unackedChunksMu.Unlock()
 
+		// Mixing (v2.0.3): файловые чанки через Sphinx — если включён.
+		// Семафор на 5 — не перегружать relay (5 параллельных Sphinx-пакетов).
+		if msg.MixingEnabled {
+			n.mixingSem <- struct{}{}
+			if n.sendViaSphinx(msg) {
+				<-n.mixingSem
+				continue
+			}
+			<-n.mixingSem
+			log.Printf("[CHUNK] sphinx failed for %s[%d], fallback to direct", msg.MediaID, msg.ChunkIndex)
+		}
 		n.sendToRecipient(msg, data, true)
 	}
 }

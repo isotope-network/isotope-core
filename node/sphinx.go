@@ -36,7 +36,7 @@ const (
 	SphinxHeaderSize        = SphinxHops * SphinxHopLayerSize                                                                      // 750
 	SphinxPayloadLenSize    = 4
 	SphinxPayloadTextSize   = 4096
-	SphinxPayloadFileSize   = 65536
+	SphinxPayloadFileSize   = 98304
 	SphinxTimeout           = 5 * time.Second
 
 	// SphinxFlagMixing — бит 0 флагов слоя: «relay, спи».

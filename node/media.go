@@ -258,6 +258,11 @@ func (n *Node) sendFileChunksAsync(peerID, mediaID, fileName string, fileSize in
 		}
 
 		id := generateMsgID(fmt.Sprintf("file:%s:%d:%d", mediaID, i, time.Now().UnixNano()))
+		// Mixing (v2.0.3): файловые чанки — если Sphinx + Mixing включены.
+		mixingEnabled := false
+		if n.settingsStore != nil && n.settingsStore.GetMixingEnabled() && n.useOnion {
+			mixingEnabled = true
+		}
 		msg := Message{
 			ID:               id,
 			Text:             encrypted,
@@ -282,6 +287,7 @@ func (n *Node) sendFileChunksAsync(peerID, mediaID, fileName string, fileSize in
 			Mode:             0,
 			Score:            0,
 			ExpiresAt:        expiresAt,
+			MixingEnabled:    mixingEnabled,
 		}
 
 		// Блокирующая постановка в chunkQueue. Backpressure: ждём воркеров.
@@ -465,6 +471,11 @@ func (n *Node) SendFile(peerID, fileBase64, fileName string, fileSize int64, ttl
 			}
 
 			id := generateMsgID(fmt.Sprintf("file:%s:%d:%d", mediaID, idx, time.Now().UnixNano()))
+			// Mixing (v2.0.3): файловые чанки — если Sphinx + Mixing включены.
+			mixingEnabled := false
+			if n.settingsStore != nil && n.settingsStore.GetMixingEnabled() && n.useOnion {
+				mixingEnabled = true
+			}
 			msg := Message{
 				ID:               id,
 				Text:             encrypted,
@@ -489,6 +500,7 @@ func (n *Node) SendFile(peerID, fileBase64, fileName string, fileSize int64, ttl
 				Mode:             0,
 				Score:            0,
 				ExpiresAt:        expiresAt,
+				MixingEnabled:    mixingEnabled,
 			}
 			if n.memory.Add(msg) {
 				n.setMessageStatus(id, StatusSent)
