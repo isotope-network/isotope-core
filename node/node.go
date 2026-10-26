@@ -34,6 +34,7 @@ import (
 	"github.com/libp2p/go-libp2p/core/host"
 	"github.com/libp2p/go-libp2p/core/network"
 	"github.com/libp2p/go-libp2p/core/peer"
+	"github.com/libp2p/go-libp2p/core/peerstore"
 	"github.com/libp2p/go-libp2p/p2p/discovery/mdns"
 	client "github.com/libp2p/go-libp2p/p2p/protocol/circuitv2/client"
 	"github.com/libp2p/go-libp2p/p2p/protocol/circuitv2/relay"
@@ -1867,6 +1868,45 @@ func (n *Node) handleStream(stream network.Stream) {
 		nextPeer, remainder, err := n.processSphinxPacket(raw)
 		if err == nil {
 			log.Printf("[SPHINX] relay: next=%s size=%d", nextPeer, len(remainder))
+			// Только прямой (Wi-Fi) путь. Circuit (через VPS) — не Sphinx.
+			peerAddrs := n.host.Peerstore().Addrs(nextPeer)
+			if len(peerAddrs) == 0 {
+				if addrs, ferr := n.FindPeerByID(nextPeer.String()); ferr == nil {
+					var direct []ma.Multiaddr
+					for _, a := range addrs {
+						maAddr, perr := ma.NewMultiaddr(a)
+						if perr != nil {
+							continue
+						}
+						if strings.Contains(maAddr.String(), "/p2p-circuit") {
+							continue
+						}
+						direct = append(direct, maAddr)
+					}
+					if len(direct) == 0 {
+						log.Printf("[SPHINX] relay: no direct addrs for next hop %s, drop", nextPeer)
+						return
+					}
+					n.host.Peerstore().AddAddrs(nextPeer, direct, peerstore.TempAddrTTL)
+					log.Printf("[SPHINX] relay: next=%s direct_addrs=%d", nextPeer, len(direct))
+				} else {
+					log.Printf("[SPHINX] relay: FindPeerByID(%s) failed: %v, drop", nextPeer, ferr)
+					return
+				}
+			} else {
+				// В peerstore есть — проверить, что не circuit.
+				var direct []ma.Multiaddr
+				for _, a := range peerAddrs {
+					if strings.Contains(a.String(), "/p2p-circuit") {
+						continue
+					}
+					direct = append(direct, a)
+				}
+				if len(direct) == 0 {
+					log.Printf("[SPHINX] relay: no direct addrs in peerstore for next hop %s, drop", nextPeer)
+					return
+				}
+			}
 			ctx, cancel := context.WithTimeout(context.Background(), SphinxTimeout)
 			s, serr := n.host.NewStream(ctx, nextPeer, protocolID)
 			cancel()
