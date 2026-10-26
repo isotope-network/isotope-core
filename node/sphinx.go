@@ -30,13 +30,17 @@ const (
 	SphinxNextPeerIDLenSize = 1
 	SphinxNextPeerIDSize    = 64
 	SphinxMACSize           = 32
+	SphinxFlagsSize         = 1
 	SphinxRoutingSize       = 152
-	SphinxHopLayerSize      = SphinxNextPeerIDLenSize + SphinxNextPeerIDSize + SphinxMACSize + SphinxRoutingSize // 249
-	SphinxHeaderSize        = SphinxHops * SphinxHopLayerSize                                                    // 747
+	SphinxHopLayerSize      = SphinxNextPeerIDLenSize + SphinxNextPeerIDSize + SphinxMACSize + SphinxFlagsSize + SphinxRoutingSize // 250
+	SphinxHeaderSize        = SphinxHops * SphinxHopLayerSize                                                                      // 750
 	SphinxPayloadLenSize    = 4
 	SphinxPayloadTextSize   = 4096
 	SphinxPayloadFileSize   = 65536
 	SphinxTimeout           = 5 * time.Second
+
+	// SphinxFlagMixing — бит 0 флагов слоя: «relay, спи».
+	SphinxFlagMixing uint8 = 1 << 0
 )
 
 // sphinxRoute — построенный маршрут [relay1, relay2, recipient].
@@ -144,7 +148,8 @@ func (n *Node) buildSphinxRoute(recipient peer.ID) (*sphinxRoute, error) {
 // buildSphinxPacket — строит пакет. payloadSize — 4K или 64K.
 // MAC считается по ciphertext (nonce || ct) — проверяется до decrypt.
 // Payload: [length 4 байта BE][JSON][random padding].
-func (n *Node) buildSphinxPacket(route *sphinxRoute, payload []byte, payloadSize int) ([]byte, error) {
+// mixing — флаг в каждом слое (v2.0.2): relay читает и спит.
+func (n *Node) buildSphinxPacket(route *sphinxRoute, payload []byte, payloadSize int, mixing bool) ([]byte, error) {
 	if len(route.Keys) != SphinxHops {
 		return nil, fmt.Errorf("route keys: expected %d, got %d", SphinxHops, len(route.Keys))
 	}
@@ -214,7 +219,13 @@ func (n *Node) buildSphinxPacket(route *sphinxRoute, payload []byte, payloadSize
 		}
 		ct := gcm.Seal(nil, nonce, current, nil)
 
-		// layer: [len 1][peerID 64][MAC 32][routing 152][nonce][ct].
+		// layer: [len 1][peerID 64][MAC 32][flags 1][routing 152][nonce][ct].
+		var flags uint8
+		if mixing {
+			flags |= SphinxFlagMixing
+		}
+		flagsBuf := []byte{flags}
+
 		layer := make([]byte, 0, SphinxHopLayerSize+len(nonce)+len(ct))
 		layer = append(layer, byte(len(nextPeerID)))
 		peerIDBuf := make([]byte, SphinxNextPeerIDSize)
@@ -223,11 +234,13 @@ func (n *Node) buildSphinxPacket(route *sphinxRoute, payload []byte, payloadSize
 
 		mac := hmac.New(sha256.New, key)
 		mac.Write(layer[0 : SphinxNextPeerIDLenSize+SphinxNextPeerIDSize])
+		mac.Write(flagsBuf)
 		mac.Write(routing)
 		mac.Write(nonce)
 		mac.Write(ct)
 		macSum := mac.Sum(nil)
 		layer = append(layer, macSum...)
+		layer = append(layer, flagsBuf...)
 		layer = append(layer, routing...)
 		layer = append(layer, nonce...)
 		layer = append(layer, ct...)
@@ -239,26 +252,30 @@ func (n *Node) buildSphinxPacket(route *sphinxRoute, payload []byte, payloadSize
 
 // processSphinxPacket — relay: снимает свой слой. MAC проверяется ДО decrypt.
 // next_hop — полный peer.ID (base58) в layer. Relay НЕ ищет в контактах.
-func (n *Node) processSphinxPacket(packet []byte) (peer.ID, []byte, error) {
+// Возвращает mixing (бит 0 flags) — свойство сообщения, не настройка relay.
+func (n *Node) processSphinxPacket(packet []byte) (peer.ID, bool, []byte, error) {
 	if len(packet) < SphinxHopLayerSize+12 {
-		return "", nil, fmt.Errorf("packet too short: %d", len(packet))
+		return "", false, nil, fmt.Errorf("packet too short: %d", len(packet))
 	}
 
-	// layer: [len 1][peerID 64][MAC 32][routing 152][nonce][ct].
+	// layer: [len 1][peerID 64][MAC 32][flags 1][routing 152][nonce][ct].
 	nextLen := int(packet[0])
 	if nextLen <= 0 || nextLen > SphinxNextPeerIDSize {
-		return "", nil, fmt.Errorf("invalid next_hop len: %d", nextLen)
+		return "", false, nil, fmt.Errorf("invalid next_hop len: %d", nextLen)
 	}
 	nextPeerIDStr := string(packet[SphinxNextPeerIDLenSize : SphinxNextPeerIDLenSize+nextLen])
 	nextPeer, err := peer.Decode(nextPeerIDStr)
 	if err != nil {
-		return "", nil, fmt.Errorf("invalid next_hop peerID: %w", err)
+		return "", false, nil, fmt.Errorf("invalid next_hop peerID: %w", err)
 	}
 	log.Printf("[SPHINX] process next=%s", nextPeer)
 
 	macOff := SphinxNextPeerIDLenSize + SphinxNextPeerIDSize
 	macSum := packet[macOff : macOff+SphinxMACSize]
-	routing := packet[macOff+SphinxMACSize : SphinxHopLayerSize]
+	flagsOff := macOff + SphinxMACSize
+	flags := packet[flagsOff]
+	mixing := flags&SphinxFlagMixing != 0
+	routing := packet[flagsOff+SphinxFlagsSize : SphinxHopLayerSize]
 
 	var ephPub [32]byte
 	copy(ephPub[:], routing[0:32])
@@ -275,25 +292,26 @@ func (n *Node) processSphinxPacket(packet []byte) (peer.ID, []byte, error) {
 
 	mac := hmac.New(sha256.New, key)
 	mac.Write(packet[0:macOff])
+	mac.Write(packet[flagsOff : flagsOff+SphinxFlagsSize])
 	mac.Write(routing)
 	mac.Write(nonce)
 	mac.Write(ct)
 	if !hmac.Equal(mac.Sum(nil), macSum) {
 		log.Printf("[SPHINX] process MAC mismatch")
-		return "", nil, fmt.Errorf("MAC mismatch")
+		return "", false, nil, fmt.Errorf("MAC mismatch")
 	}
-	log.Printf("[SPHINX] process MAC ok")
+	log.Printf("[SPHINX] process MAC ok mixing=%v", mixing)
 
 	block, _ := aes.NewCipher(key)
 	gcm, _ := cipher.NewGCM(block)
 	plain, err := gcm.Open(nil, nonce, ct, nil)
 	if err != nil {
 		log.Printf("[SPHINX] process decrypt failed: %v", err)
-		return "", nil, fmt.Errorf("decrypt failed: %w", err)
+		return "", false, nil, fmt.Errorf("decrypt failed: %w", err)
 	}
 	log.Printf("[SPHINX] process decrypt ok len=%d", len(plain))
 
-	return nextPeer, plain, nil
+	return nextPeer, mixing, plain, nil
 }
 
 // extractSphinxPayload — получатель: извлекает payload.
@@ -359,7 +377,7 @@ func (n *Node) sendViaSphinx(msg Message) bool {
 		payloadSize = SphinxPayloadFileSize
 	}
 
-	packet, err := n.buildSphinxPacket(route, payload, payloadSize)
+	packet, err := n.buildSphinxPacket(route, payload, payloadSize, msg.MixingEnabled)
 	if err != nil {
 		log.Printf("[SPHINX] build packet failed: %v", err)
 		return false

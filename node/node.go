@@ -1869,15 +1869,12 @@ func (n *Node) handleStream(stream network.Stream) {
 			return
 		}
 		myID := n.host.ID().String()
-		nextPeer, remainder, err := n.processSphinxPacket(raw)
+		nextPeer, mixing, remainder, err := n.processSphinxPacket(raw)
 		if err == nil {
-			log.Printf("[SPHINX] relay: next=%s size=%d", nextPeer, len(remainder))
-			// Mixing (v2.0.2): экспоненциальная задержка на relay — только
-			// если пользователь включил Mixing. Скрывает тайминги.
-			n.mu.Lock()
-			mixingEnabled := n.mixingEnabled
-			n.mu.Unlock()
-			if mixingEnabled {
+			log.Printf("[SPHINX] relay: next=%s size=%d mixing=%v", nextPeer, len(remainder), mixing)
+			// Mixing (v2.0.2): флаг из Sphinx-пакета (свойство сообщения).
+			// Relay спит, если отправитель включил Mixing. Не настройка relay.
+			if mixing {
 				sleepExponential(5*time.Second, 30*time.Second)
 			}
 			// Только прямой (Wi-Fi) путь. Circuit (через VPS) — не Sphinx.
@@ -3288,6 +3285,11 @@ func (n *Node) processMessageInternal(msg string, senderID string, isOwn bool, e
 	}
 
 	readEnabled := n.myReadEnabled
+	// Mixing (v2.0.2): свойство сообщения. Только при Sphinx.
+	mixingEnabled := false
+	if n.settingsStore != nil {
+		mixingEnabled = n.settingsStore.GetMixingEnabled() && n.useOnion
+	}
 	newMsg := Message{
 		ID:               id,
 		Text:             msg,
@@ -3306,6 +3308,7 @@ func (n *Node) processMessageInternal(msg string, senderID string, isOwn bool, e
 		ReadEnabled:      &readEnabled,
 		TtlPeriodSeconds: ttlPeriodSeconds,
 		TtlMode:          ttlMode,
+		MixingEnabled:    mixingEnabled,
 	}
 	// Свои файловые чанки: base64 не нужен в Memory (файл на диске в sent/).
 	// Dart не запрашивает getChunk для isOwn. Экономия ~900 МБ на 670 МБ-файле.
@@ -3697,13 +3700,10 @@ func (n *Node) InitP2P() error {
 		log.Printf("[SPHINX] enabled (relays: %d)", len(n.selectSphinxRelays("")))
 	}
 
-	// Mixing (v2.0.2): настройка из SettingsStore.
-	// Имеет смысл только при SphinxEnabled == true (не применяется в handleStream иначе).
-	if n.settingsStore != nil {
-		n.mixingEnabled = n.settingsStore.GetMixingEnabled()
-	}
-	if n.mixingEnabled {
-		log.Printf("[MIXING] enabled")
+	// Mixing (v2.0.2): настройка только на отправителе — флаг в Message.
+	// Relay читает флаг из Sphinx-пакета (handleStream), не свою настройку.
+	if n.settingsStore != nil && n.settingsStore.GetMixingEnabled() {
+		log.Printf("[MIXING] enabled (sender-side flag)")
 	}
 
 	// Воркер-пул для файловых чанков (10 воркеров).

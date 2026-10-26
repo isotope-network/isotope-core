@@ -86,6 +86,12 @@ type Message struct {
 	MediaID    string `json:"media_id,omitempty"`    // для чанков файла
 	ChunkIndex int    `json:"chunk_index,omitempty"` // 0, 1, 2, ...
 	ChunkTotal int    `json:"chunk_total,omitempty"` // общее число чанков
+
+	// MixingEnabled — свойство сообщения (v2.0.2): идёт ли оно с mixing.
+	// true — relay спят экспоненциально (скрывает тайминги).
+	// Ставится в processMessageInternal: n.settingsStore.GetMixingEnabled() && n.useOnion.
+	// Читается в sendViaSphinx → buildSphinxPacket (флаг в Sphinx-пакете).
+	MixingEnabled bool `json:"mixing_enabled,omitempty"`
 }
 
 // Memory — потокобезопасное хранилище сообщений (без лимита)

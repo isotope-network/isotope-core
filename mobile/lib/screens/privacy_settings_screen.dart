@@ -284,7 +284,7 @@ class _PrivacySettingsScreenState extends State<PrivacySettingsScreen> {
                   title: const Text('Mixing'),
                   subtitle: Text(
                     _sphinxEnabled
-                        ? 'Скрывает тайминги. Relay не видит, когда пришло и ушло. Медленнее — 13–15 сек.'
+                        ? 'Скрывает тайминги. Ваши сообщения идут с задержкой 13–15 сек. Работает через relay.'
                         : 'Доступно только при включённом Sphinx.',
                   ),
                   value: _mixingEnabled,
