@@ -298,10 +298,8 @@ type Node struct {
 	acceptedCount   map[string]int
 	acceptedCountMu sync.Mutex
 
-	// SPHINX (v2.0.1) — флаг и кэш compact_id → peer.ID.
-	useOnion        bool
-	sphinxIDCache   map[[SphinxCompactIDSize]byte]peer.ID
-	sphinxIDCacheMu sync.Mutex
+	// SPHINX (v2.0.1) — флаг.
+	useOnion bool
 }
 
 // NewNode — создаёт новый узел
@@ -338,7 +336,6 @@ func NewNode(cfg Config) *Node {
 		completedFiles:          make(map[string]bool),
 		pendingHookAcks:         make(map[string]*hookAckWindow),
 		useOnion:                cfg.UseOnion,
-		sphinxIDCache:           make(map[[SphinxCompactIDSize]byte]peer.ID),
 	}
 }
 
@@ -3640,18 +3637,11 @@ func (n *Node) InitP2P() error {
 		}
 	}
 
-	// Sphinx (v2.0.1): настройка из SettingsStore + кэш compact_id → peer.ID.
+	// Sphinx (v2.0.1): настройка из SettingsStore.
 	if n.settingsStore != nil {
 		n.useOnion = n.settingsStore.GetSphinxEnabled()
 	}
 	if n.useOnion {
-		if n.contacts != nil {
-			for _, c := range n.contacts.GetAll() {
-				if pid, err := peer.Decode(c.PeerID); err == nil {
-					n.sphinxCacheID(pid)
-				}
-			}
-		}
 		log.Printf("[SPHINX] enabled (relays: %d)", len(n.selectSphinxRelays("")))
 	}
 
@@ -5135,14 +5125,6 @@ func (n *Node) RemoveContact(peerID string) error {
 
 	// 4. Сохраняем state (messageStatus изменился).
 	n.scheduleSaveState()
-
-	// 5. Sphinx: удалить из кэша compact_id → peer.ID.
-	if n.sphinxIDCache != nil {
-		cid := sphinxCompactID(peerID)
-		n.sphinxIDCacheMu.Lock()
-		delete(n.sphinxIDCache, cid)
-		n.sphinxIDCacheMu.Unlock()
-	}
 
 	log.Printf("[CONTACTS] removed %s + messages purged + added to deleted", peerID)
 	return nil

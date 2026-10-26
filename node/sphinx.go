@@ -9,6 +9,7 @@ import (
 	cryptorand "crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
+	"encoding/binary"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -21,16 +22,17 @@ import (
 )
 
 const (
-	SphinxHops             = 3
-	SphinxCompactIDSize    = 16
-	SphinxMACSize          = 32
-	SphinxEphemeralPubSize = 32
-	SphinxRoutingSize      = 152
-	SphinxHopLayerSize     = SphinxCompactIDSize + SphinxMACSize + SphinxRoutingSize // 200
-	SphinxHeaderSize       = SphinxHops * SphinxHopLayerSize                         // 600
-	SphinxPayloadTextSize  = 4096
-	SphinxPayloadFileSize  = 65536
-	SphinxTimeout          = 5 * time.Second
+	SphinxHops              = 3
+	SphinxNextPeerIDLenSize = 1
+	SphinxNextPeerIDSize    = 64
+	SphinxMACSize           = 32
+	SphinxRoutingSize       = 152
+	SphinxHopLayerSize      = SphinxNextPeerIDLenSize + SphinxNextPeerIDSize + SphinxMACSize + SphinxRoutingSize // 249
+	SphinxHeaderSize        = SphinxHops * SphinxHopLayerSize                                                    // 747
+	SphinxPayloadLenSize    = 4
+	SphinxPayloadTextSize   = 4096
+	SphinxPayloadFileSize   = 65536
+	SphinxTimeout           = 5 * time.Second
 )
 
 // sphinxRoute — построенный маршрут [relay1, relay2, recipient].
@@ -40,46 +42,6 @@ type sphinxRoute struct {
 	Ephemeral     [32]byte
 	EphemeralPriv [32]byte
 	Keys          [][]byte
-}
-
-// sphinxCompactID — sha256(peerID)[:16].
-func sphinxCompactID(peerID string) [SphinxCompactIDSize]byte {
-	h := sha256.Sum256([]byte(peerID))
-	var out [SphinxCompactIDSize]byte
-	copy(out[:], h[:SphinxCompactIDSize])
-	return out
-}
-
-// sphinxCacheID — добавляет запись в кэш compact_id → peer.ID.
-func (n *Node) sphinxCacheID(pid peer.ID) {
-	cid := sphinxCompactID(pid.String())
-	n.sphinxIDCacheMu.Lock()
-	n.sphinxIDCache[cid] = pid
-	n.sphinxIDCacheMu.Unlock()
-}
-
-// sphinxLookupID — находит peer.ID по compact_id. O(1) через кэш.
-func (n *Node) sphinxLookupID(cid [SphinxCompactIDSize]byte) (peer.ID, bool) {
-	n.sphinxIDCacheMu.Lock()
-	pid, ok := n.sphinxIDCache[cid]
-	n.sphinxIDCacheMu.Unlock()
-	if ok {
-		return pid, true
-	}
-	if n.contacts == nil {
-		return "", false
-	}
-	for _, c := range n.contacts.GetAll() {
-		if sphinxCompactID(c.PeerID) == cid {
-			p, err := peer.Decode(c.PeerID)
-			if err != nil {
-				return "", false
-			}
-			n.sphinxCacheID(p)
-			return p, true
-		}
-	}
-	return "", false
 }
 
 // selectSphinxRelays — выбирает 2 relay по весу > 0.5 (Verified && Confirmed).
@@ -110,7 +72,6 @@ func (n *Node) selectSphinxRelays(recipient peer.ID) []peer.ID {
 			continue
 		}
 		trusted = append(trusted, pid)
-		n.sphinxCacheID(pid)
 	}
 	if len(trusted) < 2 {
 		return nil
@@ -167,11 +128,6 @@ func (n *Node) buildSphinxRoute(recipient peer.ID) (*sphinxRoute, error) {
 	box.Precompute(&rshared, &rpub, ephPriv)
 	keys = append(keys, rshared[:])
 
-	n.sphinxCacheID(recipient)
-	for _, r := range relays {
-		n.sphinxCacheID(r)
-	}
-
 	return &sphinxRoute{
 		Relays:        relays,
 		Recipient:     recipient,
@@ -183,6 +139,7 @@ func (n *Node) buildSphinxRoute(recipient peer.ID) (*sphinxRoute, error) {
 
 // buildSphinxPacket — строит пакет. payloadSize — 4K или 64K.
 // MAC считается по ciphertext (nonce || ct) — проверяется до decrypt.
+// Payload: [length 4 байта BE][JSON][random padding].
 func (n *Node) buildSphinxPacket(route *sphinxRoute, payload []byte, payloadSize int) ([]byte, error) {
 	if len(route.Keys) != SphinxHops {
 		return nil, fmt.Errorf("route keys: expected %d, got %d", SphinxHops, len(route.Keys))
@@ -190,26 +147,28 @@ func (n *Node) buildSphinxPacket(route *sphinxRoute, payload []byte, payloadSize
 	if payloadSize != SphinxPayloadTextSize && payloadSize != SphinxPayloadFileSize {
 		return nil, fmt.Errorf("invalid payloadSize: %d", payloadSize)
 	}
-	if len(payload) > payloadSize {
-		return nil, fmt.Errorf("payload too large: %d > %d", len(payload), payloadSize)
+	if len(payload) > payloadSize-SphinxPayloadLenSize {
+		return nil, fmt.Errorf("payload too large: %d > %d", len(payload), payloadSize-SphinxPayloadLenSize)
 	}
 
+	// Финальный слой: routing + nonce + ct.
 	innerRouting := make([]byte, SphinxRoutingSize)
 	copy(innerRouting[0:32], route.Ephemeral[:])
 	if _, err := io.ReadFull(cryptorand.Reader, innerRouting[32:]); err != nil {
 		return nil, fmt.Errorf("routing padding failed: %w", err)
 	}
 
+	// Payload с длиной: [length 4][JSON][padding].
 	payloadPadded := make([]byte, payloadSize)
-	copy(payloadPadded, payload)
-	if len(payload) < payloadSize {
-		if _, err := io.ReadFull(cryptorand.Reader, payloadPadded[len(payload):]); err != nil {
+	binary.BigEndian.PutUint32(payloadPadded[0:4], uint32(len(payload)))
+	copy(payloadPadded[4:], payload)
+	if len(payload)+SphinxPayloadLenSize < payloadSize {
+		if _, err := io.ReadFull(cryptorand.Reader, payloadPadded[len(payload)+SphinxPayloadLenSize:]); err != nil {
 			return nil, fmt.Errorf("payload padding failed: %w", err)
 		}
 	}
 
 	key := route.Keys[2]
-	log.Printf("[SPHINX] build final key[2]=%x", key[:8])
 	block, _ := aes.NewCipher(key)
 	gcm, _ := cipher.NewGCM(block)
 	nonce := make([]byte, gcm.NonceSize())
@@ -232,8 +191,10 @@ func (n *Node) buildSphinxPacket(route *sphinxRoute, payload []byte, payloadSize
 		} else {
 			nextPeer = route.Recipient
 		}
-		nextCID := sphinxCompactID(nextPeer.String())
-		log.Printf("[SPHINX] build layer i=%d next=%s cid=%x", i, nextPeer, nextCID[:8])
+		nextPeerID := nextPeer.String()
+		if len(nextPeerID) > SphinxNextPeerIDSize {
+			return nil, fmt.Errorf("next_hop peerID too long: %d", len(nextPeerID))
+		}
 
 		routing := make([]byte, SphinxRoutingSize)
 		copy(routing[0:32], route.Ephemeral[:])
@@ -249,15 +210,19 @@ func (n *Node) buildSphinxPacket(route *sphinxRoute, payload []byte, payloadSize
 		}
 		ct := gcm.Seal(nil, nonce, current, nil)
 
+		// layer: [len 1][peerID 64][MAC 32][routing 152][nonce][ct].
+		layer := make([]byte, 0, SphinxHopLayerSize+len(nonce)+len(ct))
+		layer = append(layer, byte(len(nextPeerID)))
+		peerIDBuf := make([]byte, SphinxNextPeerIDSize)
+		copy(peerIDBuf, nextPeerID)
+		layer = append(layer, peerIDBuf...)
+
 		mac := hmac.New(sha256.New, key)
-		mac.Write(nextCID[:])
+		mac.Write(layer[0 : SphinxNextPeerIDLenSize+SphinxNextPeerIDSize])
 		mac.Write(routing)
 		mac.Write(nonce)
 		mac.Write(ct)
 		macSum := mac.Sum(nil)
-
-		layer := make([]byte, 0, SphinxHopLayerSize+len(nonce)+len(ct))
-		layer = append(layer, nextCID[:]...)
 		layer = append(layer, macSum...)
 		layer = append(layer, routing...)
 		layer = append(layer, nonce...)
@@ -269,29 +234,32 @@ func (n *Node) buildSphinxPacket(route *sphinxRoute, payload []byte, payloadSize
 }
 
 // processSphinxPacket — relay: снимает свой слой. MAC проверяется ДО decrypt.
+// next_hop — полный peer.ID (base58) в layer. Relay НЕ ищет в контактах.
 func (n *Node) processSphinxPacket(packet []byte) (peer.ID, []byte, error) {
 	if len(packet) < SphinxHopLayerSize+12 {
 		return "", nil, fmt.Errorf("packet too short: %d", len(packet))
 	}
 
-	var cid [SphinxCompactIDSize]byte
-	copy(cid[:], packet[0:SphinxCompactIDSize])
-	log.Printf("[SPHINX] process cid=%x", cid[:8])
-	nextPeer, ok := n.sphinxLookupID(cid)
-	if !ok {
-		log.Printf("[SPHINX] process: unknown next_hop cid=%x", cid[:8])
-		return "", nil, fmt.Errorf("unknown next_hop compact_id")
+	// layer: [len 1][peerID 64][MAC 32][routing 152][nonce][ct].
+	nextLen := int(packet[0])
+	if nextLen <= 0 || nextLen > SphinxNextPeerIDSize {
+		return "", nil, fmt.Errorf("invalid next_hop len: %d", nextLen)
+	}
+	nextPeerIDStr := string(packet[SphinxNextPeerIDLenSize : SphinxNextPeerIDLenSize+nextLen])
+	nextPeer, err := peer.Decode(nextPeerIDStr)
+	if err != nil {
+		return "", nil, fmt.Errorf("invalid next_hop peerID: %w", err)
 	}
 	log.Printf("[SPHINX] process next=%s", nextPeer)
 
-	var macSum [SphinxMACSize]byte
-	copy(macSum[:], packet[SphinxCompactIDSize:SphinxCompactIDSize+SphinxMACSize])
+	macOff := SphinxNextPeerIDLenSize + SphinxNextPeerIDSize
+	macSum := packet[macOff : macOff+SphinxMACSize]
+	routing := packet[macOff+SphinxMACSize : SphinxHopLayerSize]
 
-	routing := packet[SphinxCompactIDSize+SphinxMACSize : SphinxHopLayerSize]
 	var ephPub [32]byte
 	copy(ephPub[:], routing[0:32])
-
 	log.Printf("[SPHINX] process eph_pub=%x", ephPub[:8])
+
 	var shared [32]byte
 	box.Precompute(&shared, &ephPub, &n.x25519Priv)
 	key := shared[:]
@@ -302,11 +270,11 @@ func (n *Node) processSphinxPacket(packet []byte) (peer.ID, []byte, error) {
 	ct := rest[12:]
 
 	mac := hmac.New(sha256.New, key)
-	mac.Write(cid[:])
+	mac.Write(packet[0:macOff])
 	mac.Write(routing)
 	mac.Write(nonce)
 	mac.Write(ct)
-	if !hmac.Equal(mac.Sum(nil), macSum[:]) {
+	if !hmac.Equal(mac.Sum(nil), macSum) {
 		log.Printf("[SPHINX] process MAC mismatch")
 		return "", nil, fmt.Errorf("MAC mismatch")
 	}
@@ -326,6 +294,7 @@ func (n *Node) processSphinxPacket(packet []byte) (peer.ID, []byte, error) {
 
 // extractSphinxPayload — получатель: извлекает payload.
 // Вход: [routing 152][nonce 12][ct] (финальный слой).
+// Payload: [length 4 BE][JSON][padding]. Возвращает чистый JSON.
 func (n *Node) extractSphinxPayload(packet []byte) ([]byte, error) {
 	if len(packet) < SphinxRoutingSize+12 {
 		return nil, fmt.Errorf("packet too short: %d", len(packet))
@@ -348,7 +317,14 @@ func (n *Node) extractSphinxPayload(packet []byte) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("decrypt failed: %w", err)
 	}
-	return plain, nil
+	if len(plain) < SphinxPayloadLenSize {
+		return nil, fmt.Errorf("payload too short: %d", len(plain))
+	}
+	length := int(binary.BigEndian.Uint32(plain[0:4]))
+	if length < 0 || SphinxPayloadLenSize+length > len(plain) {
+		return nil, fmt.Errorf("invalid payload length: %d", length)
+	}
+	return plain[SphinxPayloadLenSize : SphinxPayloadLenSize+length], nil
 }
 
 // sendViaSphinx — обёртка. Строит маршрут, пакет, шлёт relay1.

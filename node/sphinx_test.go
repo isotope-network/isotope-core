@@ -10,38 +10,35 @@ import (
 	"golang.org/x/crypto/nacl/box"
 )
 
-// newTestSphinxNode — минимальный Node для Sphinx-теста.
-// Без host, без contacts. Только X25519-ключи и кэш compact_id.
-func newTestSphinxNode(t *testing.T, pid peer.ID, known ...peer.ID) *Node {
+func newTestSphinxNode(t *testing.T) *Node {
 	t.Helper()
 	pub, priv, err := box.GenerateKey(cryptorand.Reader)
 	if err != nil {
 		t.Fatalf("keygen: %v", err)
 	}
-	n := &Node{
-		x25519Priv:    *priv,
-		x25519Pub:     *pub,
-		sphinxIDCache: make(map[[SphinxCompactIDSize]byte]peer.ID),
+	return &Node{
+		x25519Priv: *priv,
+		x25519Pub:  *pub,
 	}
-	n.sphinxIDCache[sphinxCompactID(pid.String())] = pid
-	for _, k := range known {
-		n.sphinxIDCache[sphinxCompactID(k.String())] = k
-	}
-	return n
 }
 
-func testPeerID(s string) peer.ID {
-	return peer.ID(s)
+func mustPeerID(t *testing.T, s string) peer.ID {
+	t.Helper()
+	id, err := peer.Decode(s)
+	if err != nil {
+		t.Fatalf("decode %q: %v", s, err)
+	}
+	return id
 }
 
 func TestSphinxRoundTrip(t *testing.T) {
-	relay1ID := testPeerID("relay1")
-	relay2ID := testPeerID("relay2")
-	recipientID := testPeerID("recipient")
+	relay1 := newTestSphinxNode(t)
+	relay2 := newTestSphinxNode(t)
+	recipient := newTestSphinxNode(t)
 
-	relay1 := newTestSphinxNode(t, relay1ID, relay2ID)
-	relay2 := newTestSphinxNode(t, relay2ID, recipientID)
-	recipient := newTestSphinxNode(t, recipientID)
+	relay1ID := mustPeerID(t, "QmY7MefUnu3GG2VLEUQNCQXTMiGTLhB6HRR3YpFHUXWHkz")
+	relay2ID := mustPeerID(t, "QmYJmBx8azsjij92qePsfGrUA4Md81NoavW9HsnY77iECE")
+	recipientID := mustPeerID(t, "QmSsz5Kd8morv19LVCk8L4FHdGZnFyMJGh5BD9k1rqMGpT")
 
 	ephPub, ephPriv, err := box.GenerateKey(cryptorand.Reader)
 	if err != nil {
@@ -87,26 +84,25 @@ func TestSphinxRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("recipient extract: %v", err)
 	}
-	if len(plain) < len(payload) {
-		t.Fatalf("payload too short: got %d, want >= %d", len(plain), len(payload))
-	}
-	if !bytes.Equal(plain[:len(payload)], payload) {
-		t.Fatalf("payload mismatch: got %q, want %q", plain[:len(payload)], payload)
+	if !bytes.Equal(plain, payload) {
+		t.Fatalf("payload mismatch: got %q, want %q", plain, payload)
 	}
 }
 
 func TestSphinxWrongMAC(t *testing.T) {
-	relay1ID := testPeerID("relay1")
-	relay2ID := testPeerID("relay2")
-	recipientID := testPeerID("recipient")
+	relay1 := newTestSphinxNode(t)
+	relay2 := newTestSphinxNode(t)
+	recipient := newTestSphinxNode(t)
 
-	relay1 := newTestSphinxNode(t, relay1ID)
+	relay1ID := mustPeerID(t, "QmY7MefUnu3GG2VLEUQNCQXTMiGTLhB6HRR3YpFHUXWHkz")
+	relay2ID := mustPeerID(t, "QmYJmBx8azsjij92qePsfGrUA4Md81NoavW9HsnY77iECE")
+	recipientID := mustPeerID(t, "QmSsz5Kd8morv19LVCk8L4FHdGZnFyMJGh5BD9k1rqMGpT")
 
 	ephPub, ephPriv, _ := box.GenerateKey(cryptorand.Reader)
 	var k1, k2, k3 [32]byte
 	box.Precompute(&k1, &relay1.x25519Pub, ephPriv)
-	box.Precompute(&k2, &relay1.x25519Pub, ephPriv)
-	box.Precompute(&k3, &relay1.x25519Pub, ephPriv)
+	box.Precompute(&k2, &relay2.x25519Pub, ephPriv)
+	box.Precompute(&k3, &recipient.x25519Pub, ephPriv)
 
 	route := &sphinxRoute{
 		Relays:        []peer.ID{relay1ID, relay2ID},
@@ -121,7 +117,8 @@ func TestSphinxWrongMAC(t *testing.T) {
 		t.Fatalf("build packet: %v", err)
 	}
 
-	packet[20] ^= 0xff
+	// Портим MAC (offset 65..97).
+	packet[70] ^= 0xff
 
 	_, _, err = relay1.processSphinxPacket(packet)
 	if err == nil {
@@ -130,17 +127,19 @@ func TestSphinxWrongMAC(t *testing.T) {
 }
 
 func TestSphinxTamperedNextHop(t *testing.T) {
-	relay1ID := testPeerID("relay1")
-	relay2ID := testPeerID("relay2")
-	recipientID := testPeerID("recipient")
+	relay1 := newTestSphinxNode(t)
+	relay2 := newTestSphinxNode(t)
+	recipient := newTestSphinxNode(t)
 
-	relay1 := newTestSphinxNode(t, relay1ID, relay2ID)
+	relay1ID := mustPeerID(t, "QmY7MefUnu3GG2VLEUQNCQXTMiGTLhB6HRR3YpFHUXWHkz")
+	relay2ID := mustPeerID(t, "QmYJmBx8azsjij92qePsfGrUA4Md81NoavW9HsnY77iECE")
+	recipientID := mustPeerID(t, "QmSsz5Kd8morv19LVCk8L4FHdGZnFyMJGh5BD9k1rqMGpT")
 
 	ephPub, ephPriv, _ := box.GenerateKey(cryptorand.Reader)
 	var k1, k2, k3 [32]byte
 	box.Precompute(&k1, &relay1.x25519Pub, ephPriv)
-	box.Precompute(&k2, &relay1.x25519Pub, ephPriv)
-	box.Precompute(&k3, &relay1.x25519Pub, ephPriv)
+	box.Precompute(&k2, &relay2.x25519Pub, ephPriv)
+	box.Precompute(&k3, &recipient.x25519Pub, ephPriv)
 
 	route := &sphinxRoute{
 		Relays:        []peer.ID{relay1ID, relay2ID},
@@ -155,11 +154,12 @@ func TestSphinxTamperedNextHop(t *testing.T) {
 		t.Fatalf("build packet: %v", err)
 	}
 
-	packet[0] ^= 0xff
+	// Портим next_hop len (первый байт) — невалидно.
+	packet[0] = 0xff
 
 	_, _, err = relay1.processSphinxPacket(packet)
 	if err == nil {
-		t.Fatalf("expected unknown next_hop error, got nil")
+		t.Fatalf("expected invalid next_hop error, got nil")
 	}
 }
 
