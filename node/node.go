@@ -1881,6 +1881,8 @@ func (n *Node) handleStream(stream network.Stream) {
 			fmt.Fprintf(s, "%s%s\n", SPHINX_PREFIX, base64.StdEncoding.EncodeToString(remainder))
 			return
 		}
+		// Не relay (или не мой слой) — пробуем как получатель.
+		log.Printf("[SPHINX] processSphinxPacket failed: %v", err)
 		plain, err := n.extractSphinxPayload(raw)
 		if err != nil {
 			log.Printf("[SPHINX] neither relay nor recipient: %v", err)

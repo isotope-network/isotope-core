@@ -209,6 +209,7 @@ func (n *Node) buildSphinxPacket(route *sphinxRoute, payload []byte, payloadSize
 	}
 
 	key := route.Keys[2]
+	log.Printf("[SPHINX] build final key[2]=%x", key[:8])
 	block, _ := aes.NewCipher(key)
 	gcm, _ := cipher.NewGCM(block)
 	nonce := make([]byte, gcm.NonceSize())
@@ -232,6 +233,7 @@ func (n *Node) buildSphinxPacket(route *sphinxRoute, payload []byte, payloadSize
 			nextPeer = route.Recipient
 		}
 		nextCID := sphinxCompactID(nextPeer.String())
+		log.Printf("[SPHINX] build layer i=%d next=%s cid=%x", i, nextPeer, nextCID[:8])
 
 		routing := make([]byte, SphinxRoutingSize)
 		copy(routing[0:32], route.Ephemeral[:])
@@ -274,10 +276,13 @@ func (n *Node) processSphinxPacket(packet []byte) (peer.ID, []byte, error) {
 
 	var cid [SphinxCompactIDSize]byte
 	copy(cid[:], packet[0:SphinxCompactIDSize])
+	log.Printf("[SPHINX] process cid=%x", cid[:8])
 	nextPeer, ok := n.sphinxLookupID(cid)
 	if !ok {
+		log.Printf("[SPHINX] process: unknown next_hop cid=%x", cid[:8])
 		return "", nil, fmt.Errorf("unknown next_hop compact_id")
 	}
+	log.Printf("[SPHINX] process next=%s", nextPeer)
 
 	var macSum [SphinxMACSize]byte
 	copy(macSum[:], packet[SphinxCompactIDSize:SphinxCompactIDSize+SphinxMACSize])
@@ -286,9 +291,11 @@ func (n *Node) processSphinxPacket(packet []byte) (peer.ID, []byte, error) {
 	var ephPub [32]byte
 	copy(ephPub[:], routing[0:32])
 
+	log.Printf("[SPHINX] process eph_pub=%x", ephPub[:8])
 	var shared [32]byte
 	box.Precompute(&shared, &ephPub, &n.x25519Priv)
 	key := shared[:]
+	log.Printf("[SPHINX] process DH=%x", key[:8])
 
 	rest := packet[SphinxHopLayerSize:]
 	nonce := rest[0:12]
@@ -300,15 +307,19 @@ func (n *Node) processSphinxPacket(packet []byte) (peer.ID, []byte, error) {
 	mac.Write(nonce)
 	mac.Write(ct)
 	if !hmac.Equal(mac.Sum(nil), macSum[:]) {
+		log.Printf("[SPHINX] process MAC mismatch")
 		return "", nil, fmt.Errorf("MAC mismatch")
 	}
+	log.Printf("[SPHINX] process MAC ok")
 
 	block, _ := aes.NewCipher(key)
 	gcm, _ := cipher.NewGCM(block)
 	plain, err := gcm.Open(nil, nonce, ct, nil)
 	if err != nil {
+		log.Printf("[SPHINX] process decrypt failed: %v", err)
 		return "", nil, fmt.Errorf("decrypt failed: %w", err)
 	}
+	log.Printf("[SPHINX] process decrypt ok len=%d", len(plain))
 
 	return nextPeer, plain, nil
 }
