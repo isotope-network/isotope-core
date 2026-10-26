@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"math"
 	mathrand "math/rand"
 	"strings"
 	"time"
@@ -420,6 +421,26 @@ func (n *Node) sendViaSphinx(msg Message) bool {
 	log.Printf("[SPHINX] sent via relay1=%s relay2=%s recipient=%s size=%d",
 		route.Relays[0], route.Relays[1], route.Recipient, len(packet))
 	return true
+}
+
+// sleepExponential — задержка с экспоненциальным распределением (mixing).
+// mean — среднее, max — потолок. math.Log(1-u) — обратное преобразование.
+// u ∈ (0, 1), чтобы log не ушёл в -Inf.
+func sleepExponential(mean, max time.Duration) {
+	u := mathrand.Float64()
+	if u >= 1.0 {
+		u = 0.999999
+	}
+	// Обратное преобразование exponential: -mean * ln(1-u).
+	delay := time.Duration(float64(mean) * -math.Log(1.0-u))
+	if delay > max {
+		delay = max
+	}
+	if delay < 0 {
+		delay = 0
+	}
+	log.Printf("[SPHINX] mixing: delay=%s", delay)
+	time.Sleep(delay)
 }
 
 // node/sphinx.go

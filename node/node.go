@@ -301,6 +301,10 @@ type Node struct {
 
 	// SPHINX (v2.0.1) — флаг.
 	useOnion bool
+
+	// MIXING (v2.0.2) — флаг. Задержки на relay.
+	// Имеет смысл только при useOnion == true.
+	mixingEnabled bool
 }
 
 // NewNode — создаёт новый узел
@@ -1868,6 +1872,14 @@ func (n *Node) handleStream(stream network.Stream) {
 		nextPeer, remainder, err := n.processSphinxPacket(raw)
 		if err == nil {
 			log.Printf("[SPHINX] relay: next=%s size=%d", nextPeer, len(remainder))
+			// Mixing (v2.0.2): экспоненциальная задержка на relay — только
+			// если пользователь включил Mixing. Скрывает тайминги.
+			n.mu.Lock()
+			mixingEnabled := n.mixingEnabled
+			n.mu.Unlock()
+			if mixingEnabled {
+				sleepExponential(5*time.Second, 30*time.Second)
+			}
 			// Только прямой (Wi-Fi) путь. Circuit (через VPS) — не Sphinx.
 			peerAddrs := n.host.Peerstore().Addrs(nextPeer)
 			if len(peerAddrs) == 0 {
@@ -3685,6 +3697,15 @@ func (n *Node) InitP2P() error {
 		log.Printf("[SPHINX] enabled (relays: %d)", len(n.selectSphinxRelays("")))
 	}
 
+	// Mixing (v2.0.2): настройка из SettingsStore.
+	// Имеет смысл только при SphinxEnabled == true (не применяется в handleStream иначе).
+	if n.settingsStore != nil {
+		n.mixingEnabled = n.settingsStore.GetMixingEnabled()
+	}
+	if n.mixingEnabled {
+		log.Printf("[MIXING] enabled")
+	}
+
 	// Воркер-пул для файловых чанков (10 воркеров).
 	// Защита от 10 700 горутин: чанки идут через chunkQueue, не через go func.
 	// На relay воркеры не запускаются: relay не отправитель, sent/ у него нет,
@@ -5357,6 +5378,28 @@ func (n *Node) GetSphinxEnabled() bool {
 	n.mu.Lock()
 	defer n.mu.Unlock()
 	return n.useOnion
+}
+
+// SetMixingEnabled — включает/выключает Mixing на лету + сохраняет в настройках.
+// Mixing применяется только при SphinxEnabled == true (см. handleStream).
+func (n *Node) SetMixingEnabled(enabled bool) error {
+	if n.settingsStore != nil {
+		if err := n.settingsStore.SetMixingEnabled(enabled); err != nil {
+			return err
+		}
+	}
+	n.mu.Lock()
+	n.mixingEnabled = enabled
+	n.mu.Unlock()
+	log.Printf("[MIXING] enabled=%v", enabled)
+	return nil
+}
+
+// GetMixingEnabled — текущее значение Mixing.
+func (n *Node) GetMixingEnabled() bool {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	return n.mixingEnabled
 }
 
 // GetContacts — возвращает все контакты.

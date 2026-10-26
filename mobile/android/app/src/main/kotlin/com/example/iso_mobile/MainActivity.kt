@@ -515,6 +515,19 @@ class MainActivity : FlutterActivity() {
                             runOnUiThread { result.success(response) }
                         }.start()
                     }
+                    "getMixingEnabled" -> {
+                        Thread {
+                            val response = Mobile.getMixingEnabled()
+                            runOnUiThread { result.success(response) }
+                        }.start()
+                    }
+                    "setMixingEnabled" -> {
+                        val enabled = call.argument<Boolean>("enabled") ?: false
+                        Thread {
+                            val response = Mobile.setMixingEnabled(enabled)
+                            runOnUiThread { result.success(response) }
+                        }.start()
+                    }
                     "updateForegroundNotification" -> {
                         val title = call.argument<String>("title") ?: "ISOTOPE"
                         val text = call.argument<String>("text") ?: "Сеть активна"

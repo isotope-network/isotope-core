@@ -648,6 +648,33 @@ class LibP2PService {
     }
   }
 
+  /// Возвращает настройку Mixing (задержки на relay, v2.0.2).
+  /// true — relay спят экспоненциально (скрывает тайминги). Медленнее.
+  /// false — relay без задержки. Дефолт false.
+  /// Имеет смысл только при SphinxEnabled == true.
+  static Future<bool> getMixingEnabled() async {
+    try {
+      final response = await _channel.invokeMethod<String>('getMixingEnabled');
+      final decoded = _safeDecode(response, fallback: '{"mixing_enabled":false}');
+      return decoded['mixing_enabled'] as bool? ?? false;
+    } on PlatformException {
+      return false;
+    }
+  }
+
+  /// Включает/выключает Mixing на лету (без перезапуска).
+  /// Сохраняется в isotope_settings.json.
+  static Future<Map<String, dynamic>> setMixingEnabled(bool enabled) async {
+    try {
+      final response = await _channel.invokeMethod<String>('setMixingEnabled', {
+        'enabled': enabled,
+      });
+      return _safeDecode(response);
+    } on PlatformException catch (e) {
+      return {'error': e.message ?? 'platform_error', 'operation': 'set_mixing_enabled'};
+    }
+  }
+
   /// Обновляет foreground-уведомление «Сеть активна» (шторка).
   /// title — заголовок (обычно «ISOTOPE»).
   /// text — строка состояния. progress — 0..100, или -1 (без прогресс-бара).

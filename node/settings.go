@@ -38,6 +38,11 @@ type Settings struct {
 	// true — сообщения идут через 2 relay + получатель (анонимность от relay).
 	// false — прямая доставка (как раньше). Дефолт false.
 	SphinxEnabled bool `json:"sphinx_enabled"`
+	// MixingEnabled — включать mixing (задержки на relay, v2.0.2).
+	// true — relay спят экспоненциально (скрывает тайминги). Медленнее.
+	// false — relay без задержки. Дефолт false.
+	// Имеет смысл только при SphinxEnabled == true (mixing без Sphinx не применяется).
+	MixingEnabled bool `json:"mixing_enabled"`
 }
 
 // SETTINGS_VERSION — текущая версия формата.
@@ -282,6 +287,25 @@ func (s *SettingsStore) SetSphinxEnabled(enabled bool) error {
 		return nil
 	}
 	s.data.SphinxEnabled = enabled
+	s.mu.Unlock()
+	return s.Save()
+}
+
+// GetMixingEnabled — включён ли mixing (задержки на relay).
+func (s *SettingsStore) GetMixingEnabled() bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.data.MixingEnabled
+}
+
+// SetMixingEnabled — включает/выключает mixing и сохраняет.
+func (s *SettingsStore) SetMixingEnabled(enabled bool) error {
+	s.mu.Lock()
+	if s.data.MixingEnabled == enabled {
+		s.mu.Unlock()
+		return nil
+	}
+	s.data.MixingEnabled = enabled
 	s.mu.Unlock()
 	return s.Save()
 }

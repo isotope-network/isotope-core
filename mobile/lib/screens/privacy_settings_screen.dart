@@ -21,6 +21,7 @@ class _PrivacySettingsScreenState extends State<PrivacySettingsScreen> {
   bool _notifNames = false;
   bool _notifProgress = false;
   bool _sphinxEnabled = false;
+  bool _mixingEnabled = false;
   bool _loading = true;
 
   @override
@@ -35,6 +36,7 @@ class _PrivacySettingsScreenState extends State<PrivacySettingsScreen> {
       final showContent = await LibP2PService.getShowNotificationContent();
       final notifSettings = await LibP2PService.getNotificationSettings();
       final sphinxEnabled = await LibP2PService.getSphinxEnabled();
+      final mixingEnabled = await LibP2PService.getMixingEnabled();
       if (mounted) {
         setState(() {
           _myReadEnabled = readEnabled;
@@ -43,6 +45,7 @@ class _PrivacySettingsScreenState extends State<PrivacySettingsScreen> {
           _notifNames = notifSettings['names'] ?? false;
           _notifProgress = notifSettings['progress'] ?? false;
           _sphinxEnabled = sphinxEnabled;
+          _mixingEnabled = mixingEnabled;
           _loading = false;
         });
       }
@@ -156,6 +159,27 @@ class _PrivacySettingsScreenState extends State<PrivacySettingsScreen> {
     }
   }
 
+  Future<void> _setMixingEnabled(bool value) async {
+    setState(() => _mixingEnabled = value);
+    try {
+      final result = await LibP2PService.setMixingEnabled(value);
+      if (result.containsKey('error')) {
+        LogService.log('PrivacySettings: setMixingEnabled failed: ${result['error']}');
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Ошибка: ${result['error']}')),
+          );
+          setState(() => _mixingEnabled = !value);
+        }
+      } else {
+        LogService.log('PrivacySettings: mixing_enabled=$value');
+      }
+    } catch (e) {
+      LogService.log('PrivacySettings: setMixingEnabled exception: $e');
+      if (mounted) setState(() => _mixingEnabled = !value);
+    }
+  }
+
   Future<void> _setShowContent(bool value) async {
     setState(() => _showNotificationContent = value);
     try {
@@ -255,6 +279,16 @@ class _PrivacySettingsScreenState extends State<PrivacySettingsScreen> {
                   ),
                   value: _sphinxEnabled,
                   onChanged: _setSphinxEnabled,
+                ),
+                SwitchListTile(
+                  title: const Text('Mixing'),
+                  subtitle: Text(
+                    _sphinxEnabled
+                        ? 'Скрывает тайминги. Relay не видит, когда пришло и ушло. Медленнее — 13–15 сек.'
+                        : 'Доступно только при включённом Sphinx.',
+                  ),
+                  value: _mixingEnabled,
+                  onChanged: _sphinxEnabled ? _setMixingEnabled : null,
                 ),
               ],
             ),

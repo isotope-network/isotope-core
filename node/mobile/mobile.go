@@ -835,6 +835,37 @@ func SetSphinxEnabled(enabled bool) string {
 	return `{"status":"ok"}`
 }
 
+// GetMixingEnabled — возвращает настройку Mixing.
+// Формат: {"mixing_enabled":true|false}.
+func GetMixingEnabled() string {
+	nodeMu.Lock()
+	defer nodeMu.Unlock()
+
+	if node == nil {
+		return `{"mixing_enabled":false}`
+	}
+	enabled := node.GetMixingEnabled()
+	if enabled {
+		return `{"mixing_enabled":true}`
+	}
+	return `{"mixing_enabled":false}`
+}
+
+// SetMixingEnabled — включает/выключает Mixing на лету + сохраняет.
+func SetMixingEnabled(enabled bool) string {
+	nodeMu.Lock()
+	defer nodeMu.Unlock()
+
+	if node == nil {
+		return errorJSON("node not started")
+	}
+	if err := node.SetMixingEnabled(enabled); err != nil {
+		return errorJSON(err.Error())
+	}
+	addLog("[SETTINGS] mixing_enabled set: %v", enabled)
+	return `{"status":"ok"}`
+}
+
 // GetMyDisplayName — возвращает представление по умолчанию.
 func GetMyDisplayName() string {
 	nodeMu.Lock()
