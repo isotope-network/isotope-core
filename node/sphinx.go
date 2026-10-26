@@ -15,9 +15,12 @@ import (
 	"io"
 	"log"
 	mathrand "math/rand"
+	"strings"
 	"time"
 
 	"github.com/libp2p/go-libp2p/core/peer"
+	"github.com/libp2p/go-libp2p/core/peerstore"
+	ma "github.com/multiformats/go-multiaddr"
 	"golang.org/x/crypto/nacl/box"
 )
 
@@ -328,6 +331,7 @@ func (n *Node) extractSphinxPayload(packet []byte) ([]byte, error) {
 }
 
 // sendViaSphinx — обёртка. Строит маршрут, пакет, шлёт relay1.
+// Только прямой (Wi-Fi) путь. Circuit (через VPS) — не Sphinx.
 // Fallback на sendToRecipient при любой ошибке.
 func (n *Node) sendViaSphinx(msg Message) bool {
 	recipient, err := peer.Decode(msg.Recipient)
@@ -360,21 +364,43 @@ func (n *Node) sendViaSphinx(msg Message) bool {
 		return false
 	}
 
-	// Диагностика: есть ли адреса relay1 в peerstore / VPS-справочнике?
+	// Только прямой (Wi-Fi) путь. Circuit (через VPS) — не Sphinx.
 	peerAddrs := n.host.Peerstore().Addrs(route.Relays[0])
-	log.Printf("[SPHINX] relay1=%s peerstore_addrs=%d", route.Relays[0], len(peerAddrs))
 	if len(peerAddrs) == 0 {
 		if addrs, ferr := n.FindPeerByID(route.Relays[0].String()); ferr == nil {
-			log.Printf("[SPHINX] FindPeerByID(%s) → %d addrs", route.Relays[0], len(addrs))
-			if len(addrs) > 0 {
-				if _, cerr := n.ConnectToPeerWithFallback(addrs); cerr != nil {
-					log.Printf("[SPHINX] ConnectToPeerWithFallback failed: %v", cerr)
-				} else {
-					log.Printf("[SPHINX] connected to relay1 %s", route.Relays[0])
+			var direct []ma.Multiaddr
+			for _, a := range addrs {
+				maAddr, perr := ma.NewMultiaddr(a)
+				if perr != nil {
+					continue
 				}
+				if strings.Contains(maAddr.String(), "/p2p-circuit") {
+					continue
+				}
+				direct = append(direct, maAddr)
 			}
+			if len(direct) == 0 {
+				log.Printf("[SPHINX] no direct addrs for relay1 %s, fallback", route.Relays[0])
+				return false
+			}
+			n.host.Peerstore().AddAddrs(route.Relays[0], direct, peerstore.TempAddrTTL)
+			log.Printf("[SPHINX] relay1=%s direct_addrs=%d", route.Relays[0], len(direct))
 		} else {
 			log.Printf("[SPHINX] FindPeerByID(%s) failed: %v", route.Relays[0], ferr)
+			return false
+		}
+	} else {
+		// В peerstore есть — проверить, что не circuit.
+		var direct []ma.Multiaddr
+		for _, a := range peerAddrs {
+			if strings.Contains(a.String(), "/p2p-circuit") {
+				continue
+			}
+			direct = append(direct, a)
+		}
+		if len(direct) == 0 {
+			log.Printf("[SPHINX] no direct addrs in peerstore for relay1 %s, fallback", route.Relays[0])
+			return false
 		}
 	}
 
