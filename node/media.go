@@ -10,7 +10,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"sync"
 	"time"
 )
 
@@ -220,8 +219,7 @@ func (n *Node) SendFileByPath(peerID, filePath, fileName string, ttlPeriod, ttlM
 // если очередь полна — ждём воркеров, не дропаем.
 // В memory — только метаданные (без base64). base64 хранится в sent/ на диске.
 func (n *Node) sendFileChunksAsync(peerID, mediaID, fileName string, fileSize int64, ttlSeconds int, ttlMode string, expiresAt time.Time) {
-	const chunkSize = 64 * 1024
-	chunkTotal := (fileSize + chunkSize - 1) / chunkSize
+	chunkTotal := (fileSize + ChunkSize - 1) / ChunkSize
 
 	// Начальный прогресс: Dart сразу покажет "Отправка 0%", не "Подготовка…".
 	n.pushFileStatus(mediaID, 0, int(chunkTotal))
@@ -238,8 +236,8 @@ func (n *Node) sendFileChunksAsync(peerID, mediaID, fileName string, fileSize in
 	myID := n.host.ID().String()
 
 	for i := 0; i < int(chunkTotal); i++ {
-		buf := make([]byte, chunkSize)
-		off := int64(i) * int64(chunkSize)
+		buf := make([]byte, ChunkSize)
+		off := int64(i) * int64(ChunkSize)
 		nr, err := src.ReadAt(buf, off)
 		if err != nil && err != io.EOF {
 			log.Printf("[FILE] ReadAt chunk %d/%d of %s failed: %v", i, chunkTotal, mediaID, err)
@@ -249,9 +247,8 @@ func (n *Node) sendFileChunksAsync(peerID, mediaID, fileName string, fileSize in
 			continue
 		}
 		chunkRaw := buf[:nr]
-		chunkB64 := base64.StdEncoding.EncodeToString(chunkRaw)
 
-		encrypted, err := n.encryptForRecipient(peerID, chunkB64)
+		encrypted, err := n.encryptBytesForRecipient(peerID, chunkRaw)
 		if err != nil {
 			log.Printf("[FILE] encrypt chunk %d/%d of %s failed: %v", i, chunkTotal, mediaID, err)
 			continue
@@ -402,124 +399,6 @@ func (n *Node) resumeFile(mediaID string) {
 		restored++
 	}
 	log.Printf("[RESUME] %s: restored %d chunks to unackedChunks", mediaID, restored)
-}
-
-// SendFile — отправляет файл. Режет на чанки по 64 КБ (сырых байтов),
-// шифрует каждый чанк отдельно, отправляет как отдельный Message
-// с MediaType="file", MediaID, ChunkIndex, ChunkTotal.
-// fileBase64 — base64 исходного файла. fileSize — размер в байтах.
-// Возвращает MediaID (не msg_id одного чанка).
-func (n *Node) SendFile(peerID, fileBase64, fileName string, fileSize int64, ttlPeriod, ttlMode string) (string, error) {
-	if n.host == nil {
-		return "", fmt.Errorf("node not started")
-	}
-	if peerID == "" {
-		return "", fmt.Errorf("peerID is required")
-	}
-	if fileBase64 == "" {
-		return "", fmt.Errorf("fileBase64 is required")
-	}
-
-	raw, err := base64.StdEncoding.DecodeString(fileBase64)
-	if err != nil {
-		return "", fmt.Errorf("base64 decode failed: %w", err)
-	}
-	if len(raw) == 0 {
-		return "", fmt.Errorf("empty file")
-	}
-
-	const chunkSize = 64 * 1024 // 64 КБ
-	chunkTotal := (len(raw) + chunkSize - 1) / chunkSize
-
-	mediaID := generateMsgID(fmt.Sprintf("file:%s:%s:%d", peerID, fileName, time.Now().UnixNano()))
-
-	ttlSeconds := parsePeriod(ttlPeriod)
-	var expiresAt time.Time
-	if ttlSeconds > 0 && ttlMode == "hard" {
-		expiresAt = time.Now().Add(time.Duration(ttlSeconds) * time.Second)
-	}
-
-	readEnabled := n.myReadEnabled
-	myID := n.host.ID().String()
-
-	// Параллельная отправка — 5 потоков. Каждый чанк шифруется
-	// и отправляется независимо. Порядок не важен: получатель
-	// собирает по ChunkIndex.
-	const maxParallel = 5
-	sem := make(chan struct{}, maxParallel)
-	var wg sync.WaitGroup
-
-	for i := 0; i < chunkTotal; i++ {
-		wg.Add(1)
-		sem <- struct{}{}
-		go func(idx int) {
-			defer wg.Done()
-			defer func() { <-sem }()
-
-			start := idx * chunkSize
-			end := start + chunkSize
-			if end > len(raw) {
-				end = len(raw)
-			}
-			chunkRaw := raw[start:end]
-			chunkB64 := base64.StdEncoding.EncodeToString(chunkRaw)
-
-			encrypted, err := n.encryptForRecipient(peerID, chunkB64)
-			if err != nil {
-				log.Printf("[FILE] encrypt chunk %d failed: %v", idx, err)
-				return
-			}
-
-			id := generateMsgID(fmt.Sprintf("file:%s:%d:%d", mediaID, idx, time.Now().UnixNano()))
-			// Mixing (v2.0.3): файловые чанки — если Sphinx + Mixing включены.
-			mixingEnabled := false
-			if n.settingsStore != nil && n.settingsStore.GetMixingEnabled() && n.useOnion {
-				mixingEnabled = true
-			}
-			msg := Message{
-				ID:               id,
-				Text:             encrypted,
-				PlainText:        chunkB64,
-				Sender:           myID,
-				Recipient:        peerID,
-				Version:          MESSAGE_VERSION_E2E,
-				Type:             TypeMessage,
-				MediaType:        "file",
-				MediaID:          mediaID,
-				ChunkIndex:       idx,
-				ChunkTotal:       chunkTotal,
-				FileName:         fileName,
-				FileSize:         fileSize,
-				TtlPeriodSeconds: ttlSeconds,
-				TtlMode:          ttlMode,
-				ReadEnabled:      &readEnabled,
-				Time:             time.Now().UTC().Format("2006-01-02T15:04:05"),
-				IsOwn:            true,
-				Weight:           0.5,
-				Priority:         0,
-				Mode:             0,
-				Score:            0,
-				ExpiresAt:        expiresAt,
-				MixingEnabled:    mixingEnabled,
-			}
-			if n.memory.Add(msg) {
-				n.setMessageStatus(id, StatusSent)
-				n.replicateMessage(msg)
-				if n.messageHook != nil {
-					data, _ := json.Marshal(msg)
-					n.messageHook(string(data))
-				}
-			} else {
-				log.Printf("[FILE] memory.Add rejected chunk %d/%d of %s", idx, chunkTotal, mediaID)
-			}
-		}(i)
-	}
-	wg.Wait()
-
-	log.Printf("[FILE] sent %s (%s, %d bytes, %d chunks) to %s",
-		mediaID, fileName, fileSize, chunkTotal, peerID)
-	go n.saveState()
-	return mediaID, nil
 }
 
 // node/media.go

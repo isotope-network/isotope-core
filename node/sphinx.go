@@ -35,8 +35,7 @@ const (
 	SphinxHopLayerSize      = SphinxNextPeerIDLenSize + SphinxNextPeerIDSize + SphinxMACSize + SphinxFlagsSize + SphinxRoutingSize // 250
 	SphinxHeaderSize        = SphinxHops * SphinxHopLayerSize                                                                      // 750
 	SphinxPayloadLenSize    = 4
-	SphinxPayloadTextSize   = 4096
-	SphinxPayloadFileSize   = 131072
+	SphinxPayloadSize       = 65536
 	SphinxTimeout           = 15 * time.Second
 
 	// SphinxFlagMixing — бит 0 флагов слоя: «relay, спи».
@@ -149,15 +148,12 @@ func (n *Node) buildSphinxRoute(recipient peer.ID) (*sphinxRoute, error) {
 // MAC считается по ciphertext (nonce || ct) — проверяется до decrypt.
 // Payload: [length 4 байта BE][JSON][random padding].
 // mixing — флаг в каждом слое (v2.0.2): relay читает и спит.
-func (n *Node) buildSphinxPacket(route *sphinxRoute, payload []byte, payloadSize int, mixing bool) ([]byte, error) {
+func (n *Node) buildSphinxPacket(route *sphinxRoute, payload []byte, mixing bool) ([]byte, error) {
 	if len(route.Keys) != SphinxHops {
 		return nil, fmt.Errorf("route keys: expected %d, got %d", SphinxHops, len(route.Keys))
 	}
-	if payloadSize != SphinxPayloadTextSize && payloadSize != SphinxPayloadFileSize {
-		return nil, fmt.Errorf("invalid payloadSize: %d", payloadSize)
-	}
-	if len(payload) > payloadSize-SphinxPayloadLenSize {
-		return nil, fmt.Errorf("payload too large: %d > %d", len(payload), payloadSize-SphinxPayloadLenSize)
+	if len(payload) > SphinxPayloadSize-SphinxPayloadLenSize {
+		return nil, fmt.Errorf("payload too large: %d > %d", len(payload), SphinxPayloadSize-SphinxPayloadLenSize)
 	}
 
 	// Финальный слой: routing + nonce + ct.
@@ -168,10 +164,10 @@ func (n *Node) buildSphinxPacket(route *sphinxRoute, payload []byte, payloadSize
 	}
 
 	// Payload с длиной: [length 4][JSON][padding].
-	payloadPadded := make([]byte, payloadSize)
+	payloadPadded := make([]byte, SphinxPayloadSize)
 	binary.BigEndian.PutUint32(payloadPadded[0:4], uint32(len(payload)))
 	copy(payloadPadded[4:], payload)
-	if len(payload)+SphinxPayloadLenSize < payloadSize {
+	if len(payload)+SphinxPayloadLenSize < SphinxPayloadSize {
 		if _, err := io.ReadFull(cryptorand.Reader, payloadPadded[len(payload)+SphinxPayloadLenSize:]); err != nil {
 			return nil, fmt.Errorf("payload padding failed: %w", err)
 		}
@@ -371,13 +367,7 @@ func (n *Node) sendViaSphinx(msg Message) bool {
 		return false
 	}
 
-	payloadSize := SphinxPayloadTextSize
-	switch msg.MediaType {
-	case "file", "voice", "photo":
-		payloadSize = SphinxPayloadFileSize
-	}
-
-	packet, err := n.buildSphinxPacket(route, payload, payloadSize, msg.MixingEnabled)
+	packet, err := n.buildSphinxPacket(route, payload, msg.MixingEnabled)
 	if err != nil {
 		log.Printf("[SPHINX] build packet failed: %v", err)
 		return false

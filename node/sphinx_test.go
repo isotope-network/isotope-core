@@ -59,7 +59,7 @@ func TestSphinxRoundTrip(t *testing.T) {
 	}
 
 	payload := []byte(`{"id":"msg1","text":"hello sphinx"}`)
-	packet, err := relay1.buildSphinxPacket(route, payload, SphinxPayloadTextSize, true)
+	packet, err := relay1.buildSphinxPacket(route, payload, true)
 	if err != nil {
 		t.Fatalf("build packet: %v", err)
 	}
@@ -122,7 +122,7 @@ func TestSphinxNoMixingFlag(t *testing.T) {
 		Keys:          [][]byte{k1[:], k2[:], k3[:]},
 	}
 
-	packet, err := relay1.buildSphinxPacket(route, []byte("x"), SphinxPayloadTextSize, false)
+	packet, err := relay1.buildSphinxPacket(route, []byte("x"), false)
 	if err != nil {
 		t.Fatalf("build packet: %v", err)
 	}
@@ -159,7 +159,7 @@ func TestSphinxWrongMAC(t *testing.T) {
 		Keys:          [][]byte{k1[:], k2[:], k3[:]},
 	}
 
-	packet, err := relay1.buildSphinxPacket(route, []byte("x"), SphinxPayloadTextSize, false)
+	packet, err := relay1.buildSphinxPacket(route, []byte("x"), false)
 	if err != nil {
 		t.Fatalf("build packet: %v", err)
 	}
@@ -196,7 +196,7 @@ func TestSphinxTamperedNextHop(t *testing.T) {
 		Keys:          [][]byte{k1[:], k2[:], k3[:]},
 	}
 
-	packet, err := relay1.buildSphinxPacket(route, []byte("x"), SphinxPayloadTextSize, false)
+	packet, err := relay1.buildSphinxPacket(route, []byte("x"), false)
 	if err != nil {
 		t.Fatalf("build packet: %v", err)
 	}

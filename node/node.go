@@ -66,6 +66,11 @@ const ANNOUNCE_TTL = 8 * time.Minute
 // 10 — проверено. При 15+ узлах — можно увеличить.
 const SendSemaphoreCapacity = 10
 
+// ChunkSize — размер файлового чанка в байтах (v2.0.4 a+b).
+// 47 КБ raw → box.Seal (+40) → base64 (×1.33) ≈ 62.9 КБ < 64 КБ payload.
+// Было 64 КБ (double base64 — 117 КБ, payload 128 КБ).
+const ChunkSize = 47 * 1024
+
 // E2E_VERSION — версия формата QR-обмена E2E-ключами.
 // 0 — старый формат (только PeerID). 1 — JSON с ключами.
 const E2E_VERSION = 1
@@ -694,6 +699,77 @@ func (n *Node) encryptForRecipient(recipient, text string) (string, error) {
 	return base64.StdEncoding.EncodeToString(payload), nil
 }
 
+// encryptBytesForRecipient — шифрует raw bytes для получателя.
+// v2.0.4 a+b: файловые чанки — raw bytes → box.Seal → base64 ОДИН раз.
+// Было: base64(chunk) → box.Seal → base64 (double base64, 117 КБ).
+// Стало: raw → box.Seal → base64 (87 КБ на проводе, payload 64 КБ).
+func (n *Node) encryptBytesForRecipient(recipient string, data []byte) (string, error) {
+	if n.contacts == nil {
+		return "", fmt.Errorf("contacts store not initialized")
+	}
+	if len(data) == 0 {
+		return "", fmt.Errorf("empty data")
+	}
+	contact, ok := n.contacts.Get(recipient)
+	if !ok {
+		return "", fmt.Errorf("contact not found: %s", recipient)
+	}
+	if contact.X25519Pub == "" {
+		return "", fmt.Errorf("contact has no E2E key: %s", recipient)
+	}
+	recipientPubBytes, err := base64.StdEncoding.DecodeString(contact.X25519Pub)
+	if err != nil || len(recipientPubBytes) != 32 {
+		return "", fmt.Errorf("invalid x25519_pub for %s", recipient)
+	}
+	var recipientPub [32]byte
+	copy(recipientPub[:], recipientPubBytes)
+	var nonce [24]byte
+	if _, err := cryptorand.Read(nonce[:]); err != nil {
+		return "", fmt.Errorf("nonce generation failed: %w", err)
+	}
+	ciphertext := box.Seal(nil, data, &nonce, &recipientPub, &n.x25519Priv)
+	payload := append(nonce[:], ciphertext...)
+	return base64.StdEncoding.EncodeToString(payload), nil
+}
+
+// decryptBytesFromSender — расшифровывает payload в raw bytes.
+// v2.0.4 a+b: файловые чанки — base64 → box.Open → raw bytes.
+// Границы: пустой payload, невалидный base64, box.Open провал — ошибка (не паника).
+func (n *Node) decryptBytesFromSender(sender, payload string) ([]byte, error) {
+	if n.contacts == nil {
+		return nil, fmt.Errorf("contacts store not initialized")
+	}
+	if payload == "" {
+		return nil, fmt.Errorf("empty payload from %s", sender)
+	}
+	contact, ok := n.GetContactTemp(sender)
+	if !ok {
+		return nil, fmt.Errorf("contact not found: %s", sender)
+	}
+	if contact.X25519Pub == "" {
+		return nil, fmt.Errorf("contact has no E2E key: %s", sender)
+	}
+	senderPubBytes, err := base64.StdEncoding.DecodeString(contact.X25519Pub)
+	if err != nil || len(senderPubBytes) != 32 {
+		return nil, fmt.Errorf("invalid x25519_pub for %s", sender)
+	}
+	var senderPub [32]byte
+	copy(senderPub[:], senderPubBytes)
+	raw, err := base64.StdEncoding.DecodeString(payload)
+	if err != nil || len(raw) < 24 {
+		return nil, fmt.Errorf("invalid payload from %s", sender)
+	}
+	var nonce [24]byte
+	copy(nonce[:], raw[:24])
+	ciphertext := raw[24:]
+	plaintext, ok := box.Open(nil, ciphertext, &nonce, &senderPub, &n.x25519Priv)
+	if !ok {
+		log.Printf("[E2E] decrypt failed for %s", sender)
+		return nil, fmt.Errorf("decryption failed for %s", sender)
+	}
+	return plaintext, nil
+}
+
 // decryptFromSender — расшифровывает payload от отправителя.
 // payload — base64(nonce(24) || ciphertext).
 func (n *Node) decryptFromSender(sender, payload string) (string, error) {
@@ -980,9 +1056,8 @@ func (n *Node) fillFileChunkFromSent(msg *Message) error {
 	}
 	defer f.Close()
 
-	const chunkSize = 64 * 1024
-	buf := make([]byte, chunkSize)
-	off := int64(msg.ChunkIndex) * int64(chunkSize)
+	buf := make([]byte, ChunkSize)
+	off := int64(msg.ChunkIndex) * int64(ChunkSize)
 	nr, err := f.ReadAt(buf, off)
 	if err != nil && err != io.EOF {
 		return fmt.Errorf("ReadAt failed: %w", err)
@@ -990,13 +1065,12 @@ func (n *Node) fillFileChunkFromSent(msg *Message) error {
 	if nr == 0 {
 		return fmt.Errorf("empty chunk")
 	}
-	chunkB64 := base64.StdEncoding.EncodeToString(buf[:nr])
 
-	encrypted, err := n.encryptForRecipient(msg.Recipient, chunkB64)
+	encrypted, err := n.encryptBytesForRecipient(msg.Recipient, buf[:nr])
 	if err != nil {
 		return fmt.Errorf("encrypt failed: %w", err)
 	}
-	msg.PlainText = chunkB64
+	msg.PlainText = base64.StdEncoding.EncodeToString(buf[:nr])
 	msg.Text = encrypted
 	return nil
 }
@@ -1998,12 +2072,21 @@ func (n *Node) handleStream(stream network.Stream) {
 				myID := n.host.ID().String()
 				if replicaMsg.Recipient == myID {
 					// Нам — расшифровываем.
-					plaintext, err := n.decryptFromSender(replicaMsg.Sender, replicaMsg.Text)
-					if err != nil {
-						log.Printf("[REPLICA] decrypt failed from %s: %v", replicaMsg.Sender, err)
-						return
+					if replicaMsg.MediaType == "file" && replicaMsg.ChunkTotal > 0 {
+						raw, err := n.decryptBytesFromSender(replicaMsg.Sender, replicaMsg.Text)
+						if err != nil {
+							log.Printf("[REPLICA] decrypt bytes failed from %s: %v", replicaMsg.Sender, err)
+							return
+						}
+						replicaMsg.Text = base64.StdEncoding.EncodeToString(raw)
+					} else {
+						plaintext, err := n.decryptFromSender(replicaMsg.Sender, replicaMsg.Text)
+						if err != nil {
+							log.Printf("[REPLICA] decrypt failed from %s: %v", replicaMsg.Sender, err)
+							return
+						}
+						replicaMsg.Text = plaintext
 					}
-					replicaMsg.Text = plaintext
 					replicaMsg.SenderName = n.nameForPeer(replicaMsg.Sender)
 					added := n.memory.Add(replicaMsg)
 					if added {
@@ -2182,12 +2265,21 @@ func (n *Node) handleStream(stream network.Stream) {
 // memory.Add, hook, [DELIVERED].
 func (n *Node) handleSphinxReplicaMsg(replicaMsg Message) {
 	if replicaMsg.Version == MESSAGE_VERSION_E2E {
-		plaintext, err := n.decryptFromSender(replicaMsg.Sender, replicaMsg.Text)
-		if err != nil {
-			log.Printf("[SPHINX] decrypt failed from %s: %v", replicaMsg.Sender, err)
-			return
+		if replicaMsg.MediaType == "file" && replicaMsg.ChunkTotal > 0 {
+			raw, err := n.decryptBytesFromSender(replicaMsg.Sender, replicaMsg.Text)
+			if err != nil {
+				log.Printf("[SPHINX] decrypt bytes failed from %s: %v", replicaMsg.Sender, err)
+				return
+			}
+			replicaMsg.Text = base64.StdEncoding.EncodeToString(raw)
+		} else {
+			plaintext, err := n.decryptFromSender(replicaMsg.Sender, replicaMsg.Text)
+			if err != nil {
+				log.Printf("[SPHINX] decrypt failed from %s: %v", replicaMsg.Sender, err)
+				return
+			}
+			replicaMsg.Text = plaintext
 		}
-		replicaMsg.Text = plaintext
 	}
 	replicaMsg.SenderName = n.nameForPeer(replicaMsg.Sender)
 	replicaMsg.ReplicatedAt = time.Now()
