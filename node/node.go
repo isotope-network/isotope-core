@@ -340,7 +340,7 @@ func NewNode(cfg Config) *Node {
 		myReadEnabled:           true,
 		sendSem:                 make(chan struct{}, SendSemaphoreCapacity),
 		mixingSem:               make(chan struct{}, 5),
-		sphinxFileSem:           make(chan struct{}, 3),
+		sphinxFileSem:           make(chan struct{}, 2),
 		chunkQueue:              make(chan Message, 1000),
 		unackedChunks:           make(map[string]retryInfo),
 		fileStatusLastPush:      make(map[string]time.Time),
@@ -1441,7 +1441,7 @@ func (n *Node) sendReplicaToPeer(targetID peer.ID, data []byte, isFileChunk bool
 		log.Printf("[REPLICA] sendReplicaToPeer target=%s me=%s data=%s", targetID, myID, msgPreview)
 		randomDelay(10, 30)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	s, err := n.host.NewStream(ctx, targetID, protocolID)
 	if err != nil {
@@ -1491,7 +1491,7 @@ func (n *Node) sendServiceViaBootstrap(msg Message) error {
 			continue
 		}
 
-		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		s, err := n.host.NewStream(ctx, pi.ID, protocolID)
 		if err != nil {
 			cancel()
@@ -4650,10 +4650,10 @@ func (n *Node) sendConfirmation(msgType MessageType, ref, recipient string) erro
 		return err
 	}
 
-	// Один путь — sendToRecipient (tryDirectSend + fallback).
-	// Дублирование убрано: sendToRecipient сам делает direct и fallback.
-	if n.sendToRecipient(msg, data, false) {
-		log.Printf("[CONFIRM] %s ref=%s to %s (via sendToRecipient)", msgTypeString(msgType), ref, recipient)
+	// [DELIVERED]/[READ] — сервисные. Сразу fallback (relay → bootstrap),
+	// без tryDirectSend (3 сек timeout при нагрузке Huawei — бесполезно).
+	if n.fallbackSend(recipient, data, false) {
+		log.Printf("[CONFIRM] %s ref=%s to %s (via fallback)", msgTypeString(msgType), ref, recipient)
 		return nil
 	}
 	return fmt.Errorf("no route for confirmation")
