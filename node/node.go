@@ -3350,6 +3350,13 @@ func (n *Node) replicateMessage(msg Message) {
 	// B3: isFileChunk — файловый чанк. Пробрасываем вниз,
 	// чтобы sendReplicaToPeer не делал randomDelay для чанков.
 	isFileChunk := msg.MediaType == "file" && msg.ChunkTotal > 0
+	// v2.0.4 c: тексты — в батч (до обнуления PlainText).
+	// PlainText — открытый текст (Text — E2E-шифрованный, не шифровать повторно).
+	isTextForSphinxBatch := (msg.MediaType == "" || msg.MediaType == "text") && msg.Recipient != ""
+	if isTextForSphinxBatch && n.useOnion && !n.isRelay {
+		n.addToBatch(msg.Recipient, msg.ID, msg.PlainText)
+		return
+	}
 	msg.ReplicatedFrom = msg.Sender
 	msg.IsOwn = false
 	// PlainText — открытый текст. Получатель расшифрует Text сам.
@@ -3361,13 +3368,6 @@ func (n *Node) replicateMessage(msg Message) {
 	}
 
 	if msg.Recipient != "" {
-		// v2.0.4 c: тексты — в батч (10 текстов = 1 Sphinx-пакет).
-		// Только адресные (Recipient != ""), только Sphinx, только текст.
-		isTextForSphinxBatch := (msg.MediaType == "" || msg.MediaType == "text") && msg.Recipient != ""
-		if isTextForSphinxBatch && n.useOnion && !n.isRelay {
-			n.addToBatch(msg.Recipient, msg.ID, msg.Text)
-			return
-		}
 		// Sphinx (v2.0.1): если включён — пробуем через onion.
 		// При ошибке — fallback на sendToRecipient (доставка важнее).
 		if n.useOnion && !n.isRelay && !isFileChunk {
