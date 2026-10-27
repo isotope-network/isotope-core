@@ -252,6 +252,10 @@ type Node struct {
 	// Не перегружать relay: 5 параллельных Sphinx-пакетов.
 	mixingSem chan struct{}
 
+	// sphinxFileSem — семафор для Sphinx-файлов (3 одновременно).
+	// Корень: Samsung не успевает (114 МБ, нагрузка). 3 — меньше.
+	sphinxFileSem chan struct{}
+
 	// chunkQueue — очередь файловых чанков для воркер-пула.
 	// Файловые чанки не создают горутину на каждый чанк (было 10 700 горутин
 	// → 4.5 ГБ heap). Вместо этого — очередь + 10 воркеров.
@@ -336,6 +340,7 @@ func NewNode(cfg Config) *Node {
 		myReadEnabled:           true,
 		sendSem:                 make(chan struct{}, SendSemaphoreCapacity),
 		mixingSem:               make(chan struct{}, 5),
+		sphinxFileSem:           make(chan struct{}, 3),
 		chunkQueue:              make(chan Message, 1000),
 		unackedChunks:           make(map[string]retryInfo),
 		fileStatusLastPush:      make(map[string]time.Time),
@@ -1233,14 +1238,14 @@ func (n *Node) chunkWorker() {
 		n.unackedChunksMu.Unlock()
 
 		// Mixing (v2.0.3): файловые чанки через Sphinx — если включён.
-		// Семафор на 5 — не перегружать relay (5 параллельных Sphinx-пакетов).
+		// Семафор 3 (sphinxFileSem) — Samsung не успевает при 5.
 		if msg.MixingEnabled {
-			n.mixingSem <- struct{}{}
+			n.sphinxFileSem <- struct{}{}
 			if n.sendViaSphinx(msg) {
-				<-n.mixingSem
+				<-n.sphinxFileSem
 				continue
 			}
-			<-n.mixingSem
+			<-n.sphinxFileSem
 			log.Printf("[CHUNK] sphinx failed for %s[%d], fallback to direct", msg.MediaID, msg.ChunkIndex)
 		}
 		n.sendToRecipient(msg, data, true)

@@ -37,7 +37,7 @@ const (
 	SphinxPayloadLenSize    = 4
 	SphinxPayloadTextSize   = 4096
 	SphinxPayloadFileSize   = 131072
-	SphinxTimeout           = 5 * time.Second
+	SphinxTimeout           = 15 * time.Second
 
 	// SphinxFlagMixing — бит 0 флагов слоя: «relay, спи».
 	SphinxFlagMixing uint8 = 1 << 0
@@ -431,6 +431,9 @@ func (n *Node) sendViaSphinx(msg Message) bool {
 		return false
 	}
 	defer s.Close()
+	// Write deadline (v2.0.3): 128 КБ write — дольше 15 сек (Samsung нагрузка).
+	// 30 сек — не висит бесконечно.
+	s.SetWriteDeadline(time.Now().Add(30 * time.Second))
 	if _, err := fmt.Fprintf(s, "%s%s\n", SPHINX_PREFIX, base64.StdEncoding.EncodeToString(packet)); err != nil {
 		log.Printf("[SPHINX] write failed: %v", err)
 		return false
