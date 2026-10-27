@@ -268,6 +268,12 @@ type Node struct {
 	// SendFileByPath работает в своей горутине.
 	chunkQueue chan Message
 
+	// batchBuffers — буферы текстов для батча (v2.0.4 c).
+	// Ключ — PeerID получателя. 10 текстов = 1 Sphinx-пакет 64 КБ.
+	// Трафик ×1.4 вместо ×14. Без батча — LTE смерть.
+	batchBuffers   map[string]*batchBuffer
+	batchBuffersMu sync.Mutex
+
 	// unackedChunks — чанки, отправленные, но не подтверждённые [DELIVERED].
 	// Через 30 сек без ack — переотправка (до 3 попыток).
 	// Защита от потери чанков в сети (Wi-Fi).
@@ -355,6 +361,7 @@ func NewNode(cfg Config) *Node {
 		pendingDeliveredTimers:  make(map[string]*time.Timer),
 		completedFiles:          make(map[string]bool),
 		pendingHookAcks:         make(map[string]*hookAckWindow),
+		batchBuffers:            make(map[string]*batchBuffer),
 		useOnion:                cfg.UseOnion,
 	}
 }
@@ -1272,6 +1279,134 @@ func (n *Node) fallbackSend(recipient string, data []byte, isFileChunk bool) boo
 	return false
 }
 
+// batchBuffer — буфер текстов для одного получателя (v2.0.4 c).
+// Тексты копятся до 10 или 1 сек или 60 КБ → один Sphinx-пакет.
+type batchBuffer struct {
+	Texts []batchText
+}
+
+// batchText — один текст в батче. ID — отправителя (для [DELIVERED]).
+type batchText struct {
+	ID   string `json:"id"`
+	Text string `json:"text"`
+}
+
+// estimateBatchJSONSize — приблизительный размер JSON для лимита 60 КБ.
+// Точность не критична (запас 4 КБ до payload 64 КБ).
+func estimateBatchJSONSize(texts []batchText) int {
+	size := 20
+	for _, t := range texts {
+		size += len(t.ID) + len(t.Text) + 30
+	}
+	return size
+}
+
+// addToBatch — добавляет текст в буфер получателя (v2.0.4 c).
+// Лимит 60 КБ — если превысит, flush текущий, новый буфер.
+// 10 текстов — flush немедленно. Без рекурсии.
+func (n *Node) addToBatch(peerID, textID, text string) {
+	if peerID == "" || textID == "" {
+		return
+	}
+	n.batchBuffersMu.Lock()
+	buf := n.batchBuffers[peerID]
+	if buf == nil {
+		buf = &batchBuffer{}
+		n.batchBuffers[peerID] = buf
+	}
+	if len(buf.Texts) > 0 && estimateBatchJSONSize(buf.Texts)+len(textID)+len(text)+30 > 60*1024 {
+		texts := buf.Texts
+		buf.Texts = nil
+		n.batchBuffersMu.Unlock()
+		go n.flushBatch(peerID, texts)
+		n.batchBuffersMu.Lock()
+		n.batchBuffers[peerID] = &batchBuffer{Texts: []batchText{{ID: textID, Text: text}}}
+		n.batchBuffersMu.Unlock()
+		return
+	}
+	buf.Texts = append(buf.Texts, batchText{ID: textID, Text: text})
+	needFlush := len(buf.Texts) >= 10
+	if needFlush {
+		texts := buf.Texts
+		buf.Texts = nil
+		n.batchBuffersMu.Unlock()
+		go n.flushBatch(peerID, texts)
+		return
+	}
+	n.batchBuffersMu.Unlock()
+}
+
+// flushBatch — собирает JSON {"texts":[{"id":"...","text":"..."}]},
+// шифрует E2E, отправляет одним Sphinx-пакетом (MediaType="batch").
+func (n *Node) flushBatch(peerID string, texts []batchText) {
+	if peerID == "" || len(texts) == 0 {
+		return
+	}
+	batchJSON, err := json.Marshal(map[string]interface{}{"texts": texts})
+	if err != nil {
+		log.Printf("[BATCH] marshal failed: %v", err)
+		return
+	}
+	encrypted, err := n.encryptForRecipient(peerID, string(batchJSON))
+	if err != nil {
+		log.Printf("[BATCH] encrypt failed: %v", err)
+		return
+	}
+	id := generateMsgID(fmt.Sprintf("batch:%s:%d", peerID, time.Now().UnixNano()))
+	readEnabled := n.myReadEnabled
+	msg := Message{
+		ID:          id,
+		Text:        encrypted,
+		Sender:      n.host.ID().String(),
+		Recipient:   peerID,
+		Version:     MESSAGE_VERSION_E2E,
+		Type:        TypeMessage,
+		MediaType:   "batch",
+		Time:        time.Now().UTC().Format("2006-01-02T15:04:05"),
+		IsOwn:       true,
+		Weight:      0.5,
+		ReadEnabled: &readEnabled,
+	}
+	n.unackedChunksMu.Lock()
+	for _, t := range texts {
+		n.unackedChunks[t.ID] = retryInfo{
+			msgID:     t.ID,
+			recipient: peerID,
+			lastSent:  time.Now(),
+		}
+	}
+	n.unackedChunksMu.Unlock()
+	if n.sendViaSphinx(msg) {
+		log.Printf("[BATCH] sent %d texts to %s (size=%d)", len(texts), peerID, len(batchJSON))
+		return
+	}
+	log.Printf("[BATCH] sphinx failed for %s, fallback", peerID)
+	data, _ := json.Marshal(msg)
+	n.sendToRecipient(msg, data, false)
+}
+
+// flushAllBatches — тикер 1 сек: flush все непустые буферы.
+// go flushBatch — не блокировать тикер.
+func (n *Node) flushAllBatches() {
+	n.batchBuffersMu.Lock()
+	type item struct {
+		peerID string
+		texts  []batchText
+	}
+	var items []item
+	for peerID, buf := range n.batchBuffers {
+		if len(buf.Texts) == 0 {
+			continue
+		}
+		items = append(items, item{peerID: peerID, texts: buf.Texts})
+		buf.Texts = nil
+	}
+	n.batchBuffersMu.Unlock()
+	for _, it := range items {
+		go n.flushBatch(it.peerID, it.texts)
+	}
+}
+
 // chunkWorker — воркер отправки файловых чанков.
 // Читает из chunkQueue, маршалит, отправляет через sendToRecipient.
 // 10 воркеров запускаются в InitP2P.
@@ -2071,6 +2206,49 @@ func (n *Node) handleStream(stream network.Stream) {
 			if replicaMsg.Version == MESSAGE_VERSION_E2E {
 				myID := n.host.ID().String()
 				if replicaMsg.Recipient == myID {
+					// v2.0.4 c: батч текстов — decrypt, JSON, разбор, ack.
+					if replicaMsg.MediaType == "batch" {
+						plaintext, err := n.decryptFromSender(replicaMsg.Sender, replicaMsg.Text)
+						if err != nil {
+							log.Printf("[BATCH] decrypt failed from %s: %v", replicaMsg.Sender, err)
+							return
+						}
+						var batch struct {
+							Texts []struct {
+								ID   string `json:"id"`
+								Text string `json:"text"`
+							} `json:"texts"`
+						}
+						if err := json.Unmarshal([]byte(plaintext), &batch); err != nil {
+							log.Printf("[BATCH] parse failed from %s: %v", replicaMsg.Sender, err)
+							return
+						}
+						senderName := n.nameForPeer(replicaMsg.Sender)
+						for _, t := range batch.Texts {
+							msg := Message{
+								ID:           t.ID,
+								Text:         t.Text,
+								Sender:       replicaMsg.Sender,
+								SenderName:   senderName,
+								Recipient:    replicaMsg.Recipient,
+								Type:         TypeMessage,
+								MediaType:    "text",
+								Version:      MESSAGE_VERSION_E2E,
+								Time:         time.Now().UTC().Format("2006-01-02T15:04:05"),
+								IsOwn:        false,
+								Weight:       0.5,
+								ReplicatedAt: time.Now(),
+							}
+							if n.memory.Add(msg) {
+								if n.messageHook != nil {
+									data, _ := json.Marshal(msg)
+									n.messageHook(string(data))
+								}
+							}
+							n.queueDelivered(replicaMsg.Sender, t.ID)
+						}
+						return
+					}
 					// Нам — расшифровываем.
 					if replicaMsg.MediaType == "file" && replicaMsg.ChunkTotal > 0 {
 						raw, err := n.decryptBytesFromSender(replicaMsg.Sender, replicaMsg.Text)
@@ -2265,6 +2443,48 @@ func (n *Node) handleStream(stream network.Stream) {
 // memory.Add, hook, [DELIVERED].
 func (n *Node) handleSphinxReplicaMsg(replicaMsg Message) {
 	if replicaMsg.Version == MESSAGE_VERSION_E2E {
+		if replicaMsg.MediaType == "batch" {
+			plaintext, err := n.decryptFromSender(replicaMsg.Sender, replicaMsg.Text)
+			if err != nil {
+				log.Printf("[SPHINX] batch decrypt failed from %s: %v", replicaMsg.Sender, err)
+				return
+			}
+			var batch struct {
+				Texts []struct {
+					ID   string `json:"id"`
+					Text string `json:"text"`
+				} `json:"texts"`
+			}
+			if err := json.Unmarshal([]byte(plaintext), &batch); err != nil {
+				log.Printf("[SPHINX] batch parse failed from %s: %v", replicaMsg.Sender, err)
+				return
+			}
+			senderName := n.nameForPeer(replicaMsg.Sender)
+			for _, t := range batch.Texts {
+				msg := Message{
+					ID:           t.ID,
+					Text:         t.Text,
+					Sender:       replicaMsg.Sender,
+					SenderName:   senderName,
+					Recipient:    replicaMsg.Recipient,
+					Type:         TypeMessage,
+					MediaType:    "text",
+					Version:      MESSAGE_VERSION_E2E,
+					Time:         time.Now().UTC().Format("2006-01-02T15:04:05"),
+					IsOwn:        false,
+					Weight:       0.5,
+					ReplicatedAt: time.Now(),
+				}
+				if n.memory.Add(msg) {
+					if n.messageHook != nil {
+						data, _ := json.Marshal(msg)
+						n.messageHook(string(data))
+					}
+				}
+				n.queueDelivered(replicaMsg.Sender, t.ID)
+			}
+			return
+		}
 		if replicaMsg.MediaType == "file" && replicaMsg.ChunkTotal > 0 {
 			raw, err := n.decryptBytesFromSender(replicaMsg.Sender, replicaMsg.Text)
 			if err != nil {
@@ -3141,6 +3361,13 @@ func (n *Node) replicateMessage(msg Message) {
 	}
 
 	if msg.Recipient != "" {
+		// v2.0.4 c: тексты — в батч (10 текстов = 1 Sphinx-пакет).
+		// Только адресные (Recipient != ""), только Sphinx, только текст.
+		isTextForSphinxBatch := (msg.MediaType == "" || msg.MediaType == "text") && msg.Recipient != ""
+		if isTextForSphinxBatch && n.useOnion && !n.isRelay {
+			n.addToBatch(msg.Recipient, msg.ID, msg.Text)
+			return
+		}
 		// Sphinx (v2.0.1): если включён — пробуем через onion.
 		// При ошибке — fallback на sendToRecipient (доставка важнее).
 		if n.useOnion && !n.isRelay && !isFileChunk {
@@ -3828,6 +4055,13 @@ func (n *Node) InitP2P() error {
 			go n.chunkWorker()
 		}
 		n.retryLoop()
+		go func() {
+			ticker := time.NewTicker(1 * time.Second)
+			defer ticker.Stop()
+			for range ticker.C {
+				n.flushAllBatches()
+			}
+		}()
 	}
 
 	n.pingPeers()
