@@ -516,6 +516,11 @@ class MainActivity : FlutterActivity() {
                             runOnUiThread { result.success(response) }
                         }.start()
                     }
+                    "isScreenOn" -> {
+                        val pm = getSystemService(Context.POWER_SERVICE) as android.os.PowerManager
+                        val screenOn = pm.isInteractive
+                        result.success(screenOn)
+                    }
                     "getMaskingEnabled" -> {
                         Thread {
                             val response = Mobile.getMaskingEnabled()

@@ -869,6 +869,19 @@ func SetMaskingEnabled(enabled bool) string {
 	return `{"status":"ok"}`
 }
 
+// SetDummyScreenOn — передаёт Go состояние экрана (v2.0.4 d.1.1).
+// true — экран включён (dummy 10–120 сек). false — выключен (×5, 50–600 сек).
+func SetDummyScreenOn(screenOn bool) string {
+	nodeMu.Lock()
+	defer nodeMu.Unlock()
+
+	if node == nil {
+		return errorJSON("node not started")
+	}
+	node.SetDummyScreenOn(screenOn)
+	return `{"status":"ok"}`
+}
+
 // GetMyDisplayName — возвращает представление по умолчанию.
 func GetMyDisplayName() string {
 	nodeMu.Lock()

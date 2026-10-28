@@ -25,11 +25,6 @@ class LibP2PService {
     }
   }
 
-  static Future<String> _getStateFilePath() async {
-    final filesDir = await _channel.invokeMethod<String>('getFilesDir');
-    return '$filesDir/isotope_state.json';
-  }
-
   /// Возвращает filesDir Android (тот же, что использует Go-ядро).
   /// Нужен MediaStorage — чтобы files/ совпадал с Go files/.
   static Future<String> getFilesDir() async {
@@ -648,6 +643,17 @@ class LibP2PService {
     }
   }
 
+  /// Возвращает true, если экран включён (v2.0.4 d.1.1).
+  /// Используется для оптимизации dummy в фоне (интервал ×5).
+  static Future<bool> isScreenOn() async {
+    try {
+      final response = await _channel.invokeMethod<bool>('isScreenOn');
+      return response ?? true;
+    } on PlatformException {
+      return true;
+    }
+  }
+
   /// Возвращает настройку dummy-трафика (v2.0.4 d).
   /// true — отправитель шлёт пустой Sphinx-пакет каждые 60 сек.
   /// false — без dummy. Дефолт false.
@@ -671,6 +677,18 @@ class LibP2PService {
       return _safeDecode(response);
     } on PlatformException catch (e) {
       return {'error': e.message ?? 'platform_error', 'operation': 'set_masking_enabled'};
+    }
+  }
+
+  /// Передаёт Go состояние экрана (v2.0.4 d.1.1).
+  /// true — экран включён (dummy 10–120 сек). false — выключен (×5).
+  static Future<void> setDummyScreenOn(bool screenOn) async {
+    try {
+      await _channel.invokeMethod<String>('setDummyScreenOn', {
+        'screenOn': screenOn,
+      });
+    } on PlatformException {
+      // Тихо — не критично.
     }
   }
 

@@ -85,8 +85,6 @@ class ChatProvider extends ChangeNotifier {
   // Статус файла по mediaID (1=sent, 2=delivered, 3=hidden, 4=read).
   // Источник — GetFileStatuses (Go). Один на файл, не на чанк.
   final Map<String, int> _fileStatuses = {};
-  // ID последнего чанка файла (для [READ]). Источник — GetFileStatuses (Go).
-  final Map<String, String> _fileLastChunkId = {};
 
   // ==== FOREGROUND NOTIFICATION (шторка) ====
   // Настройки из Go: показывать количество / имена / прогресс.
@@ -806,6 +804,15 @@ class ChatProvider extends ChangeNotifier {
       _libp2pAvailable = true;
       LogService.log('libp2p: запущен успешно');
 
+      // v2.0.4 d.1.1: передаём Go состояние экрана (dummy ×5 в фоне).
+      try {
+        final screenOn = await LibP2PService.isScreenOn();
+        await LibP2PService.setDummyScreenOn(screenOn);
+        _startScreenOnTimer();
+      } catch (e) {
+        LogService.log('libp2p: setDummyScreenOn failed: $e');
+      }
+
       final status = await LibP2PService.getStatus();
       _libp2pPeerId = status['id'] ?? '';
       LogService.log('libp2p: PeerID=$_libp2pPeerId');
@@ -863,11 +870,7 @@ class ChatProvider extends ChangeNotifier {
         if (item is! Map) continue;
         final mediaID = item['media_id'] as String? ?? '';
         final status = (item['status'] as num?)?.toInt() ?? 0;
-        final lastChunkId = item['last_chunk_id'] as String? ?? '';
         if (mediaID.isEmpty || status <= 0) continue;
-        if (lastChunkId.isNotEmpty) {
-          _fileLastChunkId[mediaID] = lastChunkId;
-        }
         final prev = _fileStatuses[mediaID] ?? 0;
         if (status > prev) {
           _fileStatuses[mediaID] = status;
@@ -879,6 +882,19 @@ class ChatProvider extends ChangeNotifier {
   }
 
   Timer? _purgeTimer;
+  Timer? _screenOnTimer;
+
+  /// v2.0.4 d.1.1: периодически проверяет screenOn → setDummyScreenOn.
+  /// Экран включился/выключился — Go меняет интервал dummy (×5 в фоне).
+  void _startScreenOnTimer() {
+    _screenOnTimer?.cancel();
+    _screenOnTimer = Timer.periodic(const Duration(seconds: 30), (_) async {
+      try {
+        final screenOn = await LibP2PService.isScreenOn();
+        await LibP2PService.setDummyScreenOn(screenOn);
+      } catch (_) {}
+    });
+  }
 
   void _startPurgeTimer() {
     _purgeTimer?.cancel();
@@ -1830,11 +1846,7 @@ class ChatProvider extends ChangeNotifier {
         final delivered = (item['delivered'] as num?)?.toInt() ?? 0;
         final total = (item['total'] as num?)?.toInt() ?? 0;
         final status = (item['status'] as num?)?.toInt() ?? 0;
-        final lastChunkId = item['last_chunk_id'] as String? ?? '';
         if (mediaID.isEmpty || total <= 0) continue;
-        if (lastChunkId.isNotEmpty) {
-          _fileLastChunkId[mediaID] = lastChunkId;
-        }
         final percent = ((delivered / total) * 100).clamp(0, 100).round();
         // Не понижаем: если уже 100 — оставляем.
         final cur = _fileProgress[mediaID] ?? 0;
@@ -1993,7 +2005,6 @@ class ChatProvider extends ChangeNotifier {
       _fileProgress.remove(mediaId);
       _fileCompleteSent.remove(mediaId);
       _fileStatuses.remove(mediaId);
-      _fileLastChunkId.remove(mediaId);
       final chatPeer = fileMsg.isOwn ? fileMsg.recipient : fileMsg.sender;
       if (chatPeer.isNotEmpty) {
         _lastMessageByPeer.remove(chatPeer);
@@ -2043,7 +2054,6 @@ class ChatProvider extends ChangeNotifier {
       _fileProgress.remove(mediaId);
       _fileCompleteSent.remove(mediaId);
       _fileStatuses.remove(mediaId);
-      _fileLastChunkId.remove(mediaId);
     }
 
     // 2. Кэш последнего сообщения.
@@ -2090,7 +2100,6 @@ class ChatProvider extends ChangeNotifier {
       if (m.isExpired) {
         _fileProgress.remove(mediaId);
         _fileStatuses.remove(mediaId);
-        _fileLastChunkId.remove(mediaId);
         return true;
       }
       return false;
@@ -2430,6 +2439,7 @@ class ChatProvider extends ChangeNotifier {
   void dispose() {
     _statusTimer?.cancel();
     _purgeTimer?.cancel();
+    _screenOnTimer?.cancel();
     _chunkQueueTimer?.cancel();
     _ackFlushTimer?.cancel();
     _notifTimer?.cancel();

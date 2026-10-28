@@ -324,6 +324,10 @@ type Node struct {
 	// MIXING (v2.0.2) — флаг. Задержки на relay.
 	// Имеет смысл только при useOnion == true.
 	mixingEnabled bool
+
+	// dummyScreenOn — состояние экрана (v2.0.4 d.1.1).
+	// true — dummy 10–120 сек. false — ×5 (50–600 сек). Дефолт true.
+	dummyScreenOn bool
 }
 
 // NewNode — создаёт новый узел
@@ -363,6 +367,7 @@ func NewNode(cfg Config) *Node {
 		pendingHookAcks:         make(map[string]*hookAckWindow),
 		batchBuffers:            make(map[string]*batchBuffer),
 		useOnion:                cfg.UseOnion,
+		dummyScreenOn:           true,
 	}
 }
 
@@ -1340,9 +1345,10 @@ func (n *Node) addToBatch(peerID, textID, text string) {
 	n.batchBuffersMu.Unlock()
 }
 
-// sendDummy — отправитель шлёт пустой Sphinx-пакет (v2.0.4 d).
-// Каждые 60 сек (maskingEnabled) — постоянный трафик. Получатель — drop.
-// Relay — forward (не знает, что dummy). Паттерн скрыт.
+// sendDummy — отправитель шлёт пустой Sphinx-пакет (v2.0.4 d, d.1.1).
+// Интервал: screenOn — 10–120 сек; screenOff — ×5 (50–600 сек).
+// 1 случайный контакт. Случайный текст. Задержка 1–60 сек.
+// Relay — forward (не знает, что dummy). Получатель — drop. Паттерн скрыт.
 func (n *Node) sendDummy() {
 	if n.settingsStore == nil || !n.settingsStore.GetMaskingEnabled() {
 		return
@@ -1376,6 +1382,28 @@ func (n *Node) sendDummy() {
 		time.Sleep(delay)
 		n.sendSphinxPacketToRelay1(route, packet)
 	}()
+}
+
+// SetDummyScreenOn — передаёт состояние экрана (v2.0.4 d.1.1).
+// true — dummy 10–120 сек. false — ×5 (50–600 сек). Сброс — при старте (true).
+func (n *Node) SetDummyScreenOn(screenOn bool) {
+	n.mu.Lock()
+	n.dummyScreenOn = screenOn
+	n.mu.Unlock()
+	log.Printf("[DUMMY] screenOn=%v", screenOn)
+}
+
+// dummyInterval — интервал dummy с учётом screenOn (v2.0.4 d.1.1).
+// screenOn: 10–120 сек. screenOff: ×5 (50–600 сек).
+func (n *Node) dummyInterval() time.Duration {
+	n.mu.Lock()
+	screenOn := n.dummyScreenOn
+	n.mu.Unlock()
+	base := 10 + mathrand.Intn(111)
+	if !screenOn {
+		base = base * 5
+	}
+	return time.Duration(base) * time.Second
 }
 
 // generateRandomText — случайный текст 50–200 символов (dummy, v2.0.4 d.1).
@@ -4175,8 +4203,7 @@ func (n *Node) InitP2P() error {
 		}()
 		go func() {
 			for {
-				delay := time.Duration(10+mathrand.Intn(111)) * time.Second
-				time.Sleep(delay)
+				time.Sleep(n.dummyInterval())
 				n.sendDummy()
 			}
 		}()
@@ -5362,11 +5389,10 @@ func (n *Node) GetMessageStatuses() map[string]MessageStatus {
 // Восстановление прогресса после перезапуска: Dart получает
 // delivered/total для каждого mediaID и заполняет _fileProgress.
 type FileStatusEntry struct {
-	MediaID     string `json:"media_id"`
-	Delivered   int    `json:"delivered"`
-	Total       int    `json:"total"`
-	Status      int    `json:"status"`        // max по чанкам: 1=sent, 2=delivered, 3=hidden, 4=read
-	LastChunkID string `json:"last_chunk_id"` // ID последнего чанка (для [READ])
+	MediaID   string `json:"media_id"`
+	Delivered int    `json:"delivered"`
+	Total     int    `json:"total"`
+	Status    int    `json:"status"` // max по чанкам: 1=sent, 2=delivered, 3=hidden, 4=read
 }
 
 // GetFileStatuses — статус всех файловых отправок (delivered/total).
@@ -5405,11 +5431,10 @@ func (n *Node) GetFileStatuses() []FileStatusEntry {
 	result := make([]FileStatusEntry, 0, len(m))
 	for id, a := range m {
 		result = append(result, FileStatusEntry{
-			MediaID:     id,
-			Delivered:   a.delivered,
-			Total:       a.total,
-			Status:      int(a.status),
-			LastChunkID: a.lastChunkID,
+			MediaID:   id,
+			Delivered: a.delivered,
+			Total:     a.total,
+			Status:    int(a.status),
 		})
 	}
 	return result
