@@ -59,12 +59,12 @@ func TestSphinxRoundTrip(t *testing.T) {
 	}
 
 	payload := []byte(`{"id":"msg1","text":"hello sphinx"}`)
-	packet, err := relay1.buildSphinxPacket(route, payload, true)
+	packet, err := relay1.buildSphinxPacket(route, payload, true, false)
 	if err != nil {
 		t.Fatalf("build packet: %v", err)
 	}
 
-	next1, mixing1, rem1, err := relay1.processSphinxPacket(packet)
+	next1, mixing1, _, rem1, err := relay1.processSphinxPacket(packet)
 	if err != nil {
 		t.Fatalf("relay1 process: %v", err)
 	}
@@ -75,7 +75,7 @@ func TestSphinxRoundTrip(t *testing.T) {
 		t.Fatalf("relay1 mixing: got false, want true")
 	}
 
-	next2, mixing2, rem2, err := relay2.processSphinxPacket(rem1)
+	next2, mixing2, _, rem2, err := relay2.processSphinxPacket(rem1)
 	if err != nil {
 		t.Fatalf("relay2 process: %v", err)
 	}
@@ -122,12 +122,12 @@ func TestSphinxNoMixingFlag(t *testing.T) {
 		Keys:          [][]byte{k1[:], k2[:], k3[:]},
 	}
 
-	packet, err := relay1.buildSphinxPacket(route, []byte("x"), false)
+	packet, err := relay1.buildSphinxPacket(route, []byte("x"), false, false)
 	if err != nil {
 		t.Fatalf("build packet: %v", err)
 	}
 
-	_, mixing, _, err := relay1.processSphinxPacket(packet)
+	_, mixing, _, _, err := relay1.processSphinxPacket(packet)
 	if err != nil {
 		t.Fatalf("relay1 process: %v", err)
 	}
@@ -159,7 +159,7 @@ func TestSphinxWrongMAC(t *testing.T) {
 		Keys:          [][]byte{k1[:], k2[:], k3[:]},
 	}
 
-	packet, err := relay1.buildSphinxPacket(route, []byte("x"), false)
+	packet, err := relay1.buildSphinxPacket(route, []byte("x"), false, false)
 	if err != nil {
 		t.Fatalf("build packet: %v", err)
 	}
@@ -167,7 +167,7 @@ func TestSphinxWrongMAC(t *testing.T) {
 	// Портим MAC (offset 65..97).
 	packet[70] ^= 0xff
 
-	_, _, _, err = relay1.processSphinxPacket(packet)
+	_, _, _, _, err = relay1.processSphinxPacket(packet)
 	if err == nil {
 		t.Fatalf("expected MAC mismatch, got nil")
 	}
@@ -196,7 +196,7 @@ func TestSphinxTamperedNextHop(t *testing.T) {
 		Keys:          [][]byte{k1[:], k2[:], k3[:]},
 	}
 
-	packet, err := relay1.buildSphinxPacket(route, []byte("x"), false)
+	packet, err := relay1.buildSphinxPacket(route, []byte("x"), false, false)
 	if err != nil {
 		t.Fatalf("build packet: %v", err)
 	}
@@ -204,7 +204,7 @@ func TestSphinxTamperedNextHop(t *testing.T) {
 	// Портим next_hop len (первый байт) — невалидно.
 	packet[0] = 0xff
 
-	_, _, _, err = relay1.processSphinxPacket(packet)
+	_, _, _, _, err = relay1.processSphinxPacket(packet)
 	if err == nil {
 		t.Fatalf("expected invalid next_hop error, got nil")
 	}

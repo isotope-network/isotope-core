@@ -1340,6 +1340,87 @@ func (n *Node) addToBatch(peerID, textID, text string) {
 	n.batchBuffersMu.Unlock()
 }
 
+// sendDummy — отправитель шлёт пустой Sphinx-пакет (v2.0.4 d).
+// Каждые 60 сек (maskingEnabled) — постоянный трафик. Получатель — drop.
+// Relay — forward (не знает, что dummy). Паттерн скрыт.
+func (n *Node) sendDummy() {
+	if n.settingsStore == nil || !n.settingsStore.GetMaskingEnabled() {
+		return
+	}
+	if !n.useOnion || n.isRelay || n.host == nil || n.contacts == nil {
+		return
+	}
+	for _, c := range n.contacts.GetAll() {
+		if c.X25519Pub == "" || c.PeerID == "" {
+			continue
+		}
+		recipient, err := peer.Decode(c.PeerID)
+		if err != nil {
+			continue
+		}
+		route, err := n.buildSphinxRoute(recipient)
+		if err != nil {
+			continue
+		}
+		payload := []byte(`{"dummy":true}`)
+		packet, err := n.buildSphinxPacket(route, payload, false, true)
+		if err != nil {
+			continue
+		}
+		n.sendSphinxPacketToRelay1(route, packet)
+	}
+}
+
+// sendSphinxPacketToRelay1 — отправка готового Sphinx-пакета relay1.
+// Вынесено из sendViaSphinx для dummy (без msg).
+func (n *Node) sendSphinxPacketToRelay1(route *sphinxRoute, packet []byte) {
+	if len(route.Relays) == 0 || n.host == nil {
+		return
+	}
+	peerAddrs := n.host.Peerstore().Addrs(route.Relays[0])
+	var direct []ma.Multiaddr
+	if len(peerAddrs) == 0 {
+		addrs, ferr := n.FindPeerByID(route.Relays[0].String())
+		if ferr != nil {
+			return
+		}
+		for _, a := range addrs {
+			maAddr, perr := ma.NewMultiaddr(a)
+			if perr != nil {
+				continue
+			}
+			if strings.Contains(maAddr.String(), "/p2p-circuit") {
+				continue
+			}
+			direct = append(direct, maAddr)
+		}
+		if len(direct) == 0 {
+			return
+		}
+		n.host.Peerstore().AddAddrs(route.Relays[0], direct, peerstore.TempAddrTTL)
+	} else {
+		for _, a := range peerAddrs {
+			if strings.Contains(a.String(), "/p2p-circuit") {
+				continue
+			}
+			direct = append(direct, a)
+		}
+		if len(direct) == 0 {
+			return
+		}
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), SphinxTimeout)
+	defer cancel()
+	s, err := n.host.NewStream(ctx, route.Relays[0], protocolID)
+	if err != nil {
+		return
+	}
+	defer s.Close()
+	s.SetWriteDeadline(time.Now().Add(30 * time.Second))
+	fmt.Fprintf(s, "%s%s\n", SPHINX_PREFIX, base64.StdEncoding.EncodeToString(packet))
+	log.Printf("[DUMMY] sent to %s (relay1=%s)", route.Recipient, route.Relays[0])
+}
+
 // flushBatch — собирает JSON {"texts":[{"id":"...","text":"..."}]},
 // шифрует E2E, отправляет одним Sphinx-пакетом (MediaType="batch").
 func (n *Node) flushBatch(peerID string, texts []batchText) {
@@ -2107,9 +2188,9 @@ func (n *Node) handleStream(stream network.Stream) {
 			return
 		}
 		myID := n.host.ID().String()
-		nextPeer, mixing, remainder, err := n.processSphinxPacket(raw)
+		nextPeer, mixing, dummy, remainder, err := n.processSphinxPacket(raw)
 		if err == nil {
-			log.Printf("[SPHINX] relay: next=%s size=%d mixing=%v", nextPeer, len(remainder), mixing)
+			log.Printf("[SPHINX] relay: next=%s size=%d mixing=%v dummy=%v", nextPeer, len(remainder), mixing, dummy)
 			// Mixing (v2.0.2): флаг из Sphinx-пакета (свойство сообщения).
 			// Relay спит, если отправитель включил Mixing. Не настройка relay.
 			if mixing {
@@ -2450,6 +2531,10 @@ func (n *Node) handleStream(stream network.Stream) {
 // Логика — как в ветке REPLICA (Version=2, Recipient==myID): E2E-расшифровка,
 // memory.Add, hook, [DELIVERED].
 func (n *Node) handleSphinxReplicaMsg(replicaMsg Message) {
+	if replicaMsg.MediaType == "dummy" {
+		log.Printf("[DUMMY] dropped from %s", replicaMsg.Sender)
+		return
+	}
 	if replicaMsg.Version == MESSAGE_VERSION_E2E {
 		if replicaMsg.MediaType == "batch" {
 			plaintext, err := n.decryptFromSender(replicaMsg.Sender, replicaMsg.Text)
@@ -4068,6 +4153,13 @@ func (n *Node) InitP2P() error {
 			defer ticker.Stop()
 			for range ticker.C {
 				n.flushAllBatches()
+			}
+		}()
+		go func() {
+			ticker := time.NewTicker(60 * time.Second)
+			defer ticker.Stop()
+			for range ticker.C {
+				n.sendDummy()
 			}
 		}()
 	}

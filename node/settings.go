@@ -43,6 +43,10 @@ type Settings struct {
 	// false — relay без задержки. Дефолт false.
 	// Имеет смысл только при SphinxEnabled == true (mixing без Sphinx не применяется).
 	MixingEnabled bool `json:"mixing_enabled"`
+	// MaskingEnabled — включать dummy-трафик (v2.0.4 d).
+	// true — отправитель шлёт пустой Sphinx-пакет каждые 60 сек (постоянный трафик).
+	// false — без dummy. Дефолт false. Размер 64 КБ — всегда (a+b).
+	MaskingEnabled bool `json:"masking_enabled"`
 }
 
 // SETTINGS_VERSION — текущая версия формата.
@@ -306,6 +310,25 @@ func (s *SettingsStore) SetMixingEnabled(enabled bool) error {
 		return nil
 	}
 	s.data.MixingEnabled = enabled
+	s.mu.Unlock()
+	return s.Save()
+}
+
+// GetMaskingEnabled — включён ли dummy-трафик (v2.0.4 d).
+func (s *SettingsStore) GetMaskingEnabled() bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.data.MaskingEnabled
+}
+
+// SetMaskingEnabled — включает/выключает dummy-трафик и сохраняет.
+func (s *SettingsStore) SetMaskingEnabled(enabled bool) error {
+	s.mu.Lock()
+	if s.data.MaskingEnabled == enabled {
+		s.mu.Unlock()
+		return nil
+	}
+	s.data.MaskingEnabled = enabled
 	s.mu.Unlock()
 	return s.Save()
 }
