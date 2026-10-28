@@ -205,7 +205,7 @@ class MainActivity : FlutterActivity() {
                         val peerID = call.argument<String>("peerID") ?: ""
                         val filePath = call.argument<String>("filePath") ?: ""
                         val fileName = call.argument<String>("fileName") ?: ""
-                        val duration = call.argument<Int>("duration") ?: 0
+                        val duration = (call.argument<Int>("duration") ?: 0).toLong()
                         val period = call.argument<String>("period") ?: "forever"
                         val mode = call.argument<String>("mode") ?: ""
                         Thread {

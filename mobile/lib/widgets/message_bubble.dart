@@ -323,12 +323,24 @@ _FileKind _fileKind(String fileName) {
 }
 
 /// Отображение фото: миниатюра + тап для полноэкранного просмотра.
+/// v2.0.5: photo — чанки. Файл собран → localFilePath (Image.file).
+/// Fallback — mediaBase64 (legacy sendPhoto, base64 в одном Message).
 class _PhotoView extends StatelessWidget {
   final Message message;
 
   const _PhotoView({required this.message});
 
   void _openFullscreen(BuildContext context) {
+    // Приоритет: localFilePath (чанки) → mediaBase64 (legacy).
+    final localPath = message.localFilePath;
+    if (localPath.isNotEmpty) {
+      Navigator.of(context).push(
+        MaterialPageRoute(
+          builder: (_) => _ImageFileFullscreen(filePath: localPath),
+        ),
+      );
+      return;
+    }
     final b64 = message.mediaBase64;
     if (b64.isEmpty) return;
     Navigator.of(context).push(
@@ -340,38 +352,63 @@ class _PhotoView extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final b64 = message.mediaBase64;
-    if (b64.isEmpty) {
-      return const SizedBox(
-        width: 160,
-        height: 120,
-        child: Center(child: Text('Нет фото')),
-      );
-    }
-    Uint8List? bytes;
-    try {
-      bytes = base64Decode(b64);
-    } catch (_) {
-      bytes = null;
-    }
-    if (bytes == null || bytes.isEmpty) {
-      return const SizedBox(
-        width: 160,
-        height: 120,
-        child: Center(child: Text('Ошибка фото')),
+    // 1. localFilePath (photo — чанки, собран) → Image.file.
+    final localPath = message.localFilePath;
+    if (localPath.isNotEmpty) {
+      return GestureDetector(
+        onTap: () => _openFullscreen(context),
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(8),
+          child: Image.file(
+            File(localPath),
+            width: 200,
+            height: 200,
+            fit: BoxFit.cover,
+            gaplessPlayback: true,
+            errorBuilder: (_, __, ___) => const SizedBox(
+              width: 160,
+              height: 120,
+              child: Center(child: Text('Ошибка фото')),
+            ),
+          ),
+        ),
       );
     }
 
-    return GestureDetector(
-      onTap: () => _openFullscreen(context),
-      child: ClipRRect(
-        borderRadius: BorderRadius.circular(8),
-        child: Image.memory(
-          bytes,
-          width: 200,
-          height: 200,
-          fit: BoxFit.cover,
-          gaplessPlayback: true,
+    // 2. mediaBase64 (legacy sendPhoto) → Image.memory.
+    final b64 = message.mediaBase64;
+    if (b64.isNotEmpty) {
+      Uint8List? bytes;
+      try {
+        bytes = base64Decode(b64);
+      } catch (_) {
+        bytes = null;
+      }
+      if (bytes != null && bytes.isNotEmpty) {
+        return GestureDetector(
+          onTap: () => _openFullscreen(context),
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(8),
+            child: Image.memory(
+              bytes,
+              width: 200,
+              height: 200,
+              fit: BoxFit.cover,
+              gaplessPlayback: true,
+            ),
+          ),
+        );
+      }
+    }
+
+    // 3. Ничего нет — «Загрузка…» (photo — чанки, ещё не собран).
+    return const SizedBox(
+      width: 160,
+      height: 120,
+      child: Center(
+        child: Text(
+          'Загрузка…',
+          style: TextStyle(fontSize: 12, color: Colors.black54),
         ),
       ),
     );
@@ -868,6 +905,18 @@ class _VoicePlayerState extends State<_VoicePlayer> {
 
   Future<void> _ensureFile() async {
     if (_filePath != null) return;
+
+    // v2.0.5: voice — чанки. Файл собран → localFilePath.
+    // Fallback — mediaBase64 (legacy sendVoice, base64 в одном Message).
+    final localPath = widget.message.localFilePath;
+    if (localPath.isNotEmpty) {
+      final f = File(localPath);
+      if (await f.exists()) {
+        _filePath = localPath;
+        return;
+      }
+    }
+
     final b64 = widget.message.mediaBase64;
     if (b64.isEmpty) {
       throw Exception('Пустое голосовое');
@@ -942,6 +991,23 @@ class _VoicePlayerState extends State<_VoicePlayer> {
       return Text(
         'Ошибка голосового: $_error',
         style: const TextStyle(fontSize: 12, color: Colors.red),
+      );
+    }
+
+    // v2.0.5: voice — чанки. Пока не собран (localFilePath пусто) и нет
+    // base64 (legacy) — «Загрузка…», не ошибка. Плеер активируется после
+    // сборки (localFilePath из tryAssemble) или hook (mediaBase64).
+    if (widget.message.localFilePath.isEmpty &&
+        widget.message.mediaBase64.isEmpty) {
+      return const SizedBox(
+        width: 220,
+        height: 36,
+        child: Center(
+          child: Text(
+            'Загрузка…',
+            style: TextStyle(fontSize: 12, color: Colors.black54),
+          ),
+        ),
       );
     }
 

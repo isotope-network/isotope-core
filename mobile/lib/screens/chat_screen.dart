@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
@@ -333,19 +332,22 @@ class _ChatScreenState extends State<ChatScreen> {
     }
 
     try {
-      final file = File(path);
-      final bytes = await file.readAsBytes();
-      final b64 = base64Encode(bytes);
       final provider = _provider;
       if (provider == null) return;
-      final ok = await provider.sendVoice(mediaData: b64, duration: seconds);
+      // v2.0.5: голос — чанки 47 КБ (Sphinx 64 КБ). Не base64 в одном Message.
+      final fileName = path.split('/').last;
+      final ok = await provider.sendVoiceByPath(
+        filePath: path,
+        fileName: fileName,
+        duration: seconds,
+      );
       if (!ok && mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text(provider.error ?? 'Ошибка отправки голосового')),
         );
       }
       try {
-        file.deleteSync();
+        File(path).deleteSync();
       } catch (_) {}
     } catch (e) {
       LogService.log('VOICE: send failed: $e');
@@ -893,3 +895,4 @@ class _ChatScreenState extends State<ChatScreen> {
     );
   }
 }
+// mobile/lib/screens/chat_screen.dart

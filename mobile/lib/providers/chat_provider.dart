@@ -1,7 +1,6 @@
 // mobile/lib/providers/chat_provider.dart
 import 'dart:async';
 import 'dart:convert';
-import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../models/message.dart';
@@ -1318,48 +1317,9 @@ class ChatProvider extends ChangeNotifier {
       return false;
     }
 
-    _ownMessageIds.add(msgId.toString());
-    await _saveOwnMessageIds();
-
-    final now = DateTime.now().toUtc().toIso8601String();
-    final ttlSec = _ttlPeriodSeconds(_ttlPeriod);
-
-    // Локальное сообщение — с base64 (для отображения у отправителя).
-    // Фото < 1 МБ, base64 приемлемо. Читаем файл локально,
-    // НЕ через MethodChannel. У получателя — свой base64 из расшифровки.
-    String photoB64 = '';
-    try {
-      final bytes = await File(filePath).readAsBytes();
-      photoB64 = base64Encode(bytes);
-    } catch (e) {
-      LogService.log('PHOTO: read local failed: $e');
-    }
-
-    final msg = Message(
-      id: msgId.toString(),
-      text: photoB64,
-      plainText: photoB64,
-      sender: 'Вы',
-      time: now,
-      isOwn: true,
-      score: 0,
-      weight: 0.5,
-      archived: false,
-      channel: _activeChannel,
-      ttlPeriodSeconds: ttlSec,
-      ttlMode: _ttlMode,
-      expiresAt: (ttlSec > 0 && _ttlMode == 'hard')
-          ? DateTime.now().add(Duration(seconds: ttlSec))
-          : null,
-      recipient: _currentNodeIp,
-      mediaType: 'photo',
-    );
-
-    _addMessage(msg);
-    _messageStatuses[msg.id] = 1;
-
-    p2p?.saveOwnMessage(_currentNodeIp, msg);
-
+    // v2.0.5: photo — чанки (MediaType="photo", chunkTotal>0).
+    // Локальное сообщение НЕ создаём — UI покажет агрегат из _fileMessages
+    // (превью после сборки, прогресс — через [FILE_STATUS]).
     if (_currentNodeIp.isNotEmpty) {
       _peerSeenController.add(_currentNodeIp);
     }
@@ -1431,8 +1391,10 @@ class ChatProvider extends ChangeNotifier {
         final mediaId = map['media_id'] ?? '';
         final chunkTotal = map['chunk_total'] ?? 0;
 
-        // Файловые чанки: НЕ кладём в UI. Обрабатываем отдельно — один агрегат на файл.
-        if (mediaType == 'file' && chunkTotal > 0 && mediaId.toString().isNotEmpty) {
+        // Чанковые медиа (file/voice/photo): НЕ кладём в UI. Один агрегат на файл.
+        if ((mediaType == 'file' || mediaType == 'voice' || mediaType == 'photo') &&
+            chunkTotal > 0 &&
+            mediaId.toString().isNotEmpty) {
           final mid = mediaId.toString();
           final existing = _fileMessages[mid];
           if (existing == null) {
@@ -1493,8 +1455,11 @@ class ChatProvider extends ChangeNotifier {
         }
 
         // Восстановление пути для собранного файла на диске.
+        // v2.0.5: file/voice/photo — чанки.
         String localPath = '';
-        if (mediaType == 'file' && chunkTotal > 0 && mediaId.toString().isNotEmpty) {
+        if ((mediaType == 'file' || mediaType == 'voice' || mediaType == 'photo') &&
+            chunkTotal > 0 &&
+            mediaId.toString().isNotEmpty) {
           final p = await MediaStorage.getFilePath(mediaId.toString());
           if (p != null) localPath = p;
         }
