@@ -521,6 +521,13 @@ class MainActivity : FlutterActivity() {
                         val screenOn = pm.isInteractive
                         result.success(screenOn)
                     }
+                    "setDummyScreenOn" -> {
+                        val screenOn = call.argument<Boolean>("screenOn") ?: true
+                        Thread {
+                            val response = Mobile.setDummyScreenOn(screenOn)
+                            runOnUiThread { result.success(response) }
+                        }.start()
+                    }
                     "getMaskingEnabled" -> {
                         Thread {
                             val response = Mobile.getMaskingEnabled()
