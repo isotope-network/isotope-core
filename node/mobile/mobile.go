@@ -387,6 +387,33 @@ func SendVoice(peerID string, mediaData string, duration int, period string, mod
 	return fmt.Sprintf(`{"status":"ok","id":"%s"}`, id)
 }
 
+// SendVoiceByPath — отправляет голосовое, читая файл с диска по пути (v2.0.5).
+// filePath — внутри app dir. Go режет на чанки по 47 КБ (Sphinx payload 64 КБ).
+// duration — секунды. Base64 через MethodChannel не проходит — OOM устранён.
+// Возвращает {"status":"ok","id":"<MediaID>"}.
+func SendVoiceByPath(peerID, filePath, fileName string, duration int, period, mode string) string {
+	nodeMu.Lock()
+	defer nodeMu.Unlock()
+
+	if node == nil {
+		return errorJSON("node not started")
+	}
+	if peerID == "" {
+		return errorJSON("peerID is required")
+	}
+	if filePath == "" {
+		return errorJSON("filePath is required")
+	}
+
+	mediaID, err := node.SendVoiceByPath(peerID, filePath, fileName, duration, period, mode)
+	if err != nil {
+		return errorJSON(err.Error())
+	}
+
+	addLog("[MEDIA] voice sent (by path) to %s (mediaID=%s, %s, %ds)", peerID, mediaID, fileName, duration)
+	return fmt.Sprintf(`{"status":"ok","id":"%s"}`, mediaID)
+}
+
 // SendFileByPath — отправляет файл, читая его с диска по пути.
 // filePath — внутри app dir. Go сам режет на чанки по 64 КБ.
 // Base64 через MethodChannel не проходит — OOM устранён.

@@ -47,6 +47,12 @@ const (
 // ПАМЯТЬ СООБЩЕНИЙ (ВЗВЕШЕННАЯ, С АРХИВОМ)
 // ============================================================
 
+// isChunkedMediaType — true, если mediaType — чанковый (file/voice/photo).
+// Видео — "file" (не отдельный тип). text/batch/dummy — false.
+func isChunkedMediaType(mt string) bool {
+	return mt == "file" || mt == "voice" || mt == "photo"
+}
+
 // Message — структура одного сообщения
 type Message struct {
 	ID               string        `json:"id"`
@@ -138,7 +144,7 @@ func (m *Memory) Add(msg Message) bool {
 
 	pos := len(m.messages)
 	m.byID[msg.ID] = pos
-	if msg.MediaType == "file" && msg.ChunkTotal > 0 && msg.MediaID != "" {
+	if isChunkedMediaType(msg.MediaType) && msg.ChunkTotal > 0 && msg.MediaID != "" {
 		fc := m.fileChunks[msg.MediaID]
 		if fc == nil {
 			fc = make(map[int]int)
@@ -288,7 +294,7 @@ func (m *Memory) Remove(id string) bool {
 		m.messages[pos] = m.messages[last]
 		moved := m.messages[pos]
 		m.byID[moved.ID] = pos
-		if moved.MediaType == "file" && moved.ChunkTotal > 0 && moved.MediaID != "" {
+		if isChunkedMediaType(moved.MediaType) && moved.ChunkTotal > 0 && moved.MediaID != "" {
 			if fc := m.fileChunks[moved.MediaID]; fc != nil {
 				fc[moved.ChunkIndex] = pos
 			}
@@ -297,7 +303,7 @@ func (m *Memory) Remove(id string) bool {
 	m.messages = m.messages[:last]
 
 	delete(m.byID, id)
-	if removed.MediaType == "file" && removed.ChunkTotal > 0 && removed.MediaID != "" {
+	if isChunkedMediaType(removed.MediaType) && removed.ChunkTotal > 0 && removed.MediaID != "" {
 		if fc := m.fileChunks[removed.MediaID]; fc != nil {
 			delete(fc, removed.ChunkIndex)
 			if len(fc) == 0 {
@@ -355,7 +361,7 @@ func (m *Memory) rebuildIndexes() {
 	m.fileChunks = make(map[string]map[int]int)
 	for pos, msg := range m.messages {
 		m.byID[msg.ID] = pos
-		if msg.MediaType == "file" && msg.ChunkTotal > 0 && msg.MediaID != "" {
+		if isChunkedMediaType(msg.MediaType) && msg.ChunkTotal > 0 && msg.MediaID != "" {
 			fc := m.fileChunks[msg.MediaID]
 			if fc == nil {
 				fc = make(map[int]int)

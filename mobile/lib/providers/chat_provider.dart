@@ -231,7 +231,7 @@ class ChatProvider extends ChangeNotifier {
             weight: m.weight,
             archived: m.archived,
             deliveryStatus: m.deliveryStatus,
-            messageStatus: m.isFile && m.mediaId.isNotEmpty && _fileStatuses.containsKey(m.mediaId)
+            messageStatus: m.isChunkedMediaType && m.mediaId.isNotEmpty && _fileStatuses.containsKey(m.mediaId)
                 ? _fileStatuses[m.mediaId]
                 : _messageStatuses[m.id],
             channel: m.channel,
@@ -682,7 +682,7 @@ class ChatProvider extends ChangeNotifier {
         // для группировки и отображения файла.
         final mediaTypeS = map['media_type'] as String? ?? '';
         final chunkTotalS = map['chunk_total'] as int? ?? 0;
-        final isFileChunkS = mediaTypeS == 'file' && chunkTotalS > 0;
+        final isFileChunkS = (mediaTypeS == 'file' || mediaTypeS == 'voice' || mediaTypeS == 'photo') && chunkTotalS > 0;
         if (!isUpdate && isSelf && !isFileChunkS) {
           return;
         }
@@ -749,7 +749,7 @@ class ChatProvider extends ChangeNotifier {
         final mediaTypeU = map['media_type'] as String? ?? '';
         final chunkTotalU = map['chunk_total'] as int? ?? 0;
         final chunkIndexU = map['chunk_index'] as int? ?? 0;
-        final isFileChunkU = mediaTypeU == 'file' && chunkTotalU > 0;
+        final isFileChunkU = (mediaTypeU == 'file' || mediaTypeU == 'voice' || mediaTypeU == 'photo') && chunkTotalU > 0;
         final isLastChunkU = isFileChunkU && chunkIndexU == chunkTotalU - 1;
         // Файл: бейдж только по последнему чанку. Обычное — всегда.
         final shouldCount = isFileChunkU ? isLastChunkU : true;
@@ -1230,6 +1230,56 @@ class ChatProvider extends ChangeNotifier {
     return true;
   }
 
+  /// Отправляет голосовое, читая файл с диска по пути (v2.0.5).
+  /// Go режет на чанки 47 КБ (Sphinx payload 64 КБ). Base64 не идёт (OOM).
+  /// duration — секунды. UI покажет прогресс через [FILE_STATUS] (как файл).
+  Future<bool> sendVoiceByPath({
+    required String filePath,
+    required String fileName,
+    required int duration,
+  }) async {
+    if (_currentNodeIp.isEmpty || !_currentNodeIp.startsWith('Qm')) {
+      _error = 'Нет получателя — откройте чат';
+      _safeNotify();
+      return false;
+    }
+    if (filePath.isEmpty) {
+      _error = 'Пустой путь к голосовому';
+      _safeNotify();
+      return false;
+    }
+
+    final response = await LibP2PService.sendVoiceByPath(
+      peerID: _currentNodeIp,
+      filePath: filePath,
+      fileName: fileName,
+      duration: duration,
+      period: _ttlPeriod,
+      mode: _ttlMode,
+    );
+
+    if (response.containsKey('error')) {
+      _error = 'Ошибка отправки голосового: ${response['error']}';
+      _safeNotify();
+      return false;
+    }
+
+    final mediaId = response['id'];
+    if (mediaId == null || mediaId.toString().isEmpty) {
+      _error = 'Ошибка: Go-ядро не вернуло MediaID';
+      _safeNotify();
+      return false;
+    }
+
+    // Локальное сообщение НЕ создаём — UI покажет сгруппированные чанки
+    // (mediaType=voice, chunkTotal>0) как одно сообщение «🎤 Голосовое».
+    if (_currentNodeIp.isNotEmpty) {
+      _peerSeenController.add(_currentNodeIp);
+    }
+
+    return true;
+  }
+
   /// Отправляет фото текущему контакту (E2E). Один чанк.
   /// Файл читается Go с диска по пути — base64 через MethodChannel не идёт.
   Future<bool> sendPhotoByPath({
@@ -1591,9 +1641,9 @@ class ChatProvider extends ChangeNotifier {
       return;
     }
 
-    // Файловый чанк — НЕ храним в _messagesMap. Отдельная карта.
-    // Иначе _messagesMap растёт до 10 700 → UI O(N) → ANR.
-    final isFileChunk = msg.isFile && msg.chunkTotal > 0;
+    // Чанковый медиа-тип (file/voice/photo) — НЕ храним в _messagesMap.
+    // Отдельная карта. Иначе _messagesMap растёт до 10 700 → UI O(N) → ANR.
+    final isFileChunk = msg.isChunkedMediaType && msg.chunkTotal > 0;
     if (isFileChunk) {
       LogService.log('ADD chunk ${msg.chunkIndex + 1}/${msg.chunkTotal} mediaId=${msg.mediaId}');
 
@@ -1961,9 +2011,9 @@ class ChatProvider extends ChangeNotifier {
     if (msg.sender.isEmpty) return;
     if (msg.sender != _currentOpenPeerID) return;       // не текущий чат
     if (msg.readLocally) return;
-    // Файловый чанк — [READ] отправляется только для ПОСЛЕДНЕГО чанка
-    // файла и только когда файл собран (localFilePath установлен).
-    if (msg.isFile && msg.chunkTotal > 0) {
+    // Чанковый медиа-тип — [READ] отправляется только для ПОСЛЕДНЕГО чанка
+    // и только когда файл собран (localFilePath установлен).
+    if (msg.isChunkedMediaType && msg.chunkTotal > 0) {
       if (msg.chunkIndex != msg.chunkTotal - 1) return;
       if (msg.localFilePath.isEmpty) return;
     }
@@ -2171,8 +2221,8 @@ class ChatProvider extends ChangeNotifier {
             // ещё не прочитано локально, чат не открыт.
             // Файловые чанки — не считаем unread per-chunk.
             // Один бейдж на файл: считаем только по последнему чанку.
-            final isFileChunk = msg.isFile && msg.chunkTotal > 0;
-            final isLastChunk = msg.isFile && msg.chunkTotal > 0 && msg.chunkIndex == msg.chunkTotal - 1;
+            final isFileChunk = msg.isChunkedMediaType && msg.chunkTotal > 0;
+            final isLastChunk = msg.isChunkedMediaType && msg.chunkTotal > 0 && msg.chunkIndex == msg.chunkTotal - 1;
             final shouldCount = isFileChunk ? isLastChunk : true;
 
             if (isNew &&

@@ -164,7 +164,19 @@ class MediaStorage {
       // Все на месте — склеиваем.
       // Сохраняем с оригинальным расширением, чтобы Android знал тип файла.
       final fileName = meta['fileName'] as String? ?? '';
-      final ext = _extFromName(fileName);
+      var ext = _extFromName(fileName);
+      if (ext.isEmpty) {
+        // v2.0.5: voice/photo — fileName может быть без расширения.
+        // Fallback по mediaType (из meta — нет; по имени — пусто).
+        // Голос — .opus, фото — .jpg (по умолчанию).
+        // Если fileName содержит "voice" — .opus; "photo" — .jpg.
+        final lower = fileName.toLowerCase();
+        if (lower.contains('voice')) {
+          ext = '.opus';
+        } else if (lower.contains('photo')) {
+          ext = '.jpg';
+        }
+      }
       final outPath = '${_filesRoot.path}/$mediaId$ext';
       final out = File(outPath);
       final sink = out.openWrite();

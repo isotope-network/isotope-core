@@ -418,6 +418,11 @@ class Message {
   /// Голосовое сообщение?
   bool get isVoice => mediaType == 'voice';
 
+  /// Чанковый медиа-тип (file/voice/photo). v2.0.5.
+  /// Голос/фото — тоже чанки (как файл). Видео — "file".
+  bool get isChunkedMediaType =>
+      mediaType == 'file' || mediaType == 'voice' || mediaType == 'photo';
+
   /// Файл?
   bool get isFile => mediaType == 'file';
 

@@ -99,6 +99,7 @@ const (
 // Восстановление Message — в retryUnacked через fillFileChunkFromSent.
 type retryInfo struct {
 	mediaID    string
+	mediaType  string
 	chunkIndex int
 	recipient  string
 	msgID      string
@@ -972,7 +973,7 @@ func (n *Node) enqueuePending(msg Message) {
 	// Файловые чанки: в pending храним только метаданные.
 	// base64 (Text/PlainText) не кладём — иначе 440 × 170 КБ = 75 МБ в очереди.
 	// При flushPending — перечитать с диска (этап 2, sent/).
-	if msg.MediaType == "file" && msg.ChunkTotal > 0 {
+	if isChunkedMediaType(msg.MediaType) && msg.ChunkTotal > 0 {
 		msg.Text = ""
 		msg.PlainText = ""
 	}
@@ -1094,7 +1095,7 @@ func (n *Node) tryReplicate(msg Message) bool {
 	// Файловый чанк без base64 → прочитать с диска (sent/).
 	// В pending хранятся только метаданные (для экономии памяти).
 	// Здесь base64 пересоздаётся, чтобы отправить чанк получателю.
-	if msg.MediaType == "file" && msg.ChunkTotal > 0 &&
+	if isChunkedMediaType(msg.MediaType) && msg.ChunkTotal > 0 &&
 		msg.Text == "" && msg.PlainText == "" && msg.MediaID != "" {
 		if err := n.fillFileChunkFromSent(&msg); err != nil {
 			log.Printf("[QUEUE] fillFileChunkFromSent %s[%d] failed: %v",
@@ -1110,7 +1111,7 @@ func (n *Node) tryReplicate(msg Message) bool {
 	}
 
 	if msg.Recipient != "" {
-		isFileChunk := msg.MediaType == "file" && msg.ChunkTotal > 0
+		isFileChunk := isChunkedMediaType(msg.MediaType) && msg.ChunkTotal > 0
 		return n.sendToRecipient(msg, data, isFileChunk)
 	}
 
@@ -1565,6 +1566,7 @@ func (n *Node) chunkWorker() {
 		n.unackedChunksMu.Lock()
 		info := n.unackedChunks[msg.ID]
 		info.mediaID = msg.MediaID
+		info.mediaType = msg.MediaType
 		info.chunkIndex = msg.ChunkIndex
 		info.recipient = msg.Recipient
 		info.msgID = msg.ID
@@ -1746,7 +1748,7 @@ func (n *Node) restoreChunkMessage(info retryInfo) (Message, error) {
 		Recipient:        info.recipient,
 		Version:          MESSAGE_VERSION_E2E,
 		Type:             TypeMessage,
-		MediaType:        "file",
+		MediaType:        info.mediaType,
 		MediaID:          info.mediaID,
 		ChunkIndex:       info.chunkIndex,
 		ChunkTotal:       info.chunkTotal,
@@ -2385,7 +2387,7 @@ func (n *Node) handleStream(stream network.Stream) {
 						return
 					}
 					// Нам — расшифровываем.
-					if replicaMsg.MediaType == "file" && replicaMsg.ChunkTotal > 0 {
+					if isChunkedMediaType(replicaMsg.MediaType) && replicaMsg.ChunkTotal > 0 {
 						raw, err := n.decryptBytesFromSender(replicaMsg.Sender, replicaMsg.Text)
 						if err != nil {
 							log.Printf("[REPLICA] decrypt bytes failed from %s: %v", replicaMsg.Sender, err)
@@ -2405,7 +2407,7 @@ func (n *Node) handleStream(stream network.Stream) {
 					if added {
 						// Получатель: прогресс приёма файла — источник истины Go.
 						// pushFileStatus → Dart → шторка/контакты.
-						if replicaMsg.MediaType == "file" && replicaMsg.ChunkTotal > 0 && replicaMsg.MediaID != "" {
+						if isChunkedMediaType(replicaMsg.MediaType) && replicaMsg.ChunkTotal > 0 && replicaMsg.MediaID != "" {
 							n.acceptedCountMu.Lock()
 							n.acceptedCount[replicaMsg.MediaID]++
 							accepted := n.acceptedCount[replicaMsg.MediaID]
@@ -2416,7 +2418,7 @@ func (n *Node) handleStream(stream network.Stream) {
 							// Файловые чанки: не шлём base64 в Dart (OOM).
 							// Метаданные — в hook. base64 — через getChunk по запросу.
 							hookMsg := replicaMsg
-							if hookMsg.MediaType == "file" && hookMsg.ChunkTotal > 0 {
+							if isChunkedMediaType(hookMsg.MediaType) && hookMsg.ChunkTotal > 0 {
 								hookMsg.Text = ""
 								hookMsg.PlainText = ""
 								n.pendingHookAcksMu.Lock()
@@ -2624,7 +2626,7 @@ func (n *Node) handleSphinxReplicaMsg(replicaMsg Message) {
 			}
 			return
 		}
-		if replicaMsg.MediaType == "file" && replicaMsg.ChunkTotal > 0 {
+		if isChunkedMediaType(replicaMsg.MediaType) && replicaMsg.ChunkTotal > 0 {
 			raw, err := n.decryptBytesFromSender(replicaMsg.Sender, replicaMsg.Text)
 			if err != nil {
 				log.Printf("[SPHINX] decrypt bytes failed from %s: %v", replicaMsg.Sender, err)
@@ -2645,7 +2647,7 @@ func (n *Node) handleSphinxReplicaMsg(replicaMsg Message) {
 	replicaMsg.IsOwn = false
 	added := n.memory.Add(replicaMsg)
 	if added {
-		if replicaMsg.MediaType == "file" && replicaMsg.ChunkTotal > 0 && replicaMsg.MediaID != "" {
+		if isChunkedMediaType(replicaMsg.MediaType) && replicaMsg.ChunkTotal > 0 && replicaMsg.MediaID != "" {
 			n.acceptedCountMu.Lock()
 			n.acceptedCount[replicaMsg.MediaID]++
 			accepted := n.acceptedCount[replicaMsg.MediaID]
@@ -2654,7 +2656,7 @@ func (n *Node) handleSphinxReplicaMsg(replicaMsg Message) {
 		}
 		if n.messageHook != nil {
 			hookMsg := replicaMsg
-			if hookMsg.MediaType == "file" && hookMsg.ChunkTotal > 0 {
+			if isChunkedMediaType(hookMsg.MediaType) && hookMsg.ChunkTotal > 0 {
 				hookMsg.Text = ""
 				hookMsg.PlainText = ""
 			}
@@ -2723,7 +2725,7 @@ func (n *Node) handleServiceMessage(m Message) {
 			// Файловый чанк: [READ] приходит по последнему чанку.
 			// Распространяем статус на все чанки этого файла.
 			if msg, ok := n.findMyMessageByID(ref); ok {
-				if msg.MediaType == "file" && msg.ChunkTotal > 0 {
+				if isChunkedMediaType(msg.MediaType) && msg.ChunkTotal > 0 {
 					all := n.memory.GetAll()
 					for _, cm := range all {
 						if cm.MediaID == msg.MediaID {
@@ -3352,7 +3354,7 @@ func (n *Node) cleanupSentOnce() {
 	statuses := make(map[string]*fileStatus)
 	all := n.memory.GetAll()
 	for _, m := range all {
-		if m.MediaType != "file" || m.ChunkTotal <= 0 || m.MediaID == "" {
+		if !isChunkedMediaType(m.MediaType) || m.ChunkTotal <= 0 || m.MediaID == "" {
 			continue
 		}
 		st, ok := statuses[m.MediaID]
@@ -3488,7 +3490,7 @@ func (n *Node) replicateMessage(msg Message) {
 	}
 	// B3: isFileChunk — файловый чанк. Пробрасываем вниз,
 	// чтобы sendReplicaToPeer не делал randomDelay для чанков.
-	isFileChunk := msg.MediaType == "file" && msg.ChunkTotal > 0
+	isFileChunk := isChunkedMediaType(msg.MediaType) && msg.ChunkTotal > 0
 	// v2.0.4 c: тексты — в батч (до обнуления PlainText).
 	// PlainText — открытый текст (Text — E2E-шифрованный, не шифровать повторно).
 	isTextForSphinxBatch := (msg.MediaType == "" || msg.MediaType == "text") && msg.Recipient != ""
@@ -3791,7 +3793,7 @@ func (n *Node) processMessageInternal(msg string, senderID string, isOwn bool, e
 	}
 	// Свои файловые чанки: base64 не нужен в Memory (файл на диске в sent/).
 	// Dart не запрашивает getChunk для isOwn. Экономия ~900 МБ на 670 МБ-файле.
-	if isOwn && newMsg.MediaType == "file" && newMsg.ChunkTotal > 0 {
+	if isOwn && isChunkedMediaType(newMsg.MediaType) && newMsg.ChunkTotal > 0 {
 		newMsg.Text = ""
 		newMsg.PlainText = ""
 	}
@@ -4282,7 +4284,7 @@ func (n *Node) GetMessages() []Message {
 		}
 		// Файловые чанки: не отдаём base64. Только метаданные.
 		// Оригинал в memory не трогаем — GetChunk читает оттуда.
-		if m.MediaType == "file" && m.ChunkTotal > 0 {
+		if isChunkedMediaType(m.MediaType) && m.ChunkTotal > 0 {
 			m.Text = ""
 			m.PlainText = ""
 		}
@@ -4831,7 +4833,7 @@ func (n *Node) handleDeliveredRef(ref, sender string) {
 	peerReadEnabled := n.getPeerReadEnabled(sender)
 	if !n.myReadEnabled || !peerReadEnabled {
 		isFileChunkHidden := false
-		if msg, ok := n.findMyMessageByID(ref); ok && msg.MediaType == "file" && msg.ChunkTotal > 0 {
+		if msg, ok := n.findMyMessageByID(ref); ok && isChunkedMediaType(msg.MediaType) && msg.ChunkTotal > 0 {
 			isFileChunkHidden = true
 		}
 		if !isFileChunkHidden {
@@ -4860,7 +4862,7 @@ func (n *Node) handleDeliveredRef(ref, sender string) {
 		}
 	} else {
 		isFileChunk := false
-		if msg, ok := n.findMyMessageByID(ref); ok && msg.MediaType == "file" && msg.ChunkTotal > 0 {
+		if msg, ok := n.findMyMessageByID(ref); ok && isChunkedMediaType(msg.MediaType) && msg.ChunkTotal > 0 {
 			isFileChunk = true
 		}
 		if !isFileChunk {
@@ -4874,7 +4876,7 @@ func (n *Node) handleDeliveredRef(ref, sender string) {
 	// должен идти при любом read_enabled. Статус файла (2/3) ставит
 	// только handleFileComplete. Здесь — только счётчик и очистка unacked.
 	if msg, ok := n.findMyMessageByID(ref); ok {
-		if msg.MediaType == "file" && msg.ChunkTotal > 0 && msg.MediaID != "" {
+		if isChunkedMediaType(msg.MediaType) && msg.ChunkTotal > 0 && msg.MediaID != "" {
 			n.deliveredCountMu.Lock()
 			// Идемпотентность: не увеличиваем счётчик выше total.
 			// Иначе повторные [DELIVERED] (retry-эхо) дают delivered > total.
@@ -4950,7 +4952,7 @@ func (n *Node) sendTtlUpdate(ref, text, recipient string) error {
 // только [DELIVERED]. Меньше трафика при передаче файлов.
 func (n *Node) SendRead(ref, recipient string) error {
 	if msg, ok := n.findMyMessageByID(ref); ok {
-		if msg.MediaType == "file" && msg.ChunkTotal > 0 {
+		if isChunkedMediaType(msg.MediaType) && msg.ChunkTotal > 0 {
 			// [READ] для файла — только по последнему чанку.
 			if msg.ChunkIndex != msg.ChunkTotal-1 {
 				return nil
@@ -5004,7 +5006,7 @@ func (n *Node) SendReadBatch(refs []string, recipient string) error {
 	filtered := make([]string, 0, len(refs))
 	for _, ref := range refs {
 		if msg, ok := n.findMyMessageByID(ref); ok {
-			if msg.MediaType == "file" && msg.ChunkTotal > 0 {
+			if isChunkedMediaType(msg.MediaType) && msg.ChunkTotal > 0 {
 				// Для файлов [READ] шлём с mediaID (общий для отправителя и получателя).
 				if seenMedia[msg.MediaID] {
 					continue
@@ -5376,7 +5378,7 @@ func (n *Node) GetMessageStatuses() map[string]MessageStatus {
 	for _, msg := range all {
 		if msg.Status > 0 {
 			// Файловые чанки — через [FILE_STATUS] push. Не дублируем.
-			if msg.MediaType == "file" && msg.ChunkTotal > 0 {
+			if isChunkedMediaType(msg.MediaType) && msg.ChunkTotal > 0 {
 				continue
 			}
 			result[msg.ID] = msg.Status
@@ -5408,7 +5410,7 @@ func (n *Node) GetFileStatuses() []FileStatusEntry {
 	}
 	m := make(map[string]*acc)
 	for _, msg := range all {
-		if msg.MediaType != "file" || msg.ChunkTotal <= 0 || msg.MediaID == "" {
+		if !isChunkedMediaType(msg.MediaType) || msg.ChunkTotal <= 0 || msg.MediaID == "" {
 			continue
 		}
 		a, ok := m[msg.MediaID]

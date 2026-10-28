@@ -2,7 +2,6 @@
 package core
 
 import (
-	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -106,22 +105,149 @@ func (n *Node) SendPhoto(peerID string, photoBase64 string, ttlPeriod, ttlMode s
 	return n.sendMedia(peerID, "photo", photoBase64, 0, ttlPeriod, ttlMode)
 }
 
-// SendPhotoByPath — отправляет фото, читая файл с диска по пути.
-// Путь — внутри app dir (Dart передаёт путь из image_picker).
+// SendVoiceByPath — отправляет голосовое, читая файл с диска по пути (v2.0.5).
+// filePath — внутри app dir. Go режет на чанки по 47 КБ (Sphinx payload 64 КБ).
+// duration — секунды. Base64 через MethodChannel не проходит — OOM устранён.
 // Возвращает MediaID.
-func (n *Node) SendPhotoByPath(peerID, filePath, fileName string, ttlPeriod, ttlMode string) (string, error) {
+func (n *Node) SendVoiceByPath(peerID, filePath, fileName string, duration int, ttlPeriod, ttlMode string) (string, error) {
+	if n.host == nil {
+		return "", fmt.Errorf("node not started")
+	}
+	if peerID == "" {
+		return "", fmt.Errorf("peerID is required")
+	}
 	if filePath == "" {
 		return "", fmt.Errorf("filePath is required")
 	}
-	raw, err := os.ReadFile(filePath)
+
+	src, err := os.Open(filePath)
 	if err != nil {
-		return "", fmt.Errorf("read file failed: %w", err)
+		return "", fmt.Errorf("open file failed: %w", err)
 	}
-	if len(raw) == 0 {
+	defer src.Close()
+
+	stat, err := src.Stat()
+	if err != nil {
+		return "", fmt.Errorf("stat file failed: %w", err)
+	}
+	fileSize := stat.Size()
+	if fileSize == 0 {
 		return "", fmt.Errorf("empty file")
 	}
-	photoB64 := base64.StdEncoding.EncodeToString(raw)
-	return n.sendMedia(peerID, "photo", photoB64, 0, ttlPeriod, ttlMode)
+
+	mediaID := generateMsgID(fmt.Sprintf("voice:%s:%s:%d", peerID, fileName, time.Now().UnixNano()))
+
+	sentPath := n.sentPath(mediaID)
+	if err := os.MkdirAll(n.sentDirPath(), 0700); err != nil {
+		return "", fmt.Errorf("mkdir sent failed: %w", err)
+	}
+	dst, err := os.Create(sentPath)
+	if err != nil {
+		return "", fmt.Errorf("create sent copy failed: %w", err)
+	}
+	if _, err := io.Copy(dst, src); err != nil {
+		dst.Close()
+		os.Remove(sentPath)
+		return "", fmt.Errorf("copy to sent failed: %w", err)
+	}
+	dst.Close()
+
+	ext := filepath.Ext(fileName)
+	if ext == "" {
+		ext = ".opus"
+	}
+	if err := os.MkdirAll(n.filesDirPath(), 0700); err == nil {
+		if _, err := src.Seek(0, io.SeekStart); err == nil {
+			permPath := filepath.Join(n.filesDirPath(), mediaID+ext)
+			if permDst, err := os.Create(permPath); err == nil {
+				io.Copy(permDst, src)
+				permDst.Close()
+			}
+		}
+	}
+
+	ttlSeconds := parsePeriod(ttlPeriod)
+	var expiresAt time.Time
+	if ttlSeconds > 0 && ttlMode == "hard" {
+		expiresAt = time.Now().Add(time.Duration(ttlSeconds) * time.Second)
+	}
+
+	go n.sendFileChunksAsync(peerID, mediaID, fileName, fileSize, "voice", ttlSeconds, ttlMode, expiresAt)
+
+	return mediaID, nil
+}
+
+// SendPhotoByPath — отправляет фото, читая файл с диска по пути.
+// filePath — внутри app dir (Dart передаёт путь из image_picker).
+// v2.0.5: нарезка на чанки 47 КБ (Sphinx payload 64 КБ). Base64 через
+// MethodChannel не проходит — OOM устранён.
+// Возвращает MediaID.
+func (n *Node) SendPhotoByPath(peerID, filePath, fileName string, ttlPeriod, ttlMode string) (string, error) {
+	if n.host == nil {
+		return "", fmt.Errorf("node not started")
+	}
+	if peerID == "" {
+		return "", fmt.Errorf("peerID is required")
+	}
+	if filePath == "" {
+		return "", fmt.Errorf("filePath is required")
+	}
+
+	src, err := os.Open(filePath)
+	if err != nil {
+		return "", fmt.Errorf("open file failed: %w", err)
+	}
+	defer src.Close()
+
+	stat, err := src.Stat()
+	if err != nil {
+		return "", fmt.Errorf("stat file failed: %w", err)
+	}
+	fileSize := stat.Size()
+	if fileSize == 0 {
+		return "", fmt.Errorf("empty file")
+	}
+
+	mediaID := generateMsgID(fmt.Sprintf("photo:%s:%s:%d", peerID, fileName, time.Now().UnixNano()))
+
+	sentPath := n.sentPath(mediaID)
+	if err := os.MkdirAll(n.sentDirPath(), 0700); err != nil {
+		return "", fmt.Errorf("mkdir sent failed: %w", err)
+	}
+	dst, err := os.Create(sentPath)
+	if err != nil {
+		return "", fmt.Errorf("create sent copy failed: %w", err)
+	}
+	if _, err := io.Copy(dst, src); err != nil {
+		dst.Close()
+		os.Remove(sentPath)
+		return "", fmt.Errorf("copy to sent failed: %w", err)
+	}
+	dst.Close()
+
+	ext := filepath.Ext(fileName)
+	if ext == "" {
+		ext = ".jpg"
+	}
+	if err := os.MkdirAll(n.filesDirPath(), 0700); err == nil {
+		if _, err := src.Seek(0, io.SeekStart); err == nil {
+			permPath := filepath.Join(n.filesDirPath(), mediaID+ext)
+			if permDst, err := os.Create(permPath); err == nil {
+				io.Copy(permDst, src)
+				permDst.Close()
+			}
+		}
+	}
+
+	ttlSeconds := parsePeriod(ttlPeriod)
+	var expiresAt time.Time
+	if ttlSeconds > 0 && ttlMode == "hard" {
+		expiresAt = time.Now().Add(time.Duration(ttlSeconds) * time.Second)
+	}
+
+	go n.sendFileChunksAsync(peerID, mediaID, fileName, fileSize, "photo", ttlSeconds, ttlMode, expiresAt)
+
+	return mediaID, nil
 }
 
 // SendFileByPath — отправляет файл, читая его с диска по пути.
@@ -209,7 +335,7 @@ func (n *Node) SendFileByPath(peerID, filePath, fileName string, ttlPeriod, ttlM
 	}
 
 	// Фоновая отправка. MethodChannel возвращается немедленно.
-	go n.sendFileChunksAsync(peerID, mediaID, fileName, fileSize, ttlSeconds, ttlMode, expiresAt)
+	go n.sendFileChunksAsync(peerID, mediaID, fileName, fileSize, "file", ttlSeconds, ttlMode, expiresAt)
 
 	return mediaID, nil
 }
@@ -218,7 +344,7 @@ func (n *Node) SendFileByPath(peerID, filePath, fileName string, ttlPeriod, ttlM
 // шифрует, кладёт в chunkQueue. Блокирующая постановка (backpressure):
 // если очередь полна — ждём воркеров, не дропаем.
 // В memory — только метаданные (без base64). base64 хранится в sent/ на диске.
-func (n *Node) sendFileChunksAsync(peerID, mediaID, fileName string, fileSize int64, ttlSeconds int, ttlMode string, expiresAt time.Time) {
+func (n *Node) sendFileChunksAsync(peerID, mediaID, fileName string, fileSize int64, mediaType string, ttlSeconds int, ttlMode string, expiresAt time.Time) {
 	chunkTotal := (fileSize + ChunkSize - 1) / ChunkSize
 
 	// Начальный прогресс: Dart сразу покажет "Отправка 0%", не "Подготовка…".
@@ -268,7 +394,7 @@ func (n *Node) sendFileChunksAsync(peerID, mediaID, fileName string, fileSize in
 			Recipient:        peerID,
 			Version:          MESSAGE_VERSION_E2E,
 			Type:             TypeMessage,
-			MediaType:        "file",
+			MediaType:        mediaType,
 			MediaID:          mediaID,
 			ChunkIndex:       i,
 			ChunkTotal:       int(chunkTotal),
@@ -341,7 +467,7 @@ func (n *Node) resumeFile(mediaID string) {
 	all := n.memory.GetAll()
 	var chunks []Message
 	for _, m := range all {
-		if m.MediaID == mediaID && m.MediaType == "file" {
+		if m.MediaID == mediaID && isChunkedMediaType(m.MediaType) {
 			chunks = append(chunks, m)
 		}
 	}
@@ -383,6 +509,7 @@ func (n *Node) resumeFile(mediaID string) {
 		n.unackedChunksMu.Lock()
 		n.unackedChunks[c.ID] = retryInfo{
 			mediaID:    c.MediaID,
+			mediaType:  c.MediaType,
 			chunkIndex: c.ChunkIndex,
 			recipient:  c.Recipient,
 			msgID:      c.ID,

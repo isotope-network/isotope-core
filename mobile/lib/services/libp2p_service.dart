@@ -115,6 +115,32 @@ class LibP2PService {
     }
   }
 
+  /// Отправляет голосовое, читая файл с диска по пути (v2.0.5).
+  /// Go режет на чанки 47 КБ (Sphinx payload 64 КБ). Base64 не идёт (OOM).
+  /// duration — секунды. Возвращает {"status":"ok","id":"<MediaID>"}.
+  static Future<Map<String, dynamic>> sendVoiceByPath({
+    required String peerID,
+    required String filePath,
+    required String fileName,
+    required int duration,
+    String period = 'never',
+    String mode = '',
+  }) async {
+    try {
+      final response = await _channel.invokeMethod<String>('sendVoiceByPath', {
+        'peerID': peerID,
+        'filePath': filePath,
+        'fileName': fileName,
+        'duration': duration,
+        'period': period,
+        'mode': mode,
+      });
+      return _safeDecode(response);
+    } on PlatformException catch (e) {
+      return {'error': e.message ?? 'platform_error', 'operation': 'send_voice_by_path'};
+    }
+  }
+
   /// Отправляет фото конкретному пиру (E2E).
   /// photoBase64 — base64 JPEG (сжатое).
   static Future<Map<String, dynamic>> sendPhoto({

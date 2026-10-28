@@ -201,6 +201,18 @@ class MainActivity : FlutterActivity() {
                             runOnUiThread { result.success(response) }
                         }.start()
                     }
+                    "sendVoiceByPath" -> {
+                        val peerID = call.argument<String>("peerID") ?: ""
+                        val filePath = call.argument<String>("filePath") ?: ""
+                        val fileName = call.argument<String>("fileName") ?: ""
+                        val duration = call.argument<Int>("duration") ?: 0
+                        val period = call.argument<String>("period") ?: "forever"
+                        val mode = call.argument<String>("mode") ?: ""
+                        Thread {
+                            val response = Mobile.sendVoiceByPath(peerID, filePath, fileName, duration, period, mode)
+                            runOnUiThread { result.success(response) }
+                        }.start()
+                    }
                     "sendFileByPath" -> {
                         val peerID = call.argument<String>("peerID") ?: ""
                         val filePath = call.argument<String>("filePath") ?: ""
