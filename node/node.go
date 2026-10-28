@@ -1282,7 +1282,8 @@ func (n *Node) fallbackSend(recipient string, data []byte, isFileChunk bool) boo
 // batchBuffer — буфер текстов для одного получателя (v2.0.4 c).
 // Тексты копятся до 10 или 1 сек или 60 КБ → один Sphinx-пакет.
 type batchBuffer struct {
-	Texts []batchText
+	Texts   []batchText
+	FirstAt time.Time
 }
 
 // batchText — один текст в батче. ID — отправителя (для [DELIVERED]).
@@ -1323,6 +1324,9 @@ func (n *Node) addToBatch(peerID, textID, text string) {
 		n.batchBuffers[peerID] = &batchBuffer{Texts: []batchText{{ID: textID, Text: text}}}
 		n.batchBuffersMu.Unlock()
 		return
+	}
+	if buf.FirstAt.IsZero() {
+		buf.FirstAt = time.Now()
 	}
 	buf.Texts = append(buf.Texts, batchText{ID: textID, Text: text})
 	needFlush := len(buf.Texts) >= 10
@@ -1398,8 +1402,12 @@ func (n *Node) flushAllBatches() {
 		if len(buf.Texts) == 0 {
 			continue
 		}
+		if time.Since(buf.FirstAt) < 1*time.Second {
+			continue
+		}
 		items = append(items, item{peerID: peerID, texts: buf.Texts})
 		buf.Texts = nil
+		buf.FirstAt = time.Time{}
 	}
 	n.batchBuffersMu.Unlock()
 	for _, it := range items {
