@@ -1350,25 +1350,43 @@ func (n *Node) sendDummy() {
 	if !n.useOnion || n.isRelay || n.host == nil || n.contacts == nil {
 		return
 	}
-	for _, c := range n.contacts.GetAll() {
-		if c.X25519Pub == "" || c.PeerID == "" {
-			continue
-		}
-		recipient, err := peer.Decode(c.PeerID)
-		if err != nil {
-			continue
-		}
-		route, err := n.buildSphinxRoute(recipient)
-		if err != nil {
-			continue
-		}
-		payload := []byte(`{"dummy":true}`)
-		packet, err := n.buildSphinxPacket(route, payload, false, true)
-		if err != nil {
-			continue
-		}
-		n.sendSphinxPacketToRelay1(route, packet)
+	all := n.contacts.GetAll()
+	if len(all) == 0 {
+		return
 	}
+	c := all[mathrand.Intn(len(all))]
+	if c.X25519Pub == "" || c.PeerID == "" {
+		return
+	}
+	recipient, err := peer.Decode(c.PeerID)
+	if err != nil {
+		return
+	}
+	route, err := n.buildSphinxRoute(recipient)
+	if err != nil {
+		return
+	}
+	payload := []byte(generateRandomText(50, 200))
+	packet, err := n.buildSphinxPacket(route, payload, false, true)
+	if err != nil {
+		return
+	}
+	delay := time.Duration(1+mathrand.Intn(60)) * time.Second
+	go func() {
+		time.Sleep(delay)
+		n.sendSphinxPacketToRelay1(route, packet)
+	}()
+}
+
+// generateRandomText — случайный текст 50–200 символов (dummy, v2.0.4 d.1).
+func generateRandomText(minLen, maxLen int) string {
+	n := minLen + mathrand.Intn(maxLen-minLen+1)
+	const chars = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 .,!?"
+	b := make([]byte, n)
+	for i := range b {
+		b[i] = chars[mathrand.Intn(len(chars))]
+	}
+	return string(b)
 }
 
 // sendSphinxPacketToRelay1 — отправка готового Sphinx-пакета relay1.
@@ -4156,9 +4174,9 @@ func (n *Node) InitP2P() error {
 			}
 		}()
 		go func() {
-			ticker := time.NewTicker(60 * time.Second)
-			defer ticker.Stop()
-			for range ticker.C {
+			for {
+				delay := time.Duration(10+mathrand.Intn(111)) * time.Second
+				time.Sleep(delay)
 				n.sendDummy()
 			}
 		}()
