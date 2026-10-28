@@ -648,6 +648,32 @@ class LibP2PService {
     }
   }
 
+  /// Возвращает настройку dummy-трафика (v2.0.4 d).
+  /// true — отправитель шлёт пустой Sphinx-пакет каждые 60 сек.
+  /// false — без dummy. Дефолт false.
+  static Future<bool> getMaskingEnabled() async {
+    try {
+      final response = await _channel.invokeMethod<String>('getMaskingEnabled');
+      final decoded = _safeDecode(response, fallback: '{"masking_enabled":false}');
+      return decoded['masking_enabled'] as bool? ?? false;
+    } on PlatformException {
+      return false;
+    }
+  }
+
+  /// Включает/выключает dummy-трафик на лету (без перезапуска).
+  /// Сохраняется в isotope_settings.json.
+  static Future<Map<String, dynamic>> setMaskingEnabled(bool enabled) async {
+    try {
+      final response = await _channel.invokeMethod<String>('setMaskingEnabled', {
+        'enabled': enabled,
+      });
+      return _safeDecode(response);
+    } on PlatformException catch (e) {
+      return {'error': e.message ?? 'platform_error', 'operation': 'set_masking_enabled'};
+    }
+  }
+
   /// Обновляет foreground-уведомление «Сеть активна» (шторка).
   /// title — заголовок (обычно «ISOTOPE»).
   /// text — строка состояния. progress — 0..100, или -1 (без прогресс-бара).

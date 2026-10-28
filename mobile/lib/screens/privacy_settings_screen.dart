@@ -22,6 +22,7 @@ class _PrivacySettingsScreenState extends State<PrivacySettingsScreen> {
   bool _notifProgress = false;
   bool _sphinxEnabled = false;
   bool _mixingEnabled = false;
+  bool _maskingEnabled = false;
   bool _loading = true;
 
   @override
@@ -37,6 +38,7 @@ class _PrivacySettingsScreenState extends State<PrivacySettingsScreen> {
       final notifSettings = await LibP2PService.getNotificationSettings();
       final sphinxEnabled = await LibP2PService.getSphinxEnabled();
       final mixingEnabled = await LibP2PService.getMixingEnabled();
+      final maskingEnabled = await LibP2PService.getMaskingEnabled();
       if (mounted) {
         setState(() {
           _myReadEnabled = readEnabled;
@@ -46,6 +48,7 @@ class _PrivacySettingsScreenState extends State<PrivacySettingsScreen> {
           _notifProgress = notifSettings['progress'] ?? false;
           _sphinxEnabled = sphinxEnabled;
           _mixingEnabled = mixingEnabled;
+          _maskingEnabled = maskingEnabled;
           _loading = false;
         });
       }
@@ -180,6 +183,27 @@ class _PrivacySettingsScreenState extends State<PrivacySettingsScreen> {
     }
   }
 
+  Future<void> _setMaskingEnabled(bool value) async {
+    setState(() => _maskingEnabled = value);
+    try {
+      final result = await LibP2PService.setMaskingEnabled(value);
+      if (result.containsKey('error')) {
+        LogService.log('PrivacySettings: setMaskingEnabled failed: ${result['error']}');
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Ошибка: ${result['error']}')),
+          );
+          setState(() => _maskingEnabled = !value);
+        }
+      } else {
+        LogService.log('PrivacySettings: masking_enabled=$value');
+      }
+    } catch (e) {
+      LogService.log('PrivacySettings: setMaskingEnabled exception: $e');
+      if (mounted) setState(() => _maskingEnabled = !value);
+    }
+  }
+
   Future<void> _setShowContent(bool value) async {
     setState(() => _showNotificationContent = value);
     try {
@@ -292,6 +316,16 @@ class _PrivacySettingsScreenState extends State<PrivacySettingsScreen> {
                   ),
                   value: _mixingEnabled,
                   onChanged: _sphinxEnabled ? _setMixingEnabled : null,
+                ),
+                SwitchListTile(
+                  title: const Text('Маскировка'),
+                  subtitle: const Text(
+                    'Dummy-трафик: пустой пакет каждые 60 сек. '
+                    'Размер 64 КБ — всегда (Sphinx). Трафик ×1.4. '
+                    'Тип, объём, паттерн скрыты.',
+                  ),
+                  value: _maskingEnabled,
+                  onChanged: _setMaskingEnabled,
                 ),
               ],
             ),

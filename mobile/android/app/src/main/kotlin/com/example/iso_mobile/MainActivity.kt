@@ -516,6 +516,19 @@ class MainActivity : FlutterActivity() {
                             runOnUiThread { result.success(response) }
                         }.start()
                     }
+                    "getMaskingEnabled" -> {
+                        Thread {
+                            val response = Mobile.getMaskingEnabled()
+                            runOnUiThread { result.success(response) }
+                        }.start()
+                    }
+                    "setMaskingEnabled" -> {
+                        val enabled = call.argument<Boolean>("enabled") ?: false
+                        Thread {
+                            val response = Mobile.setMaskingEnabled(enabled)
+                            runOnUiThread { result.success(response) }
+                        }.start()
+                    }
                     "updateForegroundNotification" -> {
                         val title = call.argument<String>("title") ?: "ISOTOPE"
                         val text = call.argument<String>("text") ?: "Сеть активна"
