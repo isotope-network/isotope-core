@@ -5849,6 +5849,23 @@ func (n *Node) GetMixingEnabled() bool {
 	return n.mixingEnabled
 }
 
+// GetMaskingEnabled — текущее значение dummy-трафика (v2.0.4 d).
+func (n *Node) GetMaskingEnabled() bool {
+	if n.settingsStore == nil {
+		return false
+	}
+	return n.settingsStore.GetMaskingEnabled()
+}
+
+// SetMaskingEnabled — включает/выключает dummy-трафик на лету + сохраняет.
+func (n *Node) SetMaskingEnabled(enabled bool) error {
+	if n.settingsStore == nil {
+		return fmt.Errorf("settings store not initialized")
+	}
+	log.Printf("[MASKING] enabled=%v", enabled)
+	return n.settingsStore.SetMaskingEnabled(enabled)
+}
+
 // GetContacts — возвращает все контакты.
 func (n *Node) GetContacts() []Contact {
 	if n.contacts == nil {

@@ -838,6 +838,37 @@ func SetMixingEnabled(enabled bool) string {
 	return `{"status":"ok"}`
 }
 
+// GetMaskingEnabled — возвращает настройку dummy-трафика (v2.0.4 d).
+// Формат: {"masking_enabled":true|false}.
+func GetMaskingEnabled() string {
+	nodeMu.Lock()
+	defer nodeMu.Unlock()
+
+	if node == nil {
+		return `{"masking_enabled":false}`
+	}
+	enabled := node.GetMaskingEnabled()
+	if enabled {
+		return `{"masking_enabled":true}`
+	}
+	return `{"masking_enabled":false}`
+}
+
+// SetMaskingEnabled — включает/выключает dummy-трафик на лету + сохраняет.
+func SetMaskingEnabled(enabled bool) string {
+	nodeMu.Lock()
+	defer nodeMu.Unlock()
+
+	if node == nil {
+		return errorJSON("node not started")
+	}
+	if err := node.SetMaskingEnabled(enabled); err != nil {
+		return errorJSON(err.Error())
+	}
+	addLog("[SETTINGS] masking_enabled set: %v", enabled)
+	return `{"status":"ok"}`
+}
+
 // GetMyDisplayName — возвращает представление по умолчанию.
 func GetMyDisplayName() string {
 	nodeMu.Lock()
