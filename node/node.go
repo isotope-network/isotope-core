@@ -1693,9 +1693,25 @@ func (n *Node) pushFileStatus(mediaID string, delivered, total int) {
 	}
 }
 
+// retryBackoff — интервалы переотправки чанков (d, 2026-10-29).
+// Сумма ~1 ч. После — giving up (файл не дожат, честно).
+// Было: 3 попытки × 30 сек = 90 сек. Мало для нестабильного Wi-Fi.
+var retryBackoff = []time.Duration{
+	30 * time.Second,
+	1 * time.Minute,
+	2 * time.Minute,
+	5 * time.Minute,
+	10 * time.Minute,
+	10 * time.Minute,
+	10 * time.Minute,
+	10 * time.Minute,
+	10 * time.Minute,
+	10 * time.Minute,
+}
+
 // retryLoop — периодическая проверка unackedChunks.
-// Если чанк не подтверждён за 30 сек — переотправка.
-// После 3 попыток — сдаться, удалить (файл повреждён).
+// Интервал — retryBackoff[attempts] (30 сек → 10 мин, потолок).
+// После len(retryBackoff) попыток (~1 ч) — сдаться, удалить.
 func (n *Node) retryLoop() {
 	go func() {
 		for {
@@ -1720,12 +1736,13 @@ func (n *Node) retryUnacked() {
 
 	n.unackedChunksMu.Lock()
 	for id, info := range n.unackedChunks {
-		if now.Sub(info.lastSent) < 30*time.Second {
-			continue
-		}
-		if info.attempts >= 3 {
+		if info.attempts >= len(retryBackoff) {
 			log.Printf("[RETRY] giving up on %s after %d attempts", id, info.attempts)
 			delete(n.unackedChunks, id)
+			continue
+		}
+		backoff := retryBackoff[info.attempts]
+		if now.Sub(info.lastSent) < backoff {
 			continue
 		}
 		toRetry = append(toRetry, retryItem{id: id, info: info})
