@@ -5094,11 +5094,21 @@ func (n *Node) SendReadBatch(refs []string, recipient string) error {
 		Time:        time.Now().UTC().Format("2006-01-02T15:04:05"),
 		ReadEnabled: &readEnabled,
 	}
-	if err := n.sendServiceViaBootstrap(msg); err != nil {
-		log.Printf("[CONFIRM] relay read-batch (%d refs) to %s failed: %v", len(refs), recipient, err)
+	// [DELIVERED] — через sendToRecipient (как чанки, с retry), не
+	// sendServiceViaBootstrap. Ревью Публикатора 2026-10-29: (a).
+	// sendServiceViaBootstrap — синхронный NewStream к VPS, без retry.
+	// VPS мог не получить — Xiaomi не знает. sendToRecipient — tryDirectSend
+	// + fallback, надёжнее.
+	data, err := json.Marshal(msg)
+	if err != nil {
+		log.Printf("[CONFIRM] delivered-batch marshal failed: %v", err)
 		return err
 	}
-	log.Printf("[CONFIRM] relay read-batch (%d refs) to %s", len(refs), recipient)
+	if !n.sendToRecipient(msg, data, false) {
+		log.Printf("[CONFIRM] delivered-batch (%d refs) to %s failed (sendToRecipient)", len(refs), recipient)
+		return fmt.Errorf("delivered-batch send failed")
+	}
+	log.Printf("[CONFIRM] delivered-batch (%d refs) to %s", len(refs), recipient)
 	return nil
 }
 
@@ -5445,6 +5455,7 @@ func (n *Node) GetFileStatuses() []FileStatusEntry {
 		delivered   int
 		status      MessageStatus
 		lastChunkID string
+		isOwn       bool
 	}
 	m := make(map[string]*acc)
 	for _, msg := range all {
@@ -5453,7 +5464,7 @@ func (n *Node) GetFileStatuses() []FileStatusEntry {
 		}
 		a, ok := m[msg.MediaID]
 		if !ok {
-			a = &acc{total: msg.ChunkTotal}
+			a = &acc{total: msg.ChunkTotal, isOwn: msg.IsOwn}
 			m[msg.MediaID] = a
 		}
 		if msg.Status >= StatusDelivered {
@@ -5470,6 +5481,17 @@ func (n *Node) GetFileStatuses() []FileStatusEntry {
 	}
 	result := make([]FileStatusEntry, 0, len(m))
 	for id, a := range m {
+		// Получатель: если файл собран на диске (files/<mediaID>.*), но memory
+		// после перезапуска неполный — delivered=total. Иначе UI 7% на собранном
+		// файле. Только для чужих (свои — deliveredCount по [DELIVERED]).
+		if !a.isOwn {
+			if matches, _ := filepath.Glob(filepath.Join(n.filesDirPath(), id+".*")); len(matches) > 0 {
+				a.delivered = a.total
+				if a.status < StatusDelivered {
+					a.status = StatusDelivered
+				}
+			}
+		}
 		result = append(result, FileStatusEntry{
 			MediaID:   id,
 			Delivered: a.delivered,
