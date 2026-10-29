@@ -2842,10 +2842,23 @@ func (n *Node) handleFileComplete(m Message) {
 		statusToSet = StatusHidden
 	}
 	all := n.memory.GetAll()
+	total := 0
 	for _, cm := range all {
 		if cm.MediaID == mediaID {
 			n.setMessageStatus(cm.ID, statusToSet)
+			if total == 0 {
+				total = cm.ChunkTotal
+			}
 		}
+	}
+	// Файл собран — deliveredCount = total, push file_status 100%.
+	// Иначе UI: галочки ✓✓ + прогресс 66% (рассинхрон).
+	// Файл целый (проверено на Xiaomi) — 100% не врёт. Идемпотентно.
+	if total > 0 {
+		n.deliveredCountMu.Lock()
+		n.deliveredCount[mediaID] = total
+		n.deliveredCountMu.Unlock()
+		n.pushFileStatus(mediaID, total, total)
 	}
 
 	// Удаляем sent/<mediaID>.bin — файл собран у получателя.
@@ -2877,6 +2890,10 @@ func (n *Node) SendFileComplete(mediaID, recipient string) error {
 		Time:        time.Now().UTC().Format("2006-01-02T15:04:05"),
 		ReadEnabled: &readEnabled,
 	}
+	// Ревью старого программиста 2026-10-29: flush pending [DELIVERED]
+	// перед [FILE_COMPLETE]. Иначе deliveredCount не догоняет до 100%
+	// до галочек — UI прыгает (8% → галочки).
+	n.flushDelivered(recipient)
 	if err := n.sendServiceViaBootstrap(msg); err != nil {
 		log.Printf("[FILE_COMPLETE] send failed mediaID=%s: %v", mediaID, err)
 		return err
