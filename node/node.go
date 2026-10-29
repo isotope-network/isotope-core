@@ -269,6 +269,13 @@ type Node struct {
 	// SendFileByPath работает в своей горутине.
 	chunkQueue chan Message
 
+	// mediaSendMu / mediaSendCond / activeMediaID — последовательная постановка
+	// файлов в chunkQueue (вариант A, Публикатор 2026-10-29).
+	// Файл 1 ставит все чанки → файл 2 начинает ставить. UI не прыгает.
+	mediaSendMu   sync.Mutex
+	mediaSendCond *sync.Cond
+	activeMediaID string
+
 	// batchBuffers — буферы текстов для батча (v2.0.4 c).
 	// Ключ — PeerID получателя. 10 текстов = 1 Sphinx-пакет 64 КБ.
 	// Трафик ×1.4 вместо ×14. Без батча — LTE смерть.
@@ -341,7 +348,7 @@ func NewNode(cfg Config) *Node {
 	if listenIP == "" {
 		listenIP = "0.0.0.0"
 	}
-	return &Node{
+	n := &Node{
 		ethHash:                 cfg.EthHash,
 		configTransports:        cfg.Transports,
 		configPort:              port,
@@ -370,6 +377,8 @@ func NewNode(cfg Config) *Node {
 		useOnion:                cfg.UseOnion,
 		dummyScreenOn:           true,
 	}
+	n.mediaSendCond = sync.NewCond(&n.mediaSendMu)
+	return n
 }
 
 // SetMessageHook — устанавливает колбэк для новых сообщений

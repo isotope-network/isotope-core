@@ -345,6 +345,23 @@ func (n *Node) SendFileByPath(peerID, filePath, fileName string, ttlPeriod, ttlM
 // если очередь полна — ждём воркеров, не дропаем.
 // В memory — только метаданные (без base64). base64 хранится в sent/ на диске.
 func (n *Node) sendFileChunksAsync(peerID, mediaID, fileName string, fileSize int64, mediaType string, ttlSeconds int, ttlMode string, expiresAt time.Time) {
+	// Вариант A (Публикатор 2026-10-29): последовательная постановка файлов
+	// в chunkQueue. Файл 1 ставит все чанки → файл 2 начинает ставить.
+	n.mediaSendMu.Lock()
+	for n.activeMediaID != "" && n.activeMediaID != mediaID {
+		n.mediaSendCond.Wait()
+	}
+	n.activeMediaID = mediaID
+	n.mediaSendMu.Unlock()
+	defer func() {
+		n.mediaSendMu.Lock()
+		if n.activeMediaID == mediaID {
+			n.activeMediaID = ""
+			n.mediaSendCond.Broadcast()
+		}
+		n.mediaSendMu.Unlock()
+	}()
+
 	chunkTotal := (fileSize + ChunkSize - 1) / ChunkSize
 
 	// Начальный прогресс: Dart сразу покажет "Отправка 0%", не "Подготовка…".
