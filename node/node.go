@@ -1177,10 +1177,28 @@ func (n *Node) sendToRecipient(msg Message, data []byte, isFileChunk bool) bool 
 		return false
 	}
 
+	// Сервисные ([DELIVERED], [READ], [FILE_COMPLETE]) — через serviceSem (2),
+	// текстовые — через sendSem (10), файловые — без семафора (chunkWorker).
+	// VPS перегружен лавиной чанков — сервисные не должны ждать. Ревью 2026-10-29.
+	isService := n.isServiceType(msg.Type)
+	acquire := func() func() {
+		if isService {
+			n.serviceSem <- struct{}{}
+			return func() { <-n.serviceSem }
+		}
+		if !isFileChunk {
+			n.sendSem <- struct{}{}
+			return func() { <-n.sendSem }
+		}
+		return func() {}
+	}
+
 	// Уровень 1: isPeerDead — предфильтр. PING пометил мёртвым —
 	// не тратим 3 сек на direct, сразу fallback.
 	// Лог убран из hot path (10718 × лог = heap).
 	if n.isPeerDead(msg.Recipient) {
+		release := acquire()
+		defer release()
 		return n.fallbackSend(msg.Recipient, data, isFileChunk)
 	}
 
@@ -1198,8 +1216,8 @@ func (n *Node) sendToRecipient(msg Message, data []byte, isFileChunk bool) bool 
 			n.sendWithFallback(targetID, data, msg.Recipient, isFileChunk)
 		} else {
 			go func() {
-				n.sendSem <- struct{}{}
-				defer func() { <-n.sendSem }()
+				release := acquire()
+				defer release()
 				n.sendWithFallback(targetID, data, msg.Recipient, isFileChunk)
 			}()
 		}
@@ -1207,6 +1225,8 @@ func (n *Node) sendToRecipient(msg Message, data []byte, isFileChunk bool) bool 
 	}
 
 	// Уровень 3: не в Peers() — сразу fallback.
+	release := acquire()
+	defer release()
 	return n.fallbackSend(msg.Recipient, data, isFileChunk)
 }
 
