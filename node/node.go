@@ -254,6 +254,12 @@ type Node struct {
 	// Используется только для не-файловых сообщений.
 	sendSem chan struct{}
 
+	// serviceSem — семафор сервисных сообщений ([DELIVERED], [READ], [CONTACT_*]).
+	// Отдельный от sendSem, чтобы сервисные не ждали файловые чанки
+	// (10 chunkWorker'ов). Ревью старого программиста 2026-10-29:
+	// корень отставания UI — конкуренция за libp2p stream. serviceSem=2.
+	serviceSem chan struct{}
+
 	// mixingSem — семафор для mixing-чанков (5 одновременно).
 	// Не перегружать relay: 5 параллельных Sphinx-пакетов.
 	mixingSem chan struct{}
@@ -362,6 +368,7 @@ func NewNode(cfg Config) *Node {
 		tempContacts:            make(map[string]Contact),
 		myReadEnabled:           true,
 		sendSem:                 make(chan struct{}, SendSemaphoreCapacity),
+		serviceSem:              make(chan struct{}, 2),
 		mixingSem:               make(chan struct{}, 5),
 		sphinxFileSem:           make(chan struct{}, 2),
 		chunkQueue:              make(chan Message, 1000),
@@ -1846,16 +1853,21 @@ func (n *Node) sendServiceViaBootstrap(msg Message) error {
 			continue
 		}
 
+		// serviceSem: сервисные не конкурируют с chunkWorker за libp2p stream.
+		// Ревью старого программиста 2026-10-29: корень отставания UI.
+		n.serviceSem <- struct{}{}
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		s, err := n.host.NewStream(ctx, pi.ID, protocolID)
 		if err != nil {
 			cancel()
+			<-n.serviceSem
 			lastErr = fmt.Errorf("NewStream to %s failed: %w", pi.ID, err)
 			continue
 		}
 		_, err = fmt.Fprintf(s, "%s%s\n", REPLICA_PREFIX, string(data))
 		s.Close()
 		cancel()
+		<-n.serviceSem
 		if err != nil {
 			lastErr = fmt.Errorf("write to %s failed: %w", pi.ID, err)
 			continue
