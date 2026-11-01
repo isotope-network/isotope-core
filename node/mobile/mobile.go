@@ -20,13 +20,14 @@ type MessageCallback interface {
 }
 
 var (
-	node            *sbimain.Node
-	nodeMu          sync.Mutex
-	logs            []string
-	logsMu          sync.Mutex
-	logFile         *os.File
-	filesDir        string
-	messageCallback MessageCallback
+	node              *sbimain.Node
+	nodeMu            sync.Mutex
+	logs              []string
+	logsMu            sync.Mutex
+	logFile           *os.File
+	filesDir          string
+	messageCallback   MessageCallback
+	pendingSeedPhrase string
 )
 
 // logWriter — перехватывает логи ядра
@@ -142,6 +143,14 @@ func Start(ethHash string, bootstrapPeers string, enableMDNS bool) string {
 			messageCallback.OnMessage(msg)
 		}
 	})
+
+	if pendingSeedPhrase != "" {
+		if err := n.SetSeedPhrase(pendingSeedPhrase); err != nil {
+			addLog("[SEED] SetSeedPhrase failed: %v", err)
+		} else {
+			addLog("[SEED] seed phrase applied before InitP2P")
+		}
+	}
 
 	stateFile := filesDir + "/isotope_state.json"
 	if err := n.StartMobile(stateFile); err != nil {
@@ -1478,6 +1487,74 @@ func parseBootstrapPeers(bootstrapPeers string) []string {
 		}
 	}
 	return peers
+}
+
+// ============================================================
+// SEED (v2.0.6) — BIP39 seed-фраза
+// ============================================================
+
+// GenerateSeedPhrase — генерирует BIP39-фразу (12 или 24 слова).
+// Чистая функция, node не трогает. Без nodeMu.
+// Возвращает {"status":"ok","phrase":"..."} или errorJSON.
+func GenerateSeedPhrase(words int) string {
+	phrase, err := sbimain.GenerateSeedPhrase(words)
+	if err != nil {
+		return errorJSON(err.Error())
+	}
+	data, _ := json.Marshal(map[string]string{
+		"status": "ok",
+		"phrase": phrase,
+	})
+	return string(data)
+}
+
+// SetSeedPhraseBeforeStart — сохраняет фразу до Start (node ещё nil).
+// Start применит её до InitP2P. Используется при восстановлении из Keystore.
+func SetSeedPhraseBeforeStart(phrase string) string {
+	nodeMu.Lock()
+	defer nodeMu.Unlock()
+
+	if phrase == "" {
+		return errorJSON("phrase is required")
+	}
+	if err := sbimain.ValidateSeedPhrase(phrase); err != nil {
+		return errorJSON(err.Error())
+	}
+	pendingSeedPhrase = phrase
+	addLog("[SEED] pending seed phrase set before start")
+	return `{"status":"ok"}`
+}
+
+// SetSeedPhrase — сохраняет фразу в узле (после Start).
+// Валидирует checksum. Не логирует фразу. Не на диск.
+func SetSeedPhrase(phrase string) string {
+	nodeMu.Lock()
+	defer nodeMu.Unlock()
+
+	if node == nil {
+		return errorJSON("node not started")
+	}
+	if err := node.SetSeedPhrase(phrase); err != nil {
+		return errorJSON(err.Error())
+	}
+	addLog("[SEED] seed phrase set")
+	return `{"status":"ok"}`
+}
+
+// GetSeedPhrase — возвращает фразу (только для показа пользователю).
+// Пусто, если seed не задан. Не логировать.
+func GetSeedPhrase() string {
+	nodeMu.Lock()
+	defer nodeMu.Unlock()
+
+	if node == nil {
+		return errorJSON("node not started")
+	}
+	phrase := node.GetSeedPhrase()
+	data, _ := json.Marshal(map[string]string{
+		"phrase": phrase,
+	})
+	return string(data)
 }
 
 // node/mobile/mobile.go

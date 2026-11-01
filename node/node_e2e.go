@@ -331,3 +331,23 @@ func (n *Node) decryptFromSender(sender, payload string) (string, error) {
 	}
 	return string(plaintext), nil
 }
+
+// SetSeedPhrase — сохраняет BIP39 seed-фразу в памяти (v2.0.6).
+// Валидирует (checksum). Не логирует. Не на диск.
+// Вызывается до InitP2P (через mobile.SetSeedPhraseBeforeStart → Start).
+func (n *Node) SetSeedPhrase(phrase string) error {
+	if phrase == "" {
+		return fmt.Errorf("seed: empty phrase")
+	}
+	if err := ValidateSeedPhrase(phrase); err != nil {
+		return err
+	}
+	n.seedPhrase = phrase
+	return nil
+}
+
+// GetSeedPhrase — возвращает seed-фразу (только для показа пользователю).
+// Пусто, если seed не задан. Не логировать. Не в сеть.
+func (n *Node) GetSeedPhrase() string {
+	return n.seedPhrase
+}
