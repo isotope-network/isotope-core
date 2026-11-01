@@ -366,7 +366,7 @@ class _PrivacySettingsScreenState extends State<PrivacySettingsScreen> {
   }
 
   Future<void> _restoreSeed() async {
-    final controller = TextEditingController();
+    var localPhrase = '';
     final phrase = await showDialog<String>(
       context: context,
       builder: (ctx) => AlertDialog(
@@ -382,8 +382,8 @@ class _PrivacySettingsScreenState extends State<PrivacySettingsScreen> {
             ),
             const SizedBox(height: 16),
             TextField(
-              controller: controller,
               maxLines: 4,
+              onChanged: (v) => localPhrase = v,
               decoration: const InputDecoration(
                 hintText: 'word1 word2 word3 ...',
                 border: OutlineInputBorder(),
@@ -397,13 +397,12 @@ class _PrivacySettingsScreenState extends State<PrivacySettingsScreen> {
             child: const Text('Отмена'),
           ),
           FilledButton(
-            onPressed: () => Navigator.of(ctx).pop(controller.text.trim()),
+            onPressed: () => Navigator.of(ctx).pop(localPhrase.trim()),
             child: const Text('Восстановить'),
           ),
         ],
       ),
     );
-    controller.dispose();
     if (phrase == null || phrase.isEmpty) return;
 
     final result = await LibP2PService.setSeedPhraseBeforeStart(phrase);
