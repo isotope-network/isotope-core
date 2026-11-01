@@ -2,39 +2,23 @@
 package core
 
 import (
-	"bytes"
 	"context"
-	"crypto/aes"
-	"crypto/cipher"
 	"crypto/ed25519"
-	cryptorand "crypto/rand"
-	"crypto/sha256"
-	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"io"
 	"log"
-	"math/big"
-	mathrand "math/rand"
 	"net/http"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 
-	ma "github.com/multiformats/go-multiaddr"
-	"golang.org/x/crypto/curve25519"
-	"golang.org/x/crypto/nacl/box"
-
 	"github.com/libp2p/go-libp2p"
 	"github.com/libp2p/go-libp2p/core/crypto"
 	"github.com/libp2p/go-libp2p/core/host"
-	"github.com/libp2p/go-libp2p/core/network"
 	"github.com/libp2p/go-libp2p/core/peer"
-	"github.com/libp2p/go-libp2p/core/peerstore"
 	"github.com/libp2p/go-libp2p/p2p/discovery/mdns"
 	client "github.com/libp2p/go-libp2p/p2p/protocol/circuitv2/client"
 	"github.com/libp2p/go-libp2p/p2p/protocol/circuitv2/relay"
@@ -61,42 +45,25 @@ const END_PREFIX = "[END]"
 
 const ANNOUNCE_TTL = 8 * time.Minute
 
-// SendSemaphoreCapacity — максимальное число одновременных
-// исходящих отправок (stream'ов). Защита libp2p от перегруза.
-// 10 — проверено. При 15+ узлах — можно увеличить.
 const SendSemaphoreCapacity = 10
 
-// ChunkSize — размер файлового чанка в байтах (v2.0.4 a+b).
-// 47 КБ raw → box.Seal (+40) → base64 (×1.33) ≈ 62.9 КБ < 64 КБ payload.
-// Было 64 КБ (double base64 — 117 КБ, payload 128 КБ).
 const ChunkSize = 47 * 1024
 
-// E2E_VERSION — версия формата QR-обмена E2E-ключами.
-// 0 — старый формат (только PeerID). 1 — JSON с ключами.
 const E2E_VERSION = 1
 
-// MESSAGE_VERSION — версия формата сообщения.
-// 0 — история / broadcast (открытое).
-// 2 — E2E-шифрованное (Text содержит base64(nonce||ciphertext)).
 const MESSAGE_VERSION_E2E = 2
 
 // MessageStatus — статус сообщения (для подтверждений доставки/прочтения).
-// 1 = отправлено, 2 = доставлено, 3 = скрыто, 4 = прочитано.
-// Приоритет: read (4) > hidden (3) > delivered (2) > sent (1).
-// setMessageStatus не понижает — только повышает.
 type MessageStatus int
 
 const (
 	StatusSent      MessageStatus = 1
 	StatusDelivered MessageStatus = 2
-	StatusHidden    MessageStatus = 3 // скрыто (получатель не делится статусом)
-	StatusRead      MessageStatus = 4 // прочитано (высший приоритет)
+	StatusHidden    MessageStatus = 3
+	StatusRead      MessageStatus = 4
 )
 
 // retryInfo — метаданные чанка, ожидающего подтверждения.
-// Не хранит Message целиком: для больших файлов (10700 чанков) это давало
-// ~1 ГБ памяти. Метаданные — ~200 байт на чанк (2 МБ на 10700).
-// Восстановление Message — в retryUnacked через fillFileChunkFromSent.
 type retryInfo struct {
 	mediaID    string
 	mediaType  string
@@ -114,11 +81,8 @@ type retryInfo struct {
 }
 
 // hookAckWindow — окно неподтверждённых чанков для одного mediaID.
-// Dart шлёт fileAck(mediaID, indices) после saveChunk на диск.
-// Go очищает base64 (ClearFileChunk) и удаляет индексы из окна.
-// Если ack не пришёл за hookAckTimeout — лог [ACK_TIMEOUT], удаление из окна.
 type hookAckWindow struct {
-	Indices map[int]time.Time // chunkIndex → время добавления
+	Indices map[int]time.Time
 }
 
 // announcedPeer — запись о пире: список его multiaddr + когда последний раз видели.
@@ -129,14 +93,13 @@ type announcedPeer struct {
 
 // qrDataV1 — формат QR-кода версии 1.
 type qrDataV1 struct {
-	V          int    `json:"v"`
-	PeerID     string `json:"peerID"`
-	Ed25519Pub string `json:"ed25519_pub"`
-	X25519Pub  string `json:"x25519_pub"`
-	Signature  string `json:"signature"`
-	// DisplayName — представление владельца QR (как он хочет быть представлен).
+	V           int    `json:"v"`
+	PeerID      string `json:"peerID"`
+	Ed25519Pub  string `json:"ed25519_pub"`
+	X25519Pub   string `json:"x25519_pub"`
+	Signature   string `json:"signature"`
 	DisplayName string `json:"display_name,omitempty"`
-	ReadEnabled *bool  `json:"read_enabled,omitempty"` // nil — не передан (дефолт true)
+	ReadEnabled *bool  `json:"read_enabled,omitempty"`
 }
 
 // Config — конфигурация узла
@@ -148,8 +111,8 @@ type Config struct {
 	EnableMDNS        bool
 	ListenIP          string
 	EnableRelayServer bool
-	IsRelay           bool // true для relay-узла (VPS): форвардит Version=2
-	UseOnion          bool // true — отправка через Sphinx (v2.0.1). Дефолт false.
+	IsRelay           bool
+	UseOnion          bool
 }
 
 // Node — основной узел сети
@@ -174,7 +137,7 @@ type Node struct {
 	configEnableMDNS        bool
 	configListenIP          string
 	configEnableRelayServer bool
-	isRelay                 bool // true для relay-узла (VPS)
+	isRelay                 bool
 	messageHook             func(string)
 	mu                      sync.Mutex
 	lastPing                map[string]time.Time
@@ -192,7 +155,7 @@ type Node struct {
 	relayMu            sync.Mutex
 	relayPeerInfo      peer.AddrInfo
 	lastRelayRefresh   time.Time
-	lastReservationErr error // последняя ошибка резервации (nil = успех)
+	lastReservationErr error
 
 	// OFFLINE QUEUE — сообщения, ожидающие отправки при восстановлении связи
 	pendingMessages []Message
@@ -208,127 +171,92 @@ type Node struct {
 	x25519Priv    [32]byte
 	x25519Pub     [32]byte
 
+	// SEED (v2.0.6) — BIP39 seed-фраза. Только в памяти. Не на диск, не в лог.
+	// Если непустая — InitP2P строит Ed25519 identity + X25519 из seed,
+	// пропускает loadOrGenerateE2EKeys и loadPrivateKey (RSA).
+	// Устанавливается через SetSeedPhrase (mobile.go) ДО InitP2P.
+	seedPhrase string
+
 	// CONTACTS — данные пользователя (не состояние узла).
-	// Отдельный файл isotope_contacts.json.
 	contactsFile string
 	contacts     *ContactsStore
 
 	// TEMP CONTACTS — временные контакты (только в памяти).
-	// Создаются при получении [CONTACT_HELLO] от A. Нужны, чтобы
-	// расшифровать [CONTACT_REQUEST] (E2E). После requests.Add — удаляются.
-	// Не сохраняются на диск, не попадают в UI.
 	tempContacts   map[string]Contact
 	tempContactsMu sync.Mutex
 
 	// REQUESTS — входящие запросы на контакт (контакт-протокол, этап 5).
-	// Отдельный файл isotope_requests.json. До accept/reject.
 	requestsFile string
 	requests     *RequestsStore
 
 	// DELETED — удалённые контакты (список peerID).
-	// Отдельный файл isotope_deleted.json. Фильтр для UI — удалённые
-	// не показываются, даже если есть в сети / пишут.
 	deletedFile string
 	deleted     *DeletedStore
 
 	// myReadEnabled — настройка "делюсь ли я статусом прочтения".
-	// true (по умолчанию) — отправляю [READ] и вижу чужие [READ].
-	// false — не отправляю [READ], чужие не отображаю (✓✓🔒).
-	// Кэш для быстрого чтения. Источник истины — settingsStore.
 	myReadEnabled bool
 
 	// SETTINGS — пользовательские настройки (isotope_settings.json).
-	// Отдельно от state: это предпочтения пользователя, не состояние сети.
 	settingsStore *SettingsStore
 
 	// saveStateScheduled — защита от частых saveState (throttle 5 сек).
 	saveStateScheduled bool
 
 	// savePendingScheduled — защита от частых savePendingQueue (throttle 5 сек).
-	// Без этого при отправке файла 440 чанков → 440 сохранений очереди
-	// (каждое маршалит ВСЮ очередь) → RSS растёт до GB → lowmemorykiller.
 	savePendingScheduled bool
 
 	// sendSem — глобальный семафор исходящих stream'ов (10 одновременно).
-	// Защита от перегруза libp2p при flushPending / SendFile.
-	// Используется только для не-файловых сообщений.
 	sendSem chan struct{}
 
 	// serviceSem — семафор сервисных сообщений ([DELIVERED], [READ], [CONTACT_*]).
-	// Отдельный от sendSem, чтобы сервисные не ждали файловые чанки
-	// (10 chunkWorker'ов). Ревью старого программиста 2026-10-29:
-	// корень отставания UI — конкуренция за libp2p stream. serviceSem=2.
 	serviceSem chan struct{}
 
 	// mixingSem — семафор для mixing-чанков (5 одновременно).
-	// Не перегружать relay: 5 параллельных Sphinx-пакетов.
 	mixingSem chan struct{}
 
 	// sphinxFileSem — семафор для Sphinx-файлов (3 одновременно).
-	// Корень: Samsung не успевает (114 МБ, нагрузка). 3 — меньше.
 	sphinxFileSem chan struct{}
 
 	// chunkQueue — очередь файловых чанков для воркер-пула.
-	// Файловые чанки не создают горутину на каждый чанк (было 10 700 горутин
-	// → 4.5 ГБ heap). Вместо этого — очередь + 10 воркеров.
-	// Буфер 1000 — SendFileByPath блокируется, если полный. Это OK —
-	// SendFileByPath работает в своей горутине.
 	chunkQueue chan Message
 
 	// mediaSendMu / mediaSendCond / activeMediaID — последовательная постановка
 	// файлов в chunkQueue (вариант A, Публикатор 2026-10-29).
-	// Файл 1 ставит все чанки → файл 2 начинает ставить. UI не прыгает.
 	mediaSendMu   sync.Mutex
 	mediaSendCond *sync.Cond
 	activeMediaID string
 
 	// batchBuffers — буферы текстов для батча (v2.0.4 c).
-	// Ключ — PeerID получателя. 10 текстов = 1 Sphinx-пакет 64 КБ.
-	// Трафик ×1.4 вместо ×14. Без батча — LTE смерть.
 	batchBuffers   map[string]*batchBuffer
 	batchBuffersMu sync.Mutex
 
 	// unackedChunks — чанки, отправленные, но не подтверждённые [DELIVERED].
-	// Через 30 сек без ack — переотправка (до 3 попыток).
-	// Защита от потери чанков в сети (Wi-Fi).
 	unackedChunks   map[string]retryInfo
 	unackedChunksMu sync.Mutex
 
 	// fileStatusLastPush — throttle для push [FILE_STATUS] в Dart.
-	// Ключ mediaID → время последнего push.
-	// Не чаще раза в секунду на файл.
 	fileStatusLastPush map[string]time.Time
 	fileStatusMu       sync.Mutex
 
 	// completedFiles — mediaID → true, если file_complete уже отправлен.
-	// Нужно, чтобы throttle не съедал ПЕРВЫЙ complete.
-	// Первый complete — пушим всегда. Повторные — throttle 5 сек.
 	completedFiles map[string]bool
 
 	// Батч [DELIVERED] — буфер refs по отправителю.
-	// Копим msg_id чанков, отправляем одним [DELIVERED] с Refs.
 	pendingDelivered   map[string][]string
 	pendingDeliveredMu sync.Mutex
 
 	// pendingDeliveredTimers — один таймер на sender.
-	// Окно 2 сек: пока открыто — refs копятся, по истечении — один батч.
-	// Без этого: time.AfterFunc на каждый ref → 10 таймеров/сек → flood.
 	pendingDeliveredTimers map[string]*time.Timer
 
 	// pendingHookAcks — окно чанков, отправленных в hook, но не подтверждённых Dart.
-	// Ключ — mediaID. Заполняется в handleStream при формировании hookMsg.
-	// Очищается в FileAck (по индексам) или в cleanupPendingAcksLoop (по таймауту).
 	pendingHookAcks   map[string]*hookAckWindow
 	pendingHookAcksMu sync.Mutex
 
 	// deliveredCount — счётчик доставленных чанков по MediaID (отправитель).
-	// Когда == ChunkTotal — удаляем sent/<MediaID>.bin.
-	// O(1) вместо O(N) проверки всех чанков на каждый [DELIVERED].
 	deliveredCount   map[string]int
 	deliveredCountMu sync.Mutex
 
 	// acceptedCount — счётчик принятых чанков по MediaID (получатель).
-	// Инкремент при memory.Add (added == true). pushFileStatus — прогресс в Dart.
 	acceptedCount   map[string]int
 	acceptedCountMu sync.Mutex
 
@@ -336,11 +264,9 @@ type Node struct {
 	useOnion bool
 
 	// MIXING (v2.0.2) — флаг. Задержки на relay.
-	// Имеет смысл только при useOnion == true.
 	mixingEnabled bool
 
 	// dummyScreenOn — состояние экрана (v2.0.4 d.1.1).
-	// true — dummy 10–120 сек. false — ×5 (50–600 сек). Дефолт true.
 	dummyScreenOn bool
 }
 
@@ -395,51 +321,6 @@ func (n *Node) SetMessageHook(hook func(string)) {
 	n.messageHook = hook
 }
 
-func (n *Node) getObfuscationKey() []byte {
-	hash := sha256.Sum256([]byte(n.ethHash))
-	return hash[:]
-}
-
-func (n *Node) obfuscate(msg string) string {
-	key := n.getObfuscationKey()
-	block, _ := aes.NewCipher(key)
-	gcm, _ := cipher.NewGCM(block)
-	nonce := make([]byte, gcm.NonceSize())
-	io.ReadFull(cryptorand.Reader, nonce)
-	ciphertext := gcm.Seal(nonce, nonce, []byte(msg), nil)
-	return OBFUSCATION_PREFIX + base64.StdEncoding.EncodeToString(ciphertext)
-}
-
-func (n *Node) deobfuscate(data string) (string, bool) {
-	if !strings.HasPrefix(data, OBFUSCATION_PREFIX) {
-		return data, false
-	}
-	encoded := strings.TrimPrefix(data, OBFUSCATION_PREFIX)
-	ciphertext, err := base64.StdEncoding.DecodeString(encoded)
-	if err != nil {
-		return data, false
-	}
-	key := n.getObfuscationKey()
-	block, _ := aes.NewCipher(key)
-	gcm, _ := cipher.NewGCM(block)
-	nonceSize := gcm.NonceSize()
-	if len(ciphertext) < nonceSize {
-		return data, false
-	}
-	nonce, ciphertext := ciphertext[:nonceSize], ciphertext[nonceSize:]
-	plaintext, err := gcm.Open(nil, nonce, ciphertext, nil)
-	if err != nil {
-		return data, false
-	}
-	return string(plaintext), true
-}
-
-func randomDelay(minMs, maxMs int) {
-	n, _ := cryptorand.Int(cryptorand.Reader, big.NewInt(int64(maxMs-minMs)))
-	delay := time.Duration(minMs+int(n.Int64())) * time.Millisecond
-	time.Sleep(delay)
-}
-
 func (n *Node) HandlePeerFound(peerInfo peer.AddrInfo) {
 	ctx := context.Background()
 	if err := n.host.Connect(ctx, peerInfo); err != nil {
@@ -451,108 +332,7 @@ func (n *Node) HandlePeerFound(peerInfo peer.AddrInfo) {
 	}()
 }
 
-// ============================================================
-// E2E — два ключа: Ed25519 (подпись) + X25519 (шифрование).
-// Этап 4.3.1. Публичные ключи не хранятся — вычисляются из приватных.
-// ============================================================
-
-// loadOrGenerateE2EKeys — загружает / генерирует Ed25519 и X25519 ключи.
-func (n *Node) loadOrGenerateE2EKeys() {
-	if n.stateFile == "" {
-		log.Printf("[KEY] stateFile not set, E2E keys skipped")
-		return
-	}
-	if n.ed25519KeyFile == "" {
-		n.ed25519KeyFile = n.stateFile + ".ed25519.key"
-	}
-	if n.x25519KeyFile == "" {
-		n.x25519KeyFile = n.stateFile + ".x25519.key"
-	}
-
-	if err := n.loadOrGenerateEd25519Key(); err != nil {
-		log.Printf("[KEY] ed25519 failed: %v", err)
-	}
-	if err := n.loadOrGenerateX25519Key(); err != nil {
-		log.Printf("[KEY] x25519 failed: %v", err)
-	}
-}
-
-// loadOrGenerateEd25519Key — загружает или генерирует Ed25519-ключ (подпись).
-func (n *Node) loadOrGenerateEd25519Key() error {
-	if data, err := os.ReadFile(n.ed25519KeyFile); err == nil {
-		if len(data) == ed25519.PrivateKeySize {
-			n.ed25519Priv = ed25519.PrivateKey(data)
-			n.ed25519Pub = n.ed25519Priv.Public().(ed25519.PublicKey)
-			log.Printf("[KEY] loaded ed25519 (pub=%s...)",
-				truncate(base64.StdEncoding.EncodeToString(n.ed25519Pub), 16))
-			return nil
-		}
-		log.Printf("[KEY] regenerated ed25519 key (wrong size: %d)", len(data))
-	}
-
-	pub, priv, err := ed25519.GenerateKey(cryptorand.Reader)
-	if err != nil {
-		return fmt.Errorf("ed25519 keygen failed: %w", err)
-	}
-	n.ed25519Priv = priv
-	n.ed25519Pub = pub
-
-	if err := os.WriteFile(n.ed25519KeyFile, priv, 0600); err != nil {
-		return fmt.Errorf("ed25519 save failed: %w", err)
-	}
-
-	log.Printf("[KEY] generated ed25519 (pub=%s...)",
-		truncate(base64.StdEncoding.EncodeToString(pub), 16))
-	return nil
-}
-
-// loadOrGenerateX25519Key — загружает или генерирует X25519-ключ (шифрование).
-func (n *Node) loadOrGenerateX25519Key() error {
-	if data, err := os.ReadFile(n.x25519KeyFile); err == nil {
-		if len(data) == 32 {
-			copy(n.x25519Priv[:], data)
-			pub, err := deriveX25519Public(n.x25519Priv)
-			if err != nil {
-				log.Printf("[KEY] x25519 derive failed: %v", err)
-			} else {
-				n.x25519Pub = pub
-			}
-			log.Printf("[KEY] loaded x25519 (pub=%s...)",
-				truncate(base64.StdEncoding.EncodeToString(n.x25519Pub[:]), 16))
-			return nil
-		}
-		log.Printf("[KEY] regenerated x25519 key (wrong size: %d)", len(data))
-	}
-
-	pub, priv, err := box.GenerateKey(cryptorand.Reader)
-	if err != nil {
-		return fmt.Errorf("x25519 keygen failed: %w", err)
-	}
-	n.x25519Priv = *priv
-	n.x25519Pub = *pub
-
-	if err := os.WriteFile(n.x25519KeyFile, n.x25519Priv[:], 0600); err != nil {
-		return fmt.Errorf("x25519 save failed: %w", err)
-	}
-
-	log.Printf("[KEY] generated x25519 (pub=%s...)",
-		truncate(base64.StdEncoding.EncodeToString(n.x25519Pub[:]), 16))
-	return nil
-}
-
-// deriveX25519Public — вычисляет публичный ключ из приватного X25519.
-func deriveX25519Public(priv [32]byte) ([32]byte, error) {
-	pubBytes, err := curve25519.X25519(priv[:], curve25519.Basepoint)
-	if err != nil {
-		return [32]byte{}, err
-	}
-	var result [32]byte
-	copy(result[:], pubBytes)
-	return result, nil
-}
-
 // e2eCleanupFlagPath — путь к флагу однократной E2E-очистки.
-// Отдельный файл рядом со state: isotope_state.json.e2e_cleanup.
 func (n *Node) e2eCleanupFlagPath() string {
 	if n.stateFile == "" {
 		return ""
@@ -561,14 +341,11 @@ func (n *Node) e2eCleanupFlagPath() string {
 }
 
 // runE2ECleanupOnce — однократная очистка своих E2E-сообщений без PlainText.
-// Удаляет мусор: сообщения, у которых Text = шифротекст, а PlainText не был
-// сохранён (до фикса). Работает один раз — флаг в отдельном файле.
 func (n *Node) runE2ECleanupOnce() {
 	flagPath := n.e2eCleanupFlagPath()
 	if flagPath == "" {
 		return
 	}
-	// Уже сделано?
 	if _, err := os.Stat(flagPath); err == nil {
 		return
 	}
@@ -583,7 +360,6 @@ func (n *Node) runE2ECleanupOnce() {
 		}
 	}
 
-	// Флаг — до saveState. Чтобы повторный запуск не задублировал очистку.
 	_ = os.WriteFile(flagPath, []byte("true"), 0600)
 
 	if removed > 0 {
@@ -592,3456 +368,6 @@ func (n *Node) runE2ECleanupOnce() {
 	} else {
 		log.Printf("[E2E CLEANUP] no messages to remove")
 	}
-}
-
-// GetEd25519PublicKey — возвращает Ed25519-публичный ключ в base64.
-func (n *Node) GetEd25519PublicKey() string {
-	if len(n.ed25519Pub) == 0 {
-		return ""
-	}
-	return base64.StdEncoding.EncodeToString(n.ed25519Pub)
-}
-
-// GetX25519PublicKey — возвращает X25519-публичный ключ в base64.
-func (n *Node) GetX25519PublicKey() string {
-	return base64.StdEncoding.EncodeToString(n.x25519Pub[:])
-}
-
-// ============================================================
-// 4.4 — ПОДПИСЬ. Ed25519 подписывает peerID || x25519_pub.
-// Связка peerID + x25519_pub защищает от подмены:
-// злоумышленник не сможет подписать чужой x25519_pub своим ключом
-// и выдать себя за другого — peerID в подписи не совпадёт.
-// ============================================================
-
-// signMyX25519 — подпись peerID || x25519_pub приватным Ed25519-ключом.
-// Возвращает base64-подпись или "" при ошибке / отсутствии ключей.
-func (n *Node) signMyX25519() string {
-	if n.host == nil || len(n.ed25519Priv) == 0 {
-		return ""
-	}
-	peerID := n.host.ID().String()
-	// peerID || x25519_pub
-	msg := make([]byte, 0, len(peerID)+32)
-	msg = append(msg, []byte(peerID)...)
-	msg = append(msg, n.x25519Pub[:]...)
-
-	sig := ed25519.Sign(n.ed25519Priv, msg)
-	return base64.StdEncoding.EncodeToString(sig)
-}
-
-// verifyContactSignature — проверяет подпись контакта.
-// Подпись — над peerID || x25519_pub.
-// Возвращает true, только если все три декодировались корректно
-// и подпись валидна.
-func verifyContactSignature(peerID, ed25519PubB64, x25519PubB64, signatureB64 string) bool {
-	if peerID == "" || ed25519PubB64 == "" || x25519PubB64 == "" || signatureB64 == "" {
-		return false
-	}
-
-	edPub, err := base64.StdEncoding.DecodeString(ed25519PubB64)
-	if err != nil || len(edPub) != ed25519.PublicKeySize {
-		return false
-	}
-	xPub, err := base64.StdEncoding.DecodeString(x25519PubB64)
-	if err != nil || len(xPub) != 32 {
-		return false
-	}
-	sig, err := base64.StdEncoding.DecodeString(signatureB64)
-	if err != nil || len(sig) != ed25519.SignatureSize {
-		return false
-	}
-
-	msg := make([]byte, 0, len(peerID)+32)
-	msg = append(msg, []byte(peerID)...)
-	msg = append(msg, xPub...)
-
-	return ed25519.Verify(ed25519.PublicKey(edPub), msg, sig)
-}
-
-// GetMyQRData — возвращает JSON для QR-кода версии 1.
-// Signature — подпись peerID || x25519_pub. Заполняется на 4.4.
-func (n *Node) GetMyQRData() string {
-	if n.host == nil {
-		return ""
-	}
-	readEnabled := n.myReadEnabled
-	displayName := n.GetMyDisplayName()
-	data, err := json.Marshal(qrDataV1{
-		V:           E2E_VERSION,
-		PeerID:      n.host.ID().String(),
-		Ed25519Pub:  base64.StdEncoding.EncodeToString(n.ed25519Pub),
-		X25519Pub:   base64.StdEncoding.EncodeToString(n.x25519Pub[:]),
-		Signature:   n.signMyX25519(),
-		DisplayName: displayName,
-		ReadEnabled: &readEnabled,
-	})
-	if err != nil {
-		log.Printf("[KEY] QR marshal failed: %v", err)
-		return ""
-	}
-	return string(data)
-}
-
-// truncate — обрезает строку для лога.
-func truncate(s string, n int) string {
-	if len(s) <= n {
-		return s
-	}
-	return s[:n]
-}
-
-// ============================================================
-// E2E-ШИФРОВАНИЕ (этап 4.3.3)
-// ============================================================
-
-// encryptForRecipient — шифрует text для получателя.
-// recipient — PeerID получателя. Требуется контакт с x25519_pub.
-// Возвращает payload: base64(nonce(24) || ciphertext).
-func (n *Node) encryptForRecipient(recipient, text string) (string, error) {
-	if n.contacts == nil {
-		return "", fmt.Errorf("contacts store not initialized")
-	}
-
-	contact, ok := n.contacts.Get(recipient)
-	if !ok {
-		return "", fmt.Errorf("contact not found: %s", recipient)
-	}
-	if contact.X25519Pub == "" {
-		return "", fmt.Errorf("contact has no E2E key: %s", recipient)
-	}
-
-	recipientPubBytes, err := base64.StdEncoding.DecodeString(contact.X25519Pub)
-	if err != nil || len(recipientPubBytes) != 32 {
-		return "", fmt.Errorf("invalid x25519_pub for %s", recipient)
-	}
-	var recipientPub [32]byte
-	copy(recipientPub[:], recipientPubBytes)
-
-	var nonce [24]byte
-	if _, err := cryptorand.Read(nonce[:]); err != nil {
-		return "", fmt.Errorf("nonce generation failed: %w", err)
-	}
-
-	ciphertext := box.Seal(nil, []byte(text), &nonce, &recipientPub, &n.x25519Priv)
-	payload := append(nonce[:], ciphertext...)
-	return base64.StdEncoding.EncodeToString(payload), nil
-}
-
-// encryptBytesForRecipient — шифрует raw bytes для получателя.
-// v2.0.4 a+b: файловые чанки — raw bytes → box.Seal → base64 ОДИН раз.
-// Было: base64(chunk) → box.Seal → base64 (double base64, 117 КБ).
-// Стало: raw → box.Seal → base64 (87 КБ на проводе, payload 64 КБ).
-func (n *Node) encryptBytesForRecipient(recipient string, data []byte) (string, error) {
-	if n.contacts == nil {
-		return "", fmt.Errorf("contacts store not initialized")
-	}
-	if len(data) == 0 {
-		return "", fmt.Errorf("empty data")
-	}
-	contact, ok := n.contacts.Get(recipient)
-	if !ok {
-		return "", fmt.Errorf("contact not found: %s", recipient)
-	}
-	if contact.X25519Pub == "" {
-		return "", fmt.Errorf("contact has no E2E key: %s", recipient)
-	}
-	recipientPubBytes, err := base64.StdEncoding.DecodeString(contact.X25519Pub)
-	if err != nil || len(recipientPubBytes) != 32 {
-		return "", fmt.Errorf("invalid x25519_pub for %s", recipient)
-	}
-	var recipientPub [32]byte
-	copy(recipientPub[:], recipientPubBytes)
-	var nonce [24]byte
-	if _, err := cryptorand.Read(nonce[:]); err != nil {
-		return "", fmt.Errorf("nonce generation failed: %w", err)
-	}
-	ciphertext := box.Seal(nil, data, &nonce, &recipientPub, &n.x25519Priv)
-	payload := append(nonce[:], ciphertext...)
-	return base64.StdEncoding.EncodeToString(payload), nil
-}
-
-// decryptBytesFromSender — расшифровывает payload в raw bytes.
-// v2.0.4 a+b: файловые чанки — base64 → box.Open → raw bytes.
-// Границы: пустой payload, невалидный base64, box.Open провал — ошибка (не паника).
-func (n *Node) decryptBytesFromSender(sender, payload string) ([]byte, error) {
-	if n.contacts == nil {
-		return nil, fmt.Errorf("contacts store not initialized")
-	}
-	if payload == "" {
-		return nil, fmt.Errorf("empty payload from %s", sender)
-	}
-	contact, ok := n.GetContactTemp(sender)
-	if !ok {
-		return nil, fmt.Errorf("contact not found: %s", sender)
-	}
-	if contact.X25519Pub == "" {
-		return nil, fmt.Errorf("contact has no E2E key: %s", sender)
-	}
-	senderPubBytes, err := base64.StdEncoding.DecodeString(contact.X25519Pub)
-	if err != nil || len(senderPubBytes) != 32 {
-		return nil, fmt.Errorf("invalid x25519_pub for %s", sender)
-	}
-	var senderPub [32]byte
-	copy(senderPub[:], senderPubBytes)
-	raw, err := base64.StdEncoding.DecodeString(payload)
-	if err != nil || len(raw) < 24 {
-		return nil, fmt.Errorf("invalid payload from %s", sender)
-	}
-	var nonce [24]byte
-	copy(nonce[:], raw[:24])
-	ciphertext := raw[24:]
-	plaintext, ok := box.Open(nil, ciphertext, &nonce, &senderPub, &n.x25519Priv)
-	if !ok {
-		log.Printf("[E2E] decrypt failed for %s", sender)
-		return nil, fmt.Errorf("decryption failed for %s", sender)
-	}
-	return plaintext, nil
-}
-
-// decryptFromSender — расшифровывает payload от отправителя.
-// payload — base64(nonce(24) || ciphertext).
-func (n *Node) decryptFromSender(sender, payload string) (string, error) {
-	if n.contacts == nil {
-		return "", fmt.Errorf("contacts store not initialized")
-	}
-
-	contact, ok := n.GetContactTemp(sender)
-	if !ok {
-		return "", fmt.Errorf("contact not found: %s", sender)
-	}
-	if contact.X25519Pub == "" {
-		return "", fmt.Errorf("contact has no E2E key: %s", sender)
-	}
-
-	senderPubBytes, err := base64.StdEncoding.DecodeString(contact.X25519Pub)
-	if err != nil || len(senderPubBytes) != 32 {
-		return "", fmt.Errorf("invalid x25519_pub for %s", sender)
-	}
-	var senderPub [32]byte
-	copy(senderPub[:], senderPubBytes)
-
-	raw, err := base64.StdEncoding.DecodeString(payload)
-	if err != nil || len(raw) < 24 {
-		return "", fmt.Errorf("invalid payload from %s", sender)
-	}
-
-	var nonce [24]byte
-	copy(nonce[:], raw[:24])
-	ciphertext := raw[24:]
-
-	plaintext, ok := box.Open(nil, ciphertext, &nonce, &senderPub, &n.x25519Priv)
-	if !ok {
-		return "", fmt.Errorf("decryption failed for %s", sender)
-	}
-	return string(plaintext), nil
-}
-
-// ============================================================
-// RELAY-RESERVATION (клиент)
-// ============================================================
-
-// ReserveRelaySlot — резервирует слот на relay-сервере.
-func (n *Node) ReserveRelaySlot(ctx context.Context, relayAddrInfo peer.AddrInfo) error {
-	if n.host == nil {
-		return fmt.Errorf("node not started")
-	}
-
-	resv, err := client.Reserve(ctx, n.host, relayAddrInfo)
-	if err != nil {
-		n.relayMu.Lock()
-		n.lastReservationErr = err
-		n.relayMu.Unlock()
-		return fmt.Errorf("relay reserve failed: %w", err)
-	}
-
-	n.relayMu.Lock()
-	n.relayReservation = resv
-	n.relayPeerInfo = relayAddrInfo
-	n.lastReservationErr = nil
-	n.relayMu.Unlock()
-
-	log.Printf("[RELAY] reserved slot, expires=%s", resv.Expiration)
-	return nil
-}
-
-// relayLoop — периодически проверяет наличие резервации и обновляет её.
-// Интервал — 30 секунд. Проверяет не только таймер истечения,
-// но и сам факт наличия резервации (resv == nil — пересоздаём).
-func (n *Node) relayLoop() {
-	go func() {
-		backoff := 2 * time.Second
-		const maxBackoff = 30 * time.Second
-
-		for {
-			time.Sleep(backoff)
-
-			n.relayMu.Lock()
-			resv := n.relayReservation
-			relayInfo := n.relayPeerInfo
-			n.relayMu.Unlock()
-
-			if relayInfo.ID == "" {
-				continue
-			}
-
-			needReserve := false
-			if resv == nil {
-				needReserve = true
-			} else if time.Until(resv.Expiration) < 5*time.Minute {
-				needReserve = true
-			}
-
-			if !needReserve {
-				// Всё хорошо, сбрасываем backoff.
-				backoff = 2 * time.Second
-				continue
-			}
-
-			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-			err := n.ReserveRelaySlot(ctx, relayInfo)
-			cancel()
-			if err != nil {
-				log.Printf("[RELAY] reserve failed (backoff=%s): %v", backoff, err)
-				backoff *= 2
-				if backoff > maxBackoff {
-					backoff = maxBackoff
-				}
-				continue
-			}
-			// Успех — сброс.
-			backoff = 2 * time.Second
-		}
-	}()
-}
-
-// GetRelayAddrs — возвращает список relay-адресов для анонса.
-func (n *Node) GetRelayAddrs() []string {
-	n.relayMu.Lock()
-	defer n.relayMu.Unlock()
-	if n.relayReservation == nil {
-		return nil
-	}
-	if n.relayPeerInfo.ID == "" {
-		return nil
-	}
-	myID := n.host.ID().String()
-
-	var result []string
-	for _, addr := range n.loadBootstrapPeers() {
-		pi, err := peer.AddrInfoFromString(addr)
-		if err != nil {
-			continue
-		}
-		if pi.ID != n.relayPeerInfo.ID {
-			continue
-		}
-		full := addr + "/p2p-circuit/p2p/" + myID
-		result = append(result, full)
-		log.Printf("[RELAY] built relay addr: %s", full)
-	}
-	return result
-}
-
-// ============================================================
-// OFFLINE QUEUE — очередь сообщений при потере связи
-// ============================================================
-
-func (n *Node) loadPendingQueue() {
-	if n.pendingFile == "" {
-		return
-	}
-	data, err := os.ReadFile(n.pendingFile)
-	if err != nil {
-		return
-	}
-	var queue []Message
-	if err := json.Unmarshal(data, &queue); err != nil {
-		log.Printf("[QUEUE] load failed: %v", err)
-		return
-	}
-	n.pendingMu.Lock()
-	n.pendingMessages = queue
-	n.pendingMu.Unlock()
-	log.Printf("[QUEUE] loaded %d pending messages", len(queue))
-}
-
-func (n *Node) savePendingQueue() {
-	if n.pendingFile == "" {
-		return
-	}
-	n.pendingMu.Lock()
-	queue := make([]Message, len(n.pendingMessages))
-	copy(queue, n.pendingMessages)
-	n.pendingMu.Unlock()
-
-	data, err := json.Marshal(queue)
-	if err != nil {
-		log.Printf("[QUEUE] marshal failed: %v", err)
-		return
-	}
-	if err := os.WriteFile(n.pendingFile, data, 0600); err != nil {
-		log.Printf("[QUEUE] save failed: %v", err)
-	}
-}
-
-func (n *Node) enqueuePending(msg Message) {
-	// Файловые чанки: в pending храним только метаданные.
-	// base64 (Text/PlainText) не кладём — иначе 440 × 170 КБ = 75 МБ в очереди.
-	// При flushPending — перечитать с диска (этап 2, sent/).
-	if isChunkedMediaType(msg.MediaType) && msg.ChunkTotal > 0 {
-		msg.Text = ""
-		msg.PlainText = ""
-	}
-	n.pendingMu.Lock()
-	n.pendingMessages = append(n.pendingMessages, msg)
-	count := len(n.pendingMessages)
-	n.pendingMu.Unlock()
-	log.Printf("[QUEUE] enqueued %s (total: %d)", msg.ID, count)
-	n.scheduleSavePendingQueue()
-}
-
-// scheduleSavePendingQueue — отложенная запись очереди (throttle 5 сек).
-// При отправке файла enqueuePending вызывается 440 раз за секунды.
-// Каждый savePendingQueue маршалит ВСЮ очередь — это O(N²) по данным.
-// Throttle схлопывает 440 вызовов в один.
-func (n *Node) scheduleSavePendingQueue() {
-	n.pendingMu.Lock()
-	if n.savePendingScheduled {
-		n.pendingMu.Unlock()
-		return
-	}
-	n.savePendingScheduled = true
-	n.pendingMu.Unlock()
-
-	go func() {
-		time.Sleep(5 * time.Second)
-		n.pendingMu.Lock()
-		n.savePendingScheduled = false
-		n.pendingMu.Unlock()
-		n.savePendingQueue()
-	}()
-}
-
-func (n *Node) hasPending() bool {
-	n.pendingMu.Lock()
-	defer n.pendingMu.Unlock()
-	return len(n.pendingMessages) > 0
-}
-
-func (n *Node) flushPending() {
-	n.pendingMu.Lock()
-	queue := make([]Message, len(n.pendingMessages))
-	copy(queue, n.pendingMessages)
-	n.pendingMu.Unlock()
-
-	if len(queue) == 0 {
-		return
-	}
-
-	log.Printf("[QUEUE] flushing %d pending messages", len(queue))
-	// Переотправляем всё. Из очереди НЕ удаляем.
-	// Удаление — только при получении [DELIVERED] (removePendingByRef).
-	for _, msg := range queue {
-		n.tryReplicate(msg)
-	}
-	log.Printf("[QUEUE] flushed, remaining: %d", len(queue))
-}
-
-// removePendingByRef — удаляет сообщение из очереди по ID.
-// Вызывается при получении [DELIVERED] от получателя —
-// только тогда доставка считается состоявшейся.
-func (n *Node) removePendingByRef(ref string) {
-	if ref == "" {
-		return
-	}
-	n.pendingMu.Lock()
-	before := len(n.pendingMessages)
-	var remaining []Message
-	for _, m := range n.pendingMessages {
-		if m.ID != ref {
-			remaining = append(remaining, m)
-		}
-	}
-	n.pendingMessages = remaining
-	after := len(n.pendingMessages)
-	n.pendingMu.Unlock()
-	if before != after {
-		log.Printf("[QUEUE] removed %s from pending (delivered)", ref)
-		// Критичное событие — сохранение сразу, без throttle.
-		n.savePendingQueue()
-	}
-}
-
-// fillFileChunkFromSent — читает чанк файла из sent/<MediaID>.bin,
-// шифрует, дополняет msg (Text/PlainText).
-// Используется в tryReplicate для flushPending — когда в pending
-// хранятся только метаданные, а base64 надо пересоздать.
-func (n *Node) fillFileChunkFromSent(msg *Message) error {
-	path := n.sentPath(msg.MediaID)
-	f, err := os.Open(path)
-	if err != nil {
-		return fmt.Errorf("open sent failed: %w", err)
-	}
-	defer f.Close()
-
-	buf := make([]byte, ChunkSize)
-	off := int64(msg.ChunkIndex) * int64(ChunkSize)
-	nr, err := f.ReadAt(buf, off)
-	if err != nil && err != io.EOF {
-		return fmt.Errorf("ReadAt failed: %w", err)
-	}
-	if nr == 0 {
-		return fmt.Errorf("empty chunk")
-	}
-
-	encrypted, err := n.encryptBytesForRecipient(msg.Recipient, buf[:nr])
-	if err != nil {
-		return fmt.Errorf("encrypt failed: %w", err)
-	}
-	msg.PlainText = base64.StdEncoding.EncodeToString(buf[:nr])
-	msg.Text = encrypted
-	return nil
-}
-
-func (n *Node) tryReplicate(msg Message) bool {
-	if n.host == nil {
-		return false
-	}
-	// Файловый чанк без base64 → прочитать с диска (sent/).
-	// В pending хранятся только метаданные (для экономии памяти).
-	// Здесь base64 пересоздаётся, чтобы отправить чанк получателю.
-	if isChunkedMediaType(msg.MediaType) && msg.ChunkTotal > 0 &&
-		msg.Text == "" && msg.PlainText == "" && msg.MediaID != "" {
-		if err := n.fillFileChunkFromSent(&msg); err != nil {
-			log.Printf("[QUEUE] fillFileChunkFromSent %s[%d] failed: %v",
-				msg.MediaID, msg.ChunkIndex, err)
-			return false
-		}
-	}
-	msg.ReplicatedFrom = msg.Sender
-	msg.IsOwn = false
-	data, err := json.Marshal(msg)
-	if err != nil {
-		return false
-	}
-
-	if msg.Recipient != "" {
-		isFileChunk := isChunkedMediaType(msg.MediaType) && msg.ChunkTotal > 0
-		return n.sendToRecipient(msg, data, isFileChunk)
-	}
-
-	peers := n.host.Network().Peers()
-	var alive []peer.ID
-	for _, p := range peers {
-		if p.String() == msg.Sender {
-			continue
-		}
-		alive = append(alive, p)
-	}
-	if len(alive) == 0 {
-		return false
-	}
-	replicaCount := 2
-	if len(alive) < replicaCount {
-		replicaCount = len(alive)
-	}
-	sent := false
-	for i := 0; i < replicaCount; i++ {
-		peerID := alive[i]
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		s, err := n.host.NewStream(ctx, peerID, protocolID)
-		cancel()
-		if err != nil {
-			continue
-		}
-		fmt.Fprintf(s, "%s%s\n", REPLICA_PREFIX, string(data))
-		s.Close()
-		sent = true
-	}
-	return sent
-}
-
-// ============================================================
-// АДРЕСНАЯ МАРШРУТИЗАЦИЯ (этап 4.2)
-// ============================================================
-
-// sendToRecipient — адресная отправка. isFileChunk — true для файловых
-// чанков (MediaType=file, ChunkTotal>0). Пробрасывается вниз, чтобы
-// sendReplicaToPeer не делал randomDelay для чанков (10718 × 10-30 мс =
-// минуты ожидания + heap).
-func (n *Node) sendToRecipient(msg Message, data []byte, isFileChunk bool) bool {
-	targetID, err := peer.Decode(msg.Recipient)
-	if err != nil {
-		log.Printf("[REPLICA] invalid Recipient %q: %v", msg.Recipient, err)
-		return false
-	}
-
-	// Сервисные ([DELIVERED], [READ], [FILE_COMPLETE]) — через serviceSem (2),
-	// текстовые — через sendSem (10), файловые — без семафора (chunkWorker).
-	// VPS перегружен лавиной чанков — сервисные не должны ждать. Ревью 2026-10-29.
-	isService := n.isServiceType(msg.Type)
-	acquire := func() func() {
-		if isService {
-			n.serviceSem <- struct{}{}
-			return func() { <-n.serviceSem }
-		}
-		if !isFileChunk {
-			n.sendSem <- struct{}{}
-			return func() { <-n.sendSem }
-		}
-		return func() {}
-	}
-
-	// Уровень 1: isPeerDead — предфильтр. PING пометил мёртвым —
-	// не тратим 3 сек на direct, сразу fallback.
-	// Лог убран из hot path (10718 × лог = heap).
-	if n.isPeerDead(msg.Recipient) {
-		release := acquire()
-		defer release()
-		return n.fallbackSend(msg.Recipient, data, isFileChunk)
-	}
-
-	// Уровень 2: если peer в Peers() — tryDirectSend (3 сек) через горутину.
-	inPeers := false
-	for _, p := range n.host.Network().Peers() {
-		if p == targetID {
-			inPeers = true
-			break
-		}
-	}
-	if inPeers {
-		if isFileChunk {
-			// Уже в воркере — синхронно, без горутины, без семафора.
-			n.sendWithFallback(targetID, data, msg.Recipient, isFileChunk)
-		} else {
-			go func() {
-				release := acquire()
-				defer release()
-				n.sendWithFallback(targetID, data, msg.Recipient, isFileChunk)
-			}()
-		}
-		return true
-	}
-
-	// Уровень 3: не в Peers() — сразу fallback.
-	release := acquire()
-	defer release()
-	return n.fallbackSend(msg.Recipient, data, isFileChunk)
-}
-
-// tryDirectSend — синхронная попытка прямого stream с коротким timeout.
-// Возвращает true, если stream открылся и данные записаны.
-// Используется внутри sendWithFallback (горутина).
-func (n *Node) tryDirectSend(targetID peer.ID, data []byte, timeout time.Duration) bool {
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
-	defer cancel()
-	s, err := n.host.NewStream(ctx, targetID, protocolID)
-	if err != nil {
-		return false
-	}
-	defer s.Close()
-	if _, err := fmt.Fprintf(s, "%s%s\n", REPLICA_PREFIX, string(data)); err != nil {
-		return false
-	}
-	return true
-}
-
-// sendWithFallback — синхронная (вызывается из горутины).
-// Сначала tryDirectSend (3 сек). При провале — fallbackSend.
-func (n *Node) sendWithFallback(targetID peer.ID, data []byte, recipient string, isFileChunk bool) {
-	if n.tryDirectSend(targetID, data, 3*time.Second) {
-		return
-	}
-	log.Printf("[REPLICA] direct send to %s failed (phantom circuit?), fallback", targetID)
-	n.fallbackSend(recipient, data, isFileChunk)
-}
-
-// fallbackSend — синхронная. Логика fallback:
-//   - relay → announcedPeers;
-//   - клиент → bootstrap.
-//
-// Возвращает true, если удалось отправить хотя бы одному адресату.
-func (n *Node) fallbackSend(recipient string, data []byte, isFileChunk bool) bool {
-	// Fallback для relay: если recipient в announcedPeers —
-	// подключаемся к нему напрямую и отправляем.
-	if n.isRelay {
-		if addrs, ok := n.lookupPeer(recipient); ok && len(addrs) > 0 {
-			// TODO(15+): relay-fallback без семафора. VPS не падает — ресурсы серверные.
-			// При 15+ узлах и прямых circuit — добавить семафор сюда.
-			go func(pid string, addrList []string, payload []byte, isFileChunk bool) {
-				for _, a := range addrList {
-					pi, err := peer.AddrInfoFromString(a)
-					if err != nil {
-						continue
-					}
-					if pi.ID.String() != pid {
-						continue
-					}
-					ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-					if err := n.host.Connect(ctx, *pi); err != nil {
-						cancel()
-						continue
-					}
-					cancel()
-					n.sendReplicaToPeer(pi.ID, payload, isFileChunk)
-					return
-				}
-			}(recipient, addrs, data, isFileChunk)
-			return true
-		}
-		log.Printf("[STATUS] relay: recipient not found in announcedPeers: %s", recipient)
-		return false
-	}
-
-	// Fallback для клиента: через bootstrap.
-	bootstrapPeers := n.loadBootstrapPeers()
-	for _, addr := range bootstrapPeers {
-		pi, err := peer.AddrInfoFromString(addr)
-		if err != nil {
-			continue
-		}
-		if n.host.ID() == pi.ID {
-			continue
-		}
-		if isFileChunk {
-			// Уже в воркере — синхронно.
-			n.sendReplicaToPeer(pi.ID, data, isFileChunk)
-		} else {
-			go func(pid peer.ID) {
-				n.sendSem <- struct{}{}
-				defer func() { <-n.sendSem }()
-				n.sendReplicaToPeer(pid, data, isFileChunk)
-			}(pi.ID)
-		}
-		return true
-	}
-
-	log.Printf("[STATUS] recipient not found: %s", recipient)
-	return false
-}
-
-// batchBuffer — буфер текстов для одного получателя (v2.0.4 c).
-// Тексты копятся до 10 или 1 сек или 60 КБ → один Sphinx-пакет.
-type batchBuffer struct {
-	Texts   []batchText
-	FirstAt time.Time
-}
-
-// batchText — один текст в батче. ID — отправителя (для [DELIVERED]).
-type batchText struct {
-	ID   string `json:"id"`
-	Text string `json:"text"`
-}
-
-// estimateBatchJSONSize — приблизительный размер JSON для лимита 60 КБ.
-// Точность не критична (запас 4 КБ до payload 64 КБ).
-func estimateBatchJSONSize(texts []batchText) int {
-	size := 20
-	for _, t := range texts {
-		size += len(t.ID) + len(t.Text) + 30
-	}
-	return size
-}
-
-// addToBatch — добавляет текст в буфер получателя (v2.0.4 c).
-// Лимит 60 КБ — если превысит, flush текущий, новый буфер.
-// 10 текстов — flush немедленно. Без рекурсии.
-func (n *Node) addToBatch(peerID, textID, text string) {
-	if peerID == "" || textID == "" {
-		return
-	}
-	n.batchBuffersMu.Lock()
-	buf := n.batchBuffers[peerID]
-	if buf == nil {
-		buf = &batchBuffer{}
-		n.batchBuffers[peerID] = buf
-	}
-	if len(buf.Texts) > 0 && estimateBatchJSONSize(buf.Texts)+len(textID)+len(text)+30 > 60*1024 {
-		texts := buf.Texts
-		buf.Texts = nil
-		n.batchBuffersMu.Unlock()
-		go n.flushBatch(peerID, texts)
-		n.batchBuffersMu.Lock()
-		n.batchBuffers[peerID] = &batchBuffer{Texts: []batchText{{ID: textID, Text: text}}}
-		n.batchBuffersMu.Unlock()
-		return
-	}
-	if buf.FirstAt.IsZero() {
-		buf.FirstAt = time.Now()
-	}
-	buf.Texts = append(buf.Texts, batchText{ID: textID, Text: text})
-	needFlush := len(buf.Texts) >= 10
-	if needFlush {
-		texts := buf.Texts
-		buf.Texts = nil
-		n.batchBuffersMu.Unlock()
-		go n.flushBatch(peerID, texts)
-		return
-	}
-	n.batchBuffersMu.Unlock()
-}
-
-// sendDummy — отправитель шлёт пустой Sphinx-пакет (v2.0.4 d, d.1.1).
-// Интервал: screenOn — 10–120 сек; screenOff — ×5 (50–600 сек).
-// 1 случайный контакт. Случайный текст. Задержка 1–60 сек.
-// Relay — forward (не знает, что dummy). Получатель — drop. Паттерн скрыт.
-func (n *Node) sendDummy() {
-	if n.settingsStore == nil || !n.settingsStore.GetMaskingEnabled() {
-		return
-	}
-	if !n.useOnion || n.isRelay || n.host == nil || n.contacts == nil {
-		return
-	}
-	all := n.contacts.GetAll()
-	if len(all) == 0 {
-		return
-	}
-	c := all[mathrand.Intn(len(all))]
-	if c.X25519Pub == "" || c.PeerID == "" {
-		return
-	}
-	recipient, err := peer.Decode(c.PeerID)
-	if err != nil {
-		return
-	}
-	route, err := n.buildSphinxRoute(recipient)
-	if err != nil {
-		return
-	}
-	payload := []byte(generateRandomText(50, 200))
-	packet, err := n.buildSphinxPacket(route, payload, false, true)
-	if err != nil {
-		return
-	}
-	delay := time.Duration(1+mathrand.Intn(60)) * time.Second
-	go func() {
-		time.Sleep(delay)
-		n.sendSphinxPacketToRelay1(route, packet)
-	}()
-}
-
-// SetDummyScreenOn — передаёт состояние экрана (v2.0.4 d.1.1).
-// true — dummy 10–120 сек. false — ×5 (50–600 сек). Сброс — при старте (true).
-func (n *Node) SetDummyScreenOn(screenOn bool) {
-	n.mu.Lock()
-	n.dummyScreenOn = screenOn
-	n.mu.Unlock()
-	log.Printf("[DUMMY] screenOn=%v", screenOn)
-}
-
-// dummyInterval — интервал dummy с учётом screenOn (v2.0.4 d.1.1).
-// screenOn: 10–120 сек. screenOff: ×5 (50–600 сек).
-func (n *Node) dummyInterval() time.Duration {
-	n.mu.Lock()
-	screenOn := n.dummyScreenOn
-	n.mu.Unlock()
-	base := 10 + mathrand.Intn(111)
-	if !screenOn {
-		base = base * 5
-	}
-	return time.Duration(base) * time.Second
-}
-
-// generateRandomText — случайный текст 50–200 символов (dummy, v2.0.4 d.1).
-func generateRandomText(minLen, maxLen int) string {
-	n := minLen + mathrand.Intn(maxLen-minLen+1)
-	const chars = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 .,!?"
-	b := make([]byte, n)
-	for i := range b {
-		b[i] = chars[mathrand.Intn(len(chars))]
-	}
-	return string(b)
-}
-
-// sendSphinxPacketToRelay1 — отправка готового Sphinx-пакета relay1.
-// Вынесено из sendViaSphinx для dummy (без msg).
-func (n *Node) sendSphinxPacketToRelay1(route *sphinxRoute, packet []byte) {
-	if len(route.Relays) == 0 || n.host == nil {
-		return
-	}
-	peerAddrs := n.host.Peerstore().Addrs(route.Relays[0])
-	var direct []ma.Multiaddr
-	if len(peerAddrs) == 0 {
-		addrs, ferr := n.FindPeerByID(route.Relays[0].String())
-		if ferr != nil {
-			return
-		}
-		for _, a := range addrs {
-			maAddr, perr := ma.NewMultiaddr(a)
-			if perr != nil {
-				continue
-			}
-			if strings.Contains(maAddr.String(), "/p2p-circuit") {
-				continue
-			}
-			direct = append(direct, maAddr)
-		}
-		if len(direct) == 0 {
-			return
-		}
-		n.host.Peerstore().AddAddrs(route.Relays[0], direct, peerstore.TempAddrTTL)
-	} else {
-		for _, a := range peerAddrs {
-			if strings.Contains(a.String(), "/p2p-circuit") {
-				continue
-			}
-			direct = append(direct, a)
-		}
-		if len(direct) == 0 {
-			return
-		}
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), SphinxTimeout)
-	defer cancel()
-	s, err := n.host.NewStream(ctx, route.Relays[0], protocolID)
-	if err != nil {
-		return
-	}
-	defer s.Close()
-	s.SetWriteDeadline(time.Now().Add(30 * time.Second))
-	fmt.Fprintf(s, "%s%s\n", SPHINX_PREFIX, base64.StdEncoding.EncodeToString(packet))
-	log.Printf("[DUMMY] sent to %s (relay1=%s)", route.Recipient, route.Relays[0])
-}
-
-// flushBatch — собирает JSON {"texts":[{"id":"...","text":"..."}]},
-// шифрует E2E, отправляет одним Sphinx-пакетом (MediaType="batch").
-func (n *Node) flushBatch(peerID string, texts []batchText) {
-	if peerID == "" || len(texts) == 0 {
-		return
-	}
-	batchJSON, err := json.Marshal(map[string]interface{}{"texts": texts})
-	if err != nil {
-		log.Printf("[BATCH] marshal failed: %v", err)
-		return
-	}
-	encrypted, err := n.encryptForRecipient(peerID, string(batchJSON))
-	if err != nil {
-		log.Printf("[BATCH] encrypt failed: %v", err)
-		return
-	}
-	id := generateMsgID(fmt.Sprintf("batch:%s:%d", peerID, time.Now().UnixNano()))
-	readEnabled := n.myReadEnabled
-	msg := Message{
-		ID:          id,
-		Text:        encrypted,
-		Sender:      n.host.ID().String(),
-		Recipient:   peerID,
-		Version:     MESSAGE_VERSION_E2E,
-		Type:        TypeMessage,
-		MediaType:   "batch",
-		Time:        time.Now().UTC().Format("2006-01-02T15:04:05"),
-		IsOwn:       true,
-		Weight:      0.5,
-		ReadEnabled: &readEnabled,
-	}
-	n.unackedChunksMu.Lock()
-	for _, t := range texts {
-		n.unackedChunks[t.ID] = retryInfo{
-			msgID:     t.ID,
-			recipient: peerID,
-			lastSent:  time.Now(),
-		}
-	}
-	n.unackedChunksMu.Unlock()
-	if n.sendViaSphinx(msg) {
-		log.Printf("[BATCH] sent %d texts to %s (size=%d)", len(texts), peerID, len(batchJSON))
-		return
-	}
-	log.Printf("[BATCH] sphinx failed for %s, fallback", peerID)
-	data, _ := json.Marshal(msg)
-	n.sendToRecipient(msg, data, false)
-}
-
-// flushAllBatches — тикер 1 сек: flush все непустые буферы.
-// go flushBatch — не блокировать тикер.
-func (n *Node) flushAllBatches() {
-	n.batchBuffersMu.Lock()
-	type item struct {
-		peerID string
-		texts  []batchText
-	}
-	var items []item
-	for peerID, buf := range n.batchBuffers {
-		if len(buf.Texts) == 0 {
-			continue
-		}
-		if time.Since(buf.FirstAt) < 1*time.Second {
-			continue
-		}
-		items = append(items, item{peerID: peerID, texts: buf.Texts})
-		buf.Texts = nil
-		buf.FirstAt = time.Time{}
-	}
-	n.batchBuffersMu.Unlock()
-	for _, it := range items {
-		go n.flushBatch(it.peerID, it.texts)
-	}
-}
-
-// chunkWorker — воркер отправки файловых чанков.
-// Читает из chunkQueue, маршалит, отправляет через sendToRecipient.
-// 10 воркеров запускаются в InitP2P.
-func (n *Node) chunkWorker() {
-	if n.isRelay {
-		// Relay — не отправитель. sent/<mediaID>.bin у него нет.
-		// unackedChunks копить не нужно. Воркер на relay — вреден.
-		return
-	}
-	for msg := range n.chunkQueue {
-		// PlainText — открытый текст. Получатель расшифрует Text сам.
-		// В JSON не передаём — экономия ~64 КБ на чанк.
-		msg.PlainText = ""
-		data, err := json.Marshal(msg)
-		if err != nil {
-			log.Printf("[CHUNK] marshal failed id=%s: %v", msg.ID, err)
-			continue
-		}
-		// Кладём метаданные в unackedChunks — ждём [DELIVERED].
-		// Сам Message (с base64) не храним: память O(1) на чанк.
-		n.unackedChunksMu.Lock()
-		info := n.unackedChunks[msg.ID]
-		info.mediaID = msg.MediaID
-		info.mediaType = msg.MediaType
-		info.chunkIndex = msg.ChunkIndex
-		info.recipient = msg.Recipient
-		info.msgID = msg.ID
-		info.fileName = msg.FileName
-		info.fileSize = msg.FileSize
-		info.chunkTotal = msg.ChunkTotal
-		info.ttlSeconds = msg.TtlPeriodSeconds
-		info.ttlMode = msg.TtlMode
-		info.expiresAt = msg.ExpiresAt
-		if info.lastSent.IsZero() {
-			info.attempts = 0
-		}
-		info.lastSent = time.Now()
-		n.unackedChunks[msg.ID] = info
-		n.unackedChunksMu.Unlock()
-
-		// Mixing (v2.0.3): файловые чанки через Sphinx — если включён.
-		// Семафор 3 (sphinxFileSem) — Samsung не успевает при 5.
-		if msg.MixingEnabled {
-			n.sphinxFileSem <- struct{}{}
-			if n.sendViaSphinx(msg) {
-				<-n.sphinxFileSem
-				continue
-			}
-			<-n.sphinxFileSem
-			log.Printf("[CHUNK] sphinx failed for %s[%d], fallback to direct", msg.MediaID, msg.ChunkIndex)
-		}
-		n.sendToRecipient(msg, data, true)
-	}
-}
-
-// pushFileStatus — push агрегата по файлу в Dart.
-// Throttle: не чаще раза в секунду на mediaID.
-// Payload: {"file_status": {"mediaID": ..., "delivered": N, "total": M}}
-// Если delivered >= total — дополнительно шлём {"file_complete": {"mediaID": ...}}.
-func (n *Node) pushFileStatus(mediaID string, delivered, total int) {
-	if mediaID == "" || total <= 0 {
-		return
-	}
-	n.fileStatusMu.Lock()
-	last := n.fileStatusLastPush[mediaID]
-	complete := delivered >= total
-	alreadyCompleted := n.completedFiles[mediaID]
-	// Первый complete — всегда пушим (даже если last только что был).
-	// Иначе throttle съедает file_complete → UI застревает на 97%.
-	// Повторный complete (retry-эхо) — throttle 5 сек.
-	if complete && alreadyCompleted {
-		if !last.IsZero() && time.Since(last) < 5*time.Second {
-			n.fileStatusMu.Unlock()
-			return
-		}
-	}
-	if !complete && time.Since(last) < time.Second {
-		n.fileStatusMu.Unlock()
-		return
-	}
-	n.fileStatusLastPush[mediaID] = time.Now()
-	if complete {
-		n.completedFiles[mediaID] = true
-	}
-	n.fileStatusMu.Unlock()
-
-	if n.messageHook == nil {
-		return
-	}
-
-	payload := map[string]interface{}{
-		"file_status": map[string]interface{}{
-			"mediaID":   mediaID,
-			"delivered": delivered,
-			"total":     total,
-		},
-	}
-	if data, err := json.Marshal(payload); err == nil {
-		n.messageHook(string(data))
-	}
-
-	if complete {
-		done := map[string]interface{}{
-			"file_complete": map[string]interface{}{
-				"mediaID": mediaID,
-			},
-		}
-		if data, err := json.Marshal(done); err == nil {
-			n.messageHook(string(data))
-		}
-		// НЕ удаляем throttle-запись: фильтр по времени работает.
-	}
-}
-
-// retryBackoff — интервалы переотправки чанков (d, 2026-10-29).
-// Сумма ~1 ч. После — giving up (файл не дожат, честно).
-// Было: 3 попытки × 30 сек = 90 сек. Мало для нестабильного Wi-Fi.
-var retryBackoff = []time.Duration{
-	30 * time.Second,
-	1 * time.Minute,
-	2 * time.Minute,
-	5 * time.Minute,
-	10 * time.Minute,
-	10 * time.Minute,
-	10 * time.Minute,
-	10 * time.Minute,
-	10 * time.Minute,
-	10 * time.Minute,
-}
-
-// retryLoop — периодическая проверка unackedChunks.
-// Интервал — retryBackoff[attempts] (30 сек → 10 мин, потолок).
-// После len(retryBackoff) попыток (~1 ч) — сдаться, удалить.
-func (n *Node) retryLoop() {
-	go func() {
-		for {
-			time.Sleep(15 * time.Second)
-			n.retryUnacked()
-		}
-	}()
-}
-
-// retryUnacked — одна итерация проверки unackedChunks.
-// attempts++ происходит ТОЛЬКО при успешной постановке в chunkQueue.
-// Если chunkQueue полна — ждём до 2 секунд, потом откладываем на следующий тик.
-// Не дропаем: потеря чанка = незавершённая передача файла.
-// Message восстанавливается из sent/<mediaID>.bin через fillFileChunkFromSent.
-func (n *Node) retryUnacked() {
-	now := time.Now()
-	type retryItem struct {
-		id   string
-		info retryInfo
-	}
-	var toRetry []retryItem
-
-	n.unackedChunksMu.Lock()
-	for id, info := range n.unackedChunks {
-		if info.attempts >= len(retryBackoff) {
-			log.Printf("[RETRY] giving up on %s after %d attempts", id, info.attempts)
-			delete(n.unackedChunks, id)
-			continue
-		}
-		backoff := retryBackoff[info.attempts]
-		if now.Sub(info.lastSent) < backoff {
-			continue
-		}
-		toRetry = append(toRetry, retryItem{id: id, info: info})
-	}
-	n.unackedChunksMu.Unlock()
-
-	for _, item := range toRetry {
-		// Восстанавливаем Message из sent/<mediaID>.bin.
-		msg, err := n.restoreChunkMessage(item.info)
-		if err != nil {
-			// attempts++ при fail — иначе giving up не срабатывает (мёртвый код).
-			// После 3 fail — delete. Между fail — чанк остаётся в unackedChunks,
-			// но с растущим attempts. Это защита от бесконечного restore-цикла.
-			n.unackedChunksMu.Lock()
-			info := n.unackedChunks[item.id]
-			info.attempts++
-			if info.attempts >= 3 {
-				log.Printf("[RETRY] giving up on %s after %d failed restores: %v", item.id, info.attempts, err)
-				delete(n.unackedChunks, item.id)
-			} else {
-				log.Printf("[RETRY] restore %s failed (attempt %d): %v", item.id, info.attempts, err)
-				info.lastSent = time.Now()
-				n.unackedChunks[item.id] = info
-			}
-			n.unackedChunksMu.Unlock()
-			continue
-		}
-		select {
-		case n.chunkQueue <- msg:
-			// Успешная постановка — только теперь увеличиваем attempts.
-			n.unackedChunksMu.Lock()
-			if info, ok := n.unackedChunks[item.id]; ok {
-				info.attempts++
-				info.lastSent = time.Now()
-				n.unackedChunks[item.id] = info
-				log.Printf("[RETRY] re-enqueue %s (attempt %d)", item.id, info.attempts)
-			}
-			n.unackedChunksMu.Unlock()
-		case <-time.After(2 * time.Second):
-			// Очередь переполнена — откладываем. attempts НЕ увеличиваем.
-			log.Printf("[RETRY] chunkQueue busy, deferring %s", item.id)
-		}
-	}
-}
-
-// restoreChunkMessage — восстанавливает Message файлового чанка
-// из метаданных retryInfo и sent/<mediaID>.bin.
-// Используется в retryUnacked (Message не хранится в unackedChunks).
-func (n *Node) restoreChunkMessage(info retryInfo) (Message, error) {
-	if info.mediaID == "" || info.recipient == "" {
-		return Message{}, fmt.Errorf("incomplete retryInfo")
-	}
-	msg := Message{
-		ID:               info.msgID,
-		Sender:           n.host.ID().String(),
-		Recipient:        info.recipient,
-		Version:          MESSAGE_VERSION_E2E,
-		Type:             TypeMessage,
-		MediaType:        info.mediaType,
-		MediaID:          info.mediaID,
-		ChunkIndex:       info.chunkIndex,
-		ChunkTotal:       info.chunkTotal,
-		FileName:         info.fileName,
-		FileSize:         info.fileSize,
-		TtlPeriodSeconds: info.ttlSeconds,
-		TtlMode:          info.ttlMode,
-		ExpiresAt:        info.expiresAt,
-		Time:             time.Now().UTC().Format("2006-01-02T15:04:05"),
-		IsOwn:            true,
-		Weight:           0.5,
-	}
-	readEnabled := n.myReadEnabled
-	msg.ReadEnabled = &readEnabled
-	if err := n.fillFileChunkFromSent(&msg); err != nil {
-		return Message{}, fmt.Errorf("fillFileChunkFromSent: %w", err)
-	}
-	return msg, nil
-}
-
-// sendReplicaToPeer — отправка данных пиру.
-// isFileChunk — true: без randomDelay и без лога (10718 чанков ×
-// 10-30 мс = минуты ожидания + heap).
-func (n *Node) sendReplicaToPeer(targetID peer.ID, data []byte, isFileChunk bool) {
-	if !isFileChunk {
-		myID := ""
-		if n.host != nil {
-			myID = n.host.ID().String()
-		}
-		var msgPreview string
-		if len(data) > 200 {
-			msgPreview = string(data[:200])
-		} else {
-			msgPreview = string(data)
-		}
-		log.Printf("[REPLICA] sendReplicaToPeer target=%s me=%s data=%s", targetID, myID, msgPreview)
-		randomDelay(10, 30)
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-	s, err := n.host.NewStream(ctx, targetID, protocolID)
-	if err != nil {
-		if !isFileChunk {
-			log.Printf("[REPLICA] NewStream to %s failed: %v", targetID, err)
-		}
-		return
-	}
-	defer s.Close()
-	s.Write([]byte(REPLICA_PREFIX))
-	s.Write(data)
-	s.Write([]byte("\n"))
-}
-
-// sendServiceViaBootstrap — отправка сервисного сообщения через bootstrap (relay).
-// Используется для [CONTACT_HELLO] / [CONTACT_HELLO_ACK].
-// Синхронный — возвращает ошибку, чтобы UI знал результат.
-// Без randomDelay — handshake важнее антидетекта.
-// Всегда через bootstrap — не зависит от circuit (может быть stale).
-func (n *Node) sendServiceViaBootstrap(msg Message) error {
-	if n.host == nil {
-		return fmt.Errorf("node not started")
-	}
-	if msg.Recipient == "" {
-		return fmt.Errorf("recipient is required")
-	}
-
-	data, err := json.Marshal(msg)
-	if err != nil {
-		return fmt.Errorf("marshal failed: %w", err)
-	}
-
-	bootstrapPeers := n.loadBootstrapPeers()
-	if len(bootstrapPeers) == 0 {
-		return fmt.Errorf("no bootstrap peer available")
-	}
-
-	myID := n.host.ID()
-	var lastErr error
-	for _, addr := range bootstrapPeers {
-		pi, err := peer.AddrInfoFromString(addr)
-		if err != nil {
-			lastErr = fmt.Errorf("invalid bootstrap addr %q: %w", addr, err)
-			continue
-		}
-		if pi.ID == myID {
-			continue
-		}
-
-		// serviceSem: сервисные не конкурируют с chunkWorker за libp2p stream.
-		// Ревью старого программиста 2026-10-29: корень отставания UI.
-		n.serviceSem <- struct{}{}
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		s, err := n.host.NewStream(ctx, pi.ID, protocolID)
-		if err != nil {
-			cancel()
-			<-n.serviceSem
-			lastErr = fmt.Errorf("NewStream to %s failed: %w", pi.ID, err)
-			continue
-		}
-		_, err = fmt.Fprintf(s, "%s%s\n", REPLICA_PREFIX, string(data))
-		s.Close()
-		cancel()
-		<-n.serviceSem
-		if err != nil {
-			lastErr = fmt.Errorf("write to %s failed: %w", pi.ID, err)
-			continue
-		}
-		return nil
-	}
-
-	if lastErr == nil {
-		lastErr = fmt.Errorf("no reachable bootstrap peer")
-	}
-	return lastErr
-}
-
-// ============================================================
-// NOTIFIEE
-// ============================================================
-
-type nodeNotifiee struct {
-	node *Node
-}
-
-func (nn *nodeNotifiee) Connected(net network.Network, conn network.Conn) {
-	remote := conn.RemotePeer().String()
-	log.Printf("[NOTIFY] connected to %s", remote)
-	go func() {
-		time.Sleep(1 * time.Second)
-
-		if nn.node.hasPending() {
-			log.Printf("[NOTIFY] flushing pending after connect to %s", remote)
-			nn.node.flushPending()
-		}
-
-		// Если reconnect с relay-сервером (VPS) — немедленно
-		// пересоздать резервацию и анонсировать новый адрес.
-		if nn.node.isRelayAddr(remote) {
-			nn.node.refreshRelayAndAnnounce()
-		}
-	}()
-}
-
-func (nn *nodeNotifiee) Disconnected(net network.Network, conn network.Conn) {
-	remote := conn.RemotePeer().String()
-	log.Printf("[NOTIFY] disconnected from %s", remote)
-	// F″: peer ушёл — сбрасываем deadPeers.
-	// Иначе Xiaomi, один раз помеченный мёртвым по PING, остаётся dead
-	// навсегда (его нет в Peers() → PING не идёт → markPeerAlive не зовётся).
-	// Это даёт 10718 ложных "marked dead" на файл.
-	nn.node.mu.Lock()
-	if nn.node.deadPeers != nil {
-		delete(nn.node.deadPeers, remote)
-	}
-	nn.node.mu.Unlock()
-}
-
-func (nn *nodeNotifiee) Listen(net network.Network, addr ma.Multiaddr)      {}
-func (nn *nodeNotifiee) ListenClose(net network.Network, addr ma.Multiaddr) {}
-
-// isRelayAddr — true, если remote — наш relay-сервер (bootstrap).
-// Используется в Notifiee, чтобы реагировать только на relay-reconnect.
-func (n *Node) isRelayAddr(remotePeerID string) bool {
-	for _, addr := range n.loadBootstrapPeers() {
-		pi, err := peer.AddrInfoFromString(addr)
-		if err != nil {
-			continue
-		}
-		if pi.ID.String() == remotePeerID {
-			return true
-		}
-	}
-	return false
-}
-
-// refreshRelayAndAnnounce — немедленно пересоздаёт резервацию на VPS
-// и анонсирует новый адрес. Вызывается из Notifiee при reconnect с VPS.
-// Это закрывает «первое окно»: резервация теряется при disconnect,
-// а relayLoop её обновляет только через N минут.
-// SendAnnounce вызывается только если есть announceMultiaddrs — иначе
-// первый ANNOUNCE придёт от Flutter (_sendAnnounce).
-func (n *Node) refreshRelayAndAnnounce() {
-	n.relayMu.Lock()
-	// Throttle: не чаще одного раза в 10 секунд.
-	// НО: если предыдущая резервация упала — throttle не блокирует.
-	// Иначе при быстром reconnect refresh пропускается, резервация не восстанавливается.
-	if time.Since(n.lastRelayRefresh) < 10*time.Second && n.lastReservationErr == nil {
-		n.relayMu.Unlock()
-		return
-	}
-	n.lastRelayRefresh = time.Now()
-	relayInfo := n.relayPeerInfo
-	n.relayMu.Unlock()
-
-	if relayInfo.ID == "" {
-		// Нет relay-инфо — нечего пересоздавать.
-		return
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	err := n.ReserveRelaySlot(ctx, relayInfo)
-	cancel()
-	if err != nil {
-		log.Printf("[RELAY] refresh on reconnect failed: %v", err)
-		return
-	}
-	log.Printf("[RELAY] refreshed on reconnect")
-
-	// Анонсируем немедленно, если есть что. Это закрывает «второе окно»:
-	// при смене relay-адреса другие узлы узнают о нём сразу, а не через 4 минуты.
-	if len(n.announceMultiaddrs) > 0 {
-		n.SendAnnounce(n.announceMultiaddrs)
-	}
-}
-
-// ============================================================
-// ANNOUNCE — справочник пиров (VPS)
-// ============================================================
-
-func (n *Node) announcePeer(peerID string, multiaddrs []string) {
-	if len(multiaddrs) == 0 {
-		return
-	}
-	n.announcedMu.Lock()
-	defer n.announcedMu.Unlock()
-	if n.announcedPeers == nil {
-		n.announcedPeers = make(map[string]announcedPeer)
-	}
-	n.announcedPeers[peerID] = announcedPeer{
-		Multiaddrs: multiaddrs,
-		LastSeen:   time.Now(),
-	}
-	log.Printf("[ANNOUNCE] %s → %d addrs (%v)", peerID, len(multiaddrs), multiaddrs)
-}
-
-func (n *Node) lookupPeer(peerID string) ([]string, bool) {
-	n.announcedMu.Lock()
-	defer n.announcedMu.Unlock()
-	p, ok := n.announcedPeers[peerID]
-	if !ok {
-		return nil, false
-	}
-	if time.Since(p.LastSeen) > ANNOUNCE_TTL {
-		delete(n.announcedPeers, peerID)
-		return nil, false
-	}
-	return p.Multiaddrs, true
-}
-
-func (n *Node) cleanupAnnounced() {
-	connected := make(map[string]bool)
-	if n.host != nil {
-		for _, p := range n.host.Network().Peers() {
-			connected[p.String()] = true
-		}
-	}
-
-	n.announcedMu.Lock()
-	defer n.announcedMu.Unlock()
-	now := time.Now()
-	for id, p := range n.announcedPeers {
-		if !connected[id] {
-			delete(n.announcedPeers, id)
-			log.Printf("[ANNOUNCE] peer %s not connected — removed", id)
-			continue
-		}
-		if now.Sub(p.LastSeen) > ANNOUNCE_TTL {
-			delete(n.announcedPeers, id)
-			log.Printf("[ANNOUNCE] TTL expired: %s", id)
-		}
-	}
-}
-
-func (n *Node) SendAnnounce(multiaddrs []string) {
-	if n.host == nil || len(multiaddrs) == 0 {
-		return
-	}
-
-	n.announceMultiaddrs = multiaddrs
-
-	relayAddrs := n.GetRelayAddrs()
-	allAddrs := make([]string, 0, len(multiaddrs)+len(relayAddrs))
-	allAddrs = append(allAddrs, multiaddrs...)
-	allAddrs = append(allAddrs, relayAddrs...)
-
-	var sb strings.Builder
-	sb.WriteString(ANNOUNCE_PREFIX)
-	sb.WriteString("\n")
-	for _, a := range allAddrs {
-		sb.WriteString(a)
-		sb.WriteString("\n")
-	}
-	sb.WriteString(END_PREFIX)
-	sb.WriteString("\n")
-	payload := sb.String()
-
-	bootstrapPeers := n.loadBootstrapPeers()
-	for _, addr := range bootstrapPeers {
-		pi, err := peer.AddrInfoFromString(addr)
-		if err != nil {
-			continue
-		}
-		go func(pid peer.ID) {
-			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			defer cancel()
-			s, err := n.host.NewStream(ctx, pid, protocolID)
-			if err != nil {
-				log.Printf("[ANNOUNCE] send failed to %s: %v", pid, err)
-				return
-			}
-			defer s.Close()
-			fmt.Fprintf(s, "%s", payload)
-			log.Printf("[ANNOUNCE] sent to %s: %d addrs", pid, len(allAddrs))
-		}(pi.ID)
-	}
-
-	for _, p := range n.host.Network().Peers() {
-		isBootstrap := false
-		for _, addr := range bootstrapPeers {
-			if pi, err := peer.AddrInfoFromString(addr); err == nil && pi.ID == p {
-				isBootstrap = true
-				break
-			}
-		}
-		if isBootstrap {
-			continue
-		}
-		go func(pid peer.ID) {
-			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			defer cancel()
-			s, err := n.host.NewStream(ctx, pid, protocolID)
-			if err != nil {
-				return
-			}
-			defer s.Close()
-			fmt.Fprintf(s, "%s", payload)
-		}(p)
-	}
-}
-
-func (n *Node) FindPeerByID(targetID string) ([]string, error) {
-	if n.host == nil {
-		return nil, fmt.Errorf("node not started")
-	}
-
-	if addrs, ok := n.lookupPeer(targetID); ok {
-		log.Printf("[FIND] local hit: %s → %d addrs: %v", targetID, len(addrs), addrs)
-		return addrs, nil
-	}
-
-	bootstrapPeers := n.loadBootstrapPeers()
-	for _, addr := range bootstrapPeers {
-		pi, err := peer.AddrInfoFromString(addr)
-		if err != nil {
-			continue
-		}
-		ctx, cancel := context.WithTimeout(context.Background(), 7*time.Second)
-		s, err := n.host.NewStream(ctx, pi.ID, protocolID)
-		if err != nil {
-			cancel()
-			log.Printf("[FIND] cannot open stream to %s: %v", pi.ID, err)
-			continue
-		}
-		fmt.Fprintf(s, "%s%s\n", FIND_PREFIX, targetID)
-		buf := make([]byte, 64*1024)
-		s.SetReadDeadline(time.Now().Add(5 * time.Second))
-		nr, _ := s.Read(buf)
-		s.Close()
-		cancel()
-
-		response := strings.TrimSpace(string(buf[:nr]))
-		addrs := parseMultiaddrsResponse(response, FOUND_PREFIX)
-		if len(addrs) > 0 {
-			log.Printf("[FIND] %s → %d addrs (via %s): %v", targetID, len(addrs), pi.ID, addrs)
-			return addrs, nil
-		}
-		if strings.HasPrefix(response, NOT_FOUND_PREFIX) {
-			log.Printf("[FIND] %s not found on %s", targetID, pi.ID)
-		}
-	}
-
-	return nil, fmt.Errorf("not found")
-}
-
-func parseMultiaddrsResponse(response, prefix string) []string {
-	lines := strings.Split(response, "\n")
-	if len(lines) == 0 {
-		return nil
-	}
-	if strings.TrimSpace(lines[0]) != prefix {
-		return nil
-	}
-	var addrs []string
-	for _, line := range lines[1:] {
-		line = strings.TrimSpace(line)
-		if line == "" || line == END_PREFIX {
-			continue
-		}
-		addrs = append(addrs, line)
-	}
-	return addrs
-}
-
-// ============================================================
-
-func (n *Node) handleStream(stream network.Stream) {
-	defer stream.Close()
-
-	// Читаем до \n или до EOF — libp2p может фрагментировать сообщение.
-	stream.SetReadDeadline(time.Now().Add(15 * time.Second))
-
-	var full []byte
-	buf := make([]byte, 64*1024)
-	for {
-		nr, err := stream.Read(buf)
-		if nr > 0 {
-			full = append(full, buf[:nr]...)
-			if bytes.Contains(buf[:nr], []byte("\n")) {
-				break
-			}
-		}
-		if err != nil {
-			break
-		}
-		if len(full) > 4*1024*1024 {
-			break
-		}
-	}
-	msg := strings.TrimSpace(string(full))
-
-	if strings.HasPrefix(msg, ANNOUNCE_PREFIX) {
-		remoteID := stream.Conn().RemotePeer().String()
-		addrs := parseMultiaddrsResponse(msg, ANNOUNCE_PREFIX)
-		if len(addrs) > 0 {
-			n.announcePeer(remoteID, addrs)
-		}
-		return
-	}
-
-	if strings.HasPrefix(msg, FIND_PREFIX) {
-		targetID := strings.TrimPrefix(msg, FIND_PREFIX)
-		targetID = strings.TrimSpace(targetID)
-
-		addrs, ok := n.lookupPeer(targetID)
-
-		if !ok && n.host != nil {
-			targetPID, err := peer.Decode(targetID)
-			if err == nil {
-				connected := false
-				for _, p := range n.host.Network().Peers() {
-					if p == targetPID {
-						connected = true
-						break
-					}
-				}
-				if connected {
-					relayAddr := n.buildRelayAddrFor(targetID)
-					if relayAddr != "" {
-						addrs = []string{relayAddr}
-						ok = true
-						log.Printf("[FIND] fallback to relay for connected peer %s", targetID)
-					}
-				}
-			}
-		}
-
-		if ok && len(addrs) > 0 {
-			var sb strings.Builder
-			sb.WriteString(FOUND_PREFIX)
-			sb.WriteString("\n")
-			for _, a := range addrs {
-				sb.WriteString(a)
-				sb.WriteString("\n")
-			}
-			sb.WriteString(END_PREFIX)
-			sb.WriteString("\n")
-			stream.Write([]byte(sb.String()))
-		} else {
-			stream.Write([]byte(NOT_FOUND_PREFIX + "\n"))
-		}
-		return
-	}
-
-	log.Printf("[SPHINX] incoming packet: len=%d prefix=%q", len(msg), truncate(msg, 20))
-	if strings.HasPrefix(msg, SPHINX_PREFIX) {
-		payload := strings.TrimPrefix(msg, SPHINX_PREFIX)
-		raw, err := base64.StdEncoding.DecodeString(strings.TrimSpace(payload))
-		if err != nil {
-			log.Printf("[SPHINX] base64 decode failed: %v", err)
-			return
-		}
-		myID := n.host.ID().String()
-		nextPeer, mixing, dummy, remainder, err := n.processSphinxPacket(raw)
-		if err == nil {
-			log.Printf("[SPHINX] relay: next=%s size=%d mixing=%v dummy=%v", nextPeer, len(remainder), mixing, dummy)
-			// Mixing (v2.0.2): флаг из Sphinx-пакета (свойство сообщения).
-			// Relay спит, если отправитель включил Mixing. Не настройка relay.
-			if mixing {
-				sleepExponential(5*time.Second, 30*time.Second)
-			}
-			// Только прямой (Wi-Fi) путь. Circuit (через VPS) — не Sphinx.
-			peerAddrs := n.host.Peerstore().Addrs(nextPeer)
-			if len(peerAddrs) == 0 {
-				if addrs, ferr := n.FindPeerByID(nextPeer.String()); ferr == nil {
-					var direct []ma.Multiaddr
-					for _, a := range addrs {
-						maAddr, perr := ma.NewMultiaddr(a)
-						if perr != nil {
-							continue
-						}
-						if strings.Contains(maAddr.String(), "/p2p-circuit") {
-							continue
-						}
-						direct = append(direct, maAddr)
-					}
-					if len(direct) == 0 {
-						log.Printf("[SPHINX] relay: no direct addrs for next hop %s, drop", nextPeer)
-						return
-					}
-					n.host.Peerstore().AddAddrs(nextPeer, direct, peerstore.TempAddrTTL)
-					log.Printf("[SPHINX] relay: next=%s direct_addrs=%d", nextPeer, len(direct))
-				} else {
-					log.Printf("[SPHINX] relay: FindPeerByID(%s) failed: %v, drop", nextPeer, ferr)
-					return
-				}
-			} else {
-				// В peerstore есть — проверить, что не circuit.
-				var direct []ma.Multiaddr
-				for _, a := range peerAddrs {
-					if strings.Contains(a.String(), "/p2p-circuit") {
-						continue
-					}
-					direct = append(direct, a)
-				}
-				if len(direct) == 0 {
-					log.Printf("[SPHINX] relay: no direct addrs in peerstore for next hop %s, drop", nextPeer)
-					return
-				}
-			}
-			ctx, cancel := context.WithTimeout(context.Background(), SphinxTimeout)
-			s, serr := n.host.NewStream(ctx, nextPeer, protocolID)
-			cancel()
-			if serr != nil {
-				log.Printf("[SPHINX] relay NewStream to %s failed: %v", nextPeer, serr)
-				return
-			}
-			defer s.Close()
-			fmt.Fprintf(s, "%s%s\n", SPHINX_PREFIX, base64.StdEncoding.EncodeToString(remainder))
-			return
-		}
-		// Не relay (или не мой слой) — пробуем как получатель.
-		log.Printf("[SPHINX] processSphinxPacket failed: %v", err)
-		plain, err := n.extractSphinxPayload(raw)
-		if err != nil {
-			log.Printf("[SPHINX] neither relay nor recipient: %v", err)
-			return
-		}
-		var replicaMsg Message
-		if err := json.Unmarshal(plain, &replicaMsg); err != nil {
-			log.Printf("[SPHINX] recipient unmarshal failed: %v", err)
-			return
-		}
-		if replicaMsg.Recipient != myID {
-			log.Printf("[SPHINX] recipient mismatch: %s != %s", replicaMsg.Recipient, myID)
-			return
-		}
-		n.handleSphinxReplicaMsg(replicaMsg)
-		return
-	}
-
-	if strings.HasPrefix(msg, REPLICA_PREFIX) {
-		payload := strings.TrimPrefix(msg, REPLICA_PREFIX)
-
-		var replicaMsg Message
-		if err := json.Unmarshal([]byte(payload), &replicaMsg); err == nil {
-			// Сервисные сообщения (DELIVERED/READ/CONTACT_*):
-			// мне → обработать, relay → форвард, иначе → drop.
-			if n.isServiceType(replicaMsg.Type) {
-				myID := n.host.ID().String()
-				if replicaMsg.Recipient == myID {
-					n.handleServiceMessage(replicaMsg)
-				} else if n.isRelay {
-					go n.replicateMessage(replicaMsg)
-				}
-				return
-			}
-			// Деобфускация только для Version < 2 (история, broadcast).
-			if replicaMsg.Version < 2 {
-				if plaintext, ok := n.deobfuscate(replicaMsg.Text); ok {
-					replicaMsg.Text = plaintext
-				}
-			}
-			replicaMsg.ReplicatedAt = time.Now()
-			replicaMsg.IsOwn = false
-
-			// Version 2 — E2E-шифрованное. Маршрутизация по Recipient.
-			if replicaMsg.Version == MESSAGE_VERSION_E2E {
-				myID := n.host.ID().String()
-				if replicaMsg.Recipient == myID {
-					// v2.0.4 c: батч текстов — decrypt, JSON, разбор, ack.
-					if replicaMsg.MediaType == "batch" {
-						plaintext, err := n.decryptFromSender(replicaMsg.Sender, replicaMsg.Text)
-						if err != nil {
-							log.Printf("[BATCH] decrypt failed from %s: %v", replicaMsg.Sender, err)
-							return
-						}
-						var batch struct {
-							Texts []struct {
-								ID   string `json:"id"`
-								Text string `json:"text"`
-							} `json:"texts"`
-						}
-						if err := json.Unmarshal([]byte(plaintext), &batch); err != nil {
-							log.Printf("[BATCH] parse failed from %s: %v", replicaMsg.Sender, err)
-							return
-						}
-						senderName := n.nameForPeer(replicaMsg.Sender)
-						for _, t := range batch.Texts {
-							msg := Message{
-								ID:           t.ID,
-								Text:         t.Text,
-								Sender:       replicaMsg.Sender,
-								SenderName:   senderName,
-								Recipient:    replicaMsg.Recipient,
-								Type:         TypeMessage,
-								MediaType:    "text",
-								Version:      MESSAGE_VERSION_E2E,
-								Time:         time.Now().UTC().Format("2006-01-02T15:04:05"),
-								IsOwn:        false,
-								Weight:       0.5,
-								ReplicatedAt: time.Now(),
-							}
-							if n.memory.Add(msg) {
-								if n.messageHook != nil {
-									data, _ := json.Marshal(msg)
-									n.messageHook(string(data))
-								}
-							}
-							n.queueDelivered(replicaMsg.Sender, t.ID)
-						}
-						return
-					}
-					// Нам — расшифровываем.
-					if isChunkedMediaType(replicaMsg.MediaType) && replicaMsg.ChunkTotal > 0 {
-						raw, err := n.decryptBytesFromSender(replicaMsg.Sender, replicaMsg.Text)
-						if err != nil {
-							log.Printf("[REPLICA] decrypt bytes failed from %s: %v", replicaMsg.Sender, err)
-							return
-						}
-						replicaMsg.Text = base64.StdEncoding.EncodeToString(raw)
-					} else {
-						plaintext, err := n.decryptFromSender(replicaMsg.Sender, replicaMsg.Text)
-						if err != nil {
-							log.Printf("[REPLICA] decrypt failed from %s: %v", replicaMsg.Sender, err)
-							return
-						}
-						replicaMsg.Text = plaintext
-					}
-					replicaMsg.SenderName = n.nameForPeer(replicaMsg.Sender)
-					added := n.memory.Add(replicaMsg)
-					if added {
-						// Получатель: прогресс приёма файла — источник истины Go.
-						// pushFileStatus → Dart → шторка/контакты.
-						if isChunkedMediaType(replicaMsg.MediaType) && replicaMsg.ChunkTotal > 0 && replicaMsg.MediaID != "" {
-							n.acceptedCountMu.Lock()
-							n.acceptedCount[replicaMsg.MediaID]++
-							accepted := n.acceptedCount[replicaMsg.MediaID]
-							n.acceptedCountMu.Unlock()
-							n.pushFileStatus(replicaMsg.MediaID, accepted, replicaMsg.ChunkTotal)
-						}
-						if n.messageHook != nil {
-							// Файловые чанки: не шлём base64 в Dart (OOM).
-							// Метаданные — в hook. base64 — через getChunk по запросу.
-							hookMsg := replicaMsg
-							if isChunkedMediaType(hookMsg.MediaType) && hookMsg.ChunkTotal > 0 {
-								hookMsg.Text = ""
-								hookMsg.PlainText = ""
-								n.pendingHookAcksMu.Lock()
-								w := n.pendingHookAcks[hookMsg.MediaID]
-								if w == nil {
-									w = &hookAckWindow{Indices: make(map[int]time.Time)}
-									n.pendingHookAcks[hookMsg.MediaID] = w
-								}
-								w.Indices[hookMsg.ChunkIndex] = time.Now()
-								n.pendingHookAcksMu.Unlock()
-							}
-							data, _ := json.Marshal(hookMsg)
-							n.messageHook(string(data))
-						}
-					}
-					// [DELIVERED] шлём ВСЕГДА — идемпотентно.
-					// Первый [DELIVERED] мог потеряться в сети;
-					// отправитель должен знать, что чанк дошёл, даже если
-					// мы его уже видели (retry). Батчинг в queueDelivered
-					// схлопывает дубликаты, overhead минимален.
-					n.queueDelivered(replicaMsg.Sender, replicaMsg.ID)
-					return
-				}
-				// Не нам.
-				if n.isRelay {
-					go n.replicateMessage(replicaMsg)
-				}
-				return
-			}
-
-			// Version 0 — старая логика.
-			if replicaMsg.Recipient != "" && n.host != nil {
-				myID := n.host.ID().String()
-				if replicaMsg.Recipient != myID {
-					if n.isRelay {
-						log.Printf("[REPLICA] relay forward to %s", replicaMsg.Recipient)
-						go n.replicateMessage(replicaMsg)
-					} else {
-						log.Printf("[REPLICA] not for us (recipient=%s), dropping", replicaMsg.Recipient)
-					}
-					return
-				}
-				replicaMsg.SenderName = n.nameForPeer(replicaMsg.Sender)
-				if n.memory.Add(replicaMsg) {
-					log.Printf("[REPLICA] received addressed message for us: %s", replicaMsg.ID)
-					if n.messageHook != nil {
-						data, _ := json.Marshal(replicaMsg)
-						n.messageHook(string(data))
-					}
-				}
-				return
-			}
-
-			if n.memory.Add(replicaMsg) {
-				go n.replicateMessage(replicaMsg)
-				if n.messageHook != nil {
-					data, _ := json.Marshal(replicaMsg)
-					n.messageHook(string(data))
-				}
-			}
-		}
-		return
-	}
-
-	if strings.HasPrefix(msg, RESTORE_PREFIX) {
-		nodeID := strings.TrimPrefix(msg, RESTORE_PREFIX)
-		replicas := n.memory.GetReplicasFor(nodeID)
-		if len(replicas) > 0 {
-			for _, r := range replicas {
-				data, _ := json.Marshal(r)
-				stream.Write([]byte(REPLICA_PREFIX + string(data) + "\n"))
-			}
-		}
-		return
-	}
-
-	if strings.HasPrefix(msg, "PEERS:") {
-		payload := strings.TrimPrefix(msg, "PEERS:")
-		var peerAddrs []string
-		if err := json.Unmarshal([]byte(payload), &peerAddrs); err == nil {
-			for _, addr := range peerAddrs {
-				peerInfo, err := peer.AddrInfoFromString(addr)
-				if err == nil {
-					n.host.Peerstore().AddAddrs(peerInfo.ID, peerInfo.Addrs, time.Hour*24)
-				}
-			}
-			allAddrs := n.GetKnownPeers()
-			myAddrs := n.GetMultiaddrs()
-			for _, addr := range myAddrs {
-				if !strings.Contains(addr, "127.0.0.1") {
-					allAddrs = append(allAddrs, addr)
-				}
-			}
-			data, _ := json.Marshal(allAddrs)
-			stream.Write([]byte("PEERS:" + string(data) + "\n"))
-		}
-		return
-	}
-
-	if strings.HasPrefix(msg, "RELAY:") {
-		parts := strings.SplitN(strings.TrimPrefix(msg, "RELAY:"), ":", 2)
-		if len(parts) == 2 {
-			targetPeerID := parts[0]
-			actualMsg := parts[1]
-			if plaintext, ok := n.deobfuscate(actualMsg); ok {
-				actualMsg = plaintext
-			}
-			targetPID, err := peer.Decode(targetPeerID)
-			if err == nil {
-				go func() {
-					ctx := context.Background()
-					s, err := n.host.NewStream(ctx, targetPID, protocolID)
-					if err != nil {
-						return
-					}
-					defer s.Close()
-					fmt.Fprintf(s, "%s\n", n.obfuscate(actualMsg))
-				}()
-			}
-		}
-		return
-	}
-
-	if strings.HasPrefix(msg, STEGO_PREFIX) {
-		return
-	}
-
-	if plaintext, ok := n.deobfuscate(msg); ok {
-		msg = plaintext
-	}
-
-	if msg == n.ethHash {
-		stream.Write([]byte("ACCEPTED\n"))
-		return
-	}
-
-	remoteID := stream.Conn().RemotePeer().String()
-
-	if strings.HasPrefix(msg, "CHAIN:") {
-		parts := strings.SplitN(msg, ":", 3)
-		if len(parts) == 3 {
-			nextRelays := parts[1]
-			actualMsg := parts[2]
-			if nextRelays != "" {
-				relays := strings.Split(nextRelays, ",")
-				n.sendViaRelayChain(relays, actualMsg)
-			} else {
-				n.processMessageRelayed(actualMsg, remoteID)
-			}
-			return
-		}
-	}
-
-	n.processMessage(msg, remoteID, false)
-}
-
-// handleSphinxReplicaMsg — обработка расшифрованного Sphinx-пакета получателем.
-// Логика — как в ветке REPLICA (Version=2, Recipient==myID): E2E-расшифровка,
-// memory.Add, hook, [DELIVERED].
-func (n *Node) handleSphinxReplicaMsg(replicaMsg Message) {
-	if replicaMsg.MediaType == "dummy" {
-		log.Printf("[DUMMY] dropped from %s", replicaMsg.Sender)
-		return
-	}
-	if replicaMsg.Version == MESSAGE_VERSION_E2E {
-		if replicaMsg.MediaType == "batch" {
-			plaintext, err := n.decryptFromSender(replicaMsg.Sender, replicaMsg.Text)
-			if err != nil {
-				log.Printf("[SPHINX] batch decrypt failed from %s: %v", replicaMsg.Sender, err)
-				return
-			}
-			var batch struct {
-				Texts []struct {
-					ID   string `json:"id"`
-					Text string `json:"text"`
-				} `json:"texts"`
-			}
-			if err := json.Unmarshal([]byte(plaintext), &batch); err != nil {
-				log.Printf("[SPHINX] batch parse failed from %s: %v", replicaMsg.Sender, err)
-				return
-			}
-			senderName := n.nameForPeer(replicaMsg.Sender)
-			for _, t := range batch.Texts {
-				msg := Message{
-					ID:           t.ID,
-					Text:         t.Text,
-					Sender:       replicaMsg.Sender,
-					SenderName:   senderName,
-					Recipient:    replicaMsg.Recipient,
-					Type:         TypeMessage,
-					MediaType:    "text",
-					Version:      MESSAGE_VERSION_E2E,
-					Time:         time.Now().UTC().Format("2006-01-02T15:04:05"),
-					IsOwn:        false,
-					Weight:       0.5,
-					ReplicatedAt: time.Now(),
-				}
-				if n.memory.Add(msg) {
-					if n.messageHook != nil {
-						data, _ := json.Marshal(msg)
-						n.messageHook(string(data))
-					}
-				}
-				n.queueDelivered(replicaMsg.Sender, t.ID)
-			}
-			return
-		}
-		if isChunkedMediaType(replicaMsg.MediaType) && replicaMsg.ChunkTotal > 0 {
-			raw, err := n.decryptBytesFromSender(replicaMsg.Sender, replicaMsg.Text)
-			if err != nil {
-				log.Printf("[SPHINX] decrypt bytes failed from %s: %v", replicaMsg.Sender, err)
-				return
-			}
-			replicaMsg.Text = base64.StdEncoding.EncodeToString(raw)
-		} else {
-			plaintext, err := n.decryptFromSender(replicaMsg.Sender, replicaMsg.Text)
-			if err != nil {
-				log.Printf("[SPHINX] decrypt failed from %s: %v", replicaMsg.Sender, err)
-				return
-			}
-			replicaMsg.Text = plaintext
-		}
-	}
-	replicaMsg.SenderName = n.nameForPeer(replicaMsg.Sender)
-	replicaMsg.ReplicatedAt = time.Now()
-	replicaMsg.IsOwn = false
-	added := n.memory.Add(replicaMsg)
-	if added {
-		if isChunkedMediaType(replicaMsg.MediaType) && replicaMsg.ChunkTotal > 0 && replicaMsg.MediaID != "" {
-			n.acceptedCountMu.Lock()
-			n.acceptedCount[replicaMsg.MediaID]++
-			accepted := n.acceptedCount[replicaMsg.MediaID]
-			n.acceptedCountMu.Unlock()
-			n.pushFileStatus(replicaMsg.MediaID, accepted, replicaMsg.ChunkTotal)
-		}
-		if n.messageHook != nil {
-			hookMsg := replicaMsg
-			if isChunkedMediaType(hookMsg.MediaType) && hookMsg.ChunkTotal > 0 {
-				hookMsg.Text = ""
-				hookMsg.PlainText = ""
-			}
-			data, _ := json.Marshal(hookMsg)
-			n.messageHook(string(data))
-		}
-	}
-	n.queueDelivered(replicaMsg.Sender, replicaMsg.ID)
-}
-
-// findMyMessageByID — находит моё сообщение по ID в памяти.
-// Возвращает копию и true, если найдено.
-// Использует Memory.GetByID — без копии всего среза (OOM на больших файлах).
-func (n *Node) findMyMessageByID(id string) (Message, bool) {
-	if id == "" {
-		return Message{}, false
-	}
-	return n.memory.GetByID(id)
-}
-
-// isServiceType — классификация. Только тип, без побочных эффектов.
-// Сервисные сообщения не идут в UI.
-func (n *Node) isServiceType(t MessageType) bool {
-	switch t {
-	case TypeDelivered, TypeRead, TypeContactRequest, TypeContactAccept, TypeContactReject,
-		TypeContactHello, TypeContactHelloAck, TypeTtlUpdate, TypeFileComplete:
-		return true
-	}
-	return false
-}
-
-// handleServiceMessage — обработка сервисного сообщения.
-// Вызывается только если Recipient == myID (проверка в handleStream).
-func (n *Node) handleServiceMessage(m Message) {
-	switch m.Type {
-	case TypeDelivered:
-		// Батч: обрабатываем все Refs. Одиночный: Ref.
-		refs := m.Refs
-		if len(refs) == 0 && m.Ref != "" {
-			refs = []string{m.Ref}
-		}
-		// Обновляем read_enabled контакта один раз на всё сообщение.
-		if m.ReadEnabled != nil && n.contacts != nil {
-			if cur, ok := n.GetContact(m.Sender); ok && cur.ReadEnabled != *m.ReadEnabled {
-				_ = n.SetContactReadEnabled(m.Sender, *m.ReadEnabled)
-			}
-		}
-		for _, ref := range refs {
-			n.handleDeliveredRef(ref, m.Sender)
-		}
-
-	case TypeRead:
-		// Батч (Refs не пуст) — обрабатываем циклом.
-		// Одиночный (Refs пуст, Ref заполнен) — как раньше.
-		refs := m.Refs
-		if len(refs) == 0 && m.Ref != "" {
-			refs = []string{m.Ref}
-		}
-		for _, ref := range refs {
-			// Если я не делюсь статусом прочтения — не показываю чужой [READ].
-			// Иконка становится ✓✓🔒 (StatusHidden), а не ✓✓ (цвет).
-			statusToSet := StatusRead
-			if !n.myReadEnabled {
-				statusToSet = StatusHidden
-			}
-			// Файловый чанк: [READ] приходит по последнему чанку.
-			// Распространяем статус на все чанки этого файла.
-			if msg, ok := n.findMyMessageByID(ref); ok {
-				if isChunkedMediaType(msg.MediaType) && msg.ChunkTotal > 0 {
-					all := n.memory.GetAll()
-					for _, cm := range all {
-						if cm.MediaID == msg.MediaID {
-							n.setMessageStatus(cm.ID, statusToSet)
-						}
-					}
-					log.Printf("[SERVICE] read ack (file %s, %d chunks) ref=%s from=%s",
-						msg.MediaID, msg.ChunkTotal, ref, m.Sender)
-				} else {
-					n.setMessageStatus(ref, statusToSet)
-					log.Printf("[SERVICE] read ack ref=%s from=%s", ref, m.Sender)
-				}
-			} else {
-				// Fallback: для файлов [READ] приходит с mediaID, не с ID чанка.
-				// mediaID — общий для отправителя и получателя.
-				all := n.memory.GetAll()
-				found := false
-				for _, cm := range all {
-					if cm.MediaID == ref {
-						n.setMessageStatus(cm.ID, statusToSet)
-						found = true
-					}
-				}
-				if found {
-					log.Printf("[SERVICE] read ack (file mediaID=%s) from=%s", ref, m.Sender)
-				} else {
-					n.setMessageStatus(ref, statusToSet)
-					log.Printf("[SERVICE] read ack ref=%s (not found in memory) from=%s", ref, m.Sender)
-				}
-			}
-
-			// Режим after_read: сообщение получателя прочитано — запускаем
-			// таймер удаления на отправителе (у нас). Если ExpiresAt ещё не
-			// установлен — ставим now + ttlPeriodSeconds.
-			if msg, ok := n.findMyMessageByID(ref); ok {
-				if msg.TtlMode == "after_read" && msg.ExpiresAt.IsZero() && msg.TtlPeriodSeconds > 0 {
-					expiresAt := time.Now().Add(time.Duration(msg.TtlPeriodSeconds) * time.Second)
-					if n.memory.SetExpiresAt(ref, expiresAt) {
-						log.Printf("[TTL] after_read: set ExpiresAt for %s (+%ds)", ref, msg.TtlPeriodSeconds)
-						n.scheduleSaveState()
-						// Push в Dart: сообщаем об обновлении ExpiresAt.
-						if updated, ok := n.findMyMessageByID(ref); ok {
-							if data, err := json.Marshal(updated); err == nil {
-								if n.messageHook != nil {
-									n.messageHook(string(data))
-								}
-							}
-						}
-					}
-				}
-			}
-		}
-
-	case TypeContactRequest:
-		n.handleContactRequest(m)
-
-	case TypeContactAccept:
-		n.handleContactAccept(m)
-
-	case TypeContactReject:
-		n.handleContactReject(m)
-
-	case TypeContactHello:
-		n.handleContactHello(m)
-
-	case TypeContactHelloAck:
-		n.handleContactHelloAck(m)
-
-	case TypeTtlUpdate:
-		n.handleTtlUpdate(m)
-
-	case TypeFileComplete:
-		n.handleFileComplete(m)
-	}
-}
-
-// handleFileComplete — получатель подтвердил сборку файла.
-// sent/ можно удалять: файл собран. Push в Dart — галочка «собрано».
-func (n *Node) handleFileComplete(m Message) {
-	if m.Ref == "" {
-		log.Printf("[FILE_COMPLETE] empty ref, dropped")
-		return
-	}
-	mediaID := m.Ref
-	log.Printf("[FILE_COMPLETE] mediaID=%s from=%s", mediaID, m.Sender)
-
-	// Ставим статус на ВСЕ чанки файла: delivered (2) или hidden (3).
-	// Скрыто — если я или получатель не делимся read_enabled.
-	// Это — вторая галочка для файла (не [DELIVERED], а сборка).
-	statusToSet := StatusDelivered
-	peerReadEnabled := n.getPeerReadEnabled(m.Sender)
-	if !n.myReadEnabled || !peerReadEnabled {
-		statusToSet = StatusHidden
-	}
-	all := n.memory.GetAll()
-	total := 0
-	for _, cm := range all {
-		if cm.MediaID == mediaID {
-			n.setMessageStatus(cm.ID, statusToSet)
-			if total == 0 {
-				total = cm.ChunkTotal
-			}
-		}
-	}
-	// Файл собран — deliveredCount = total, push file_status 100%.
-	// Иначе UI: галочки ✓✓ + прогресс 66% (рассинхрон).
-	// Файл целый (проверено на Xiaomi) — 100% не врёт. Идемпотентно.
-	if total > 0 {
-		n.deliveredCountMu.Lock()
-		n.deliveredCount[mediaID] = total
-		n.deliveredCountMu.Unlock()
-		n.pushFileStatus(mediaID, total, total)
-	}
-
-	// Удаляем sent/<mediaID>.bin — файл собран у получателя.
-	sentPath := n.sentPath(mediaID)
-	if err := os.Remove(sentPath); err == nil {
-		log.Printf("[SENT] removed sent file %s (file_complete from %s)", mediaID, m.Sender)
-	}
-}
-
-// SendFileComplete — получатель → отправитель: файл собран.
-// Ref = mediaID. Отправка через bootstrap (как сервисное).
-func (n *Node) SendFileComplete(mediaID, recipient string) error {
-	if n.host == nil {
-		return fmt.Errorf("node not started")
-	}
-	if mediaID == "" || recipient == "" {
-		return fmt.Errorf("mediaID and recipient are required")
-	}
-	id := generateMsgID(fmt.Sprintf("file_complete:%s:%d", mediaID, time.Now().UnixNano()))
-	readEnabled := n.myReadEnabled
-	msg := Message{
-		ID:          id,
-		Text:        "",
-		Sender:      n.host.ID().String(),
-		Recipient:   recipient,
-		Type:        TypeFileComplete,
-		Ref:         mediaID,
-		Version:     0,
-		Time:        time.Now().UTC().Format("2006-01-02T15:04:05"),
-		ReadEnabled: &readEnabled,
-	}
-	// Ревью старого программиста 2026-10-29: flush pending [DELIVERED]
-	// перед [FILE_COMPLETE]. Иначе deliveredCount не догоняет до 100%
-	// до галочек — UI прыгает (8% → галочки).
-	n.flushDelivered(recipient)
-	if err := n.sendServiceViaBootstrap(msg); err != nil {
-		log.Printf("[FILE_COMPLETE] send failed mediaID=%s: %v", mediaID, err)
-		return err
-	}
-	log.Printf("[FILE_COMPLETE] sent mediaID=%s to=%s", mediaID, recipient)
-	return nil
-}
-
-// handleTtlUpdate — обновляет ExpiresAt для сообщения по ref.
-// Приходит от отправителя, когда он перешёл на hard (auto-hard).
-// Payload: m.Text — expires_in_seconds (целое, строкой).
-func (n *Node) handleTtlUpdate(m Message) {
-	if m.Ref == "" {
-		return
-	}
-	seconds, err := strconv.Atoi(m.Text)
-	if err != nil || seconds <= 0 {
-		log.Printf("[TTL_UPDATE] invalid seconds %q ref=%s", m.Text, m.Ref)
-		return
-	}
-	expiresAt := time.Now().Add(time.Duration(seconds) * time.Second)
-	if n.memory.SetExpiresAt(m.Ref, expiresAt) {
-		log.Printf("[TTL_UPDATE] set ExpiresAt for %s (+%ds)", m.Ref, seconds)
-		n.scheduleSaveState()
-		if updated, ok := n.findMyMessageByID(m.Ref); ok {
-			if data, err := json.Marshal(updated); err == nil {
-				if n.messageHook != nil {
-					n.messageHook(string(data))
-				}
-			}
-		}
-	} else {
-		log.Printf("[TTL_UPDATE] message not found ref=%s", m.Ref)
-	}
-}
-
-// handleContactRequest — обрабатывает входящий запрос на контакт.
-// Payload шифрован E2E. Расшифровываем, парсим, сохраняем в requests store.
-func (n *Node) handleContactRequest(m Message) {
-	if m.Version != MESSAGE_VERSION_E2E {
-		log.Printf("[SERVICE] contact_request without E2E, dropped")
-		return
-	}
-	plaintext, err := n.decryptFromSender(m.Sender, m.Text)
-	if err != nil {
-		log.Printf("[SERVICE] contact_request decrypt failed: %v", err)
-		return
-	}
-	var payload struct {
-		Name        string `json:"name"`
-		Ed25519Pub  string `json:"ed25519_pub"`
-		X25519Pub   string `json:"x25519_pub"`
-		Signature   string `json:"signature"`
-		ReadEnabled bool   `json:"read_enabled"`
-	}
-	if err := json.Unmarshal([]byte(plaintext), &payload); err != nil {
-		log.Printf("[SERVICE] contact_request parse failed: %v", err)
-		return
-	}
-	if n.requests == nil {
-		log.Printf("[SERVICE] requests store not initialized")
-		return
-	}
-	req := ContactRequest{
-		ID:          m.ID,
-		PeerID:      m.Sender,
-		Name:        payload.Name,
-		Ed25519Pub:  payload.Ed25519Pub,
-		X25519Pub:   payload.X25519Pub,
-		Signature:   payload.Signature,
-		ReadEnabled: payload.ReadEnabled,
-		Status:      RequestStatusPending,
-	}
-	if err := n.requests.Add(req); err != nil {
-		log.Printf("[SERVICE] contact_request add failed: %v", err)
-		return
-	}
-	// A попал в requests store — временный контакт больше не нужен.
-	n.RemoveTempContact(m.Sender)
-	log.Printf("[SERVICE] contact_request saved from %s", m.Sender)
-
-	// Уведомляем UI о новом запросе (push, не polling).
-	if n.messageHook != nil {
-		data, _ := json.Marshal(m)
-		n.messageHook(string(data))
-	}
-}
-
-// handleContactAccept — обрабатывает принятие нашего запроса.
-// Находим свой исходящий запрос (по Ref) — сохраняем контакт, шлём [DELIVERED].
-func (n *Node) handleContactAccept(m Message) {
-	if m.Version != MESSAGE_VERSION_E2E {
-		log.Printf("[SERVICE] contact_accept without E2E, dropped")
-		return
-	}
-	plaintext, err := n.decryptFromSender(m.Sender, m.Text)
-	if err != nil {
-		log.Printf("[SERVICE] contact_accept decrypt failed: %v", err)
-		return
-	}
-	var payload struct {
-		RequestID   string `json:"request_id"`
-		Name        string `json:"name"`
-		Ed25519Pub  string `json:"ed25519_pub"`
-		X25519Pub   string `json:"x25519_pub"`
-		Signature   string `json:"signature"`
-		ReadEnabled bool   `json:"read_enabled"`
-	}
-	if err := json.Unmarshal([]byte(plaintext), &payload); err != nil {
-		log.Printf("[SERVICE] contact_accept parse failed: %v", err)
-		return
-	}
-	if n.contacts == nil {
-		log.Printf("[SERVICE] contacts store not initialized")
-		return
-	}
-	if err := n.AddContact(m.Sender, payload.Ed25519Pub, payload.X25519Pub, payload.Signature, "", payload.Name, payload.ReadEnabled); err != nil {
-		log.Printf("[SERVICE] contact_accept add_contact failed: %v", err)
-		return
-	}
-	if n.contacts != nil {
-		_ = n.contacts.SetConfirmed(m.Sender)
-	}
-	log.Printf("[SERVICE] contact_accept saved contact %s (ref=%s)", m.Sender, m.Ref)
-
-	// Уведомляем UI — перечитать контакты (confirmed обновился).
-	if n.messageHook != nil {
-		data, _ := json.Marshal(m)
-		n.messageHook(string(data))
-	}
-}
-
-// handleContactReject — обрабатывает отклонение нашего запроса.
-func (n *Node) handleContactReject(m Message) {
-	log.Printf("[SERVICE] contact_reject ref=%s from=%s", m.Ref, m.Sender)
-}
-
-// handleContactHello — обрабатывает [CONTACT_HELLO] от A.
-// Открытое. Payload: peerID + публичные ключи + подпись A.
-// B делает AddTempContact(A), чтобы потом расшифровать [CONTACT_REQUEST] (E2E).
-// Если A уже в постоянных контактах — temp не создаётся.
-func (n *Node) handleContactHello(m Message) {
-	if m.Sender == "" {
-		log.Printf("[SERVICE] contact_hello: empty sender, dropped")
-		return
-	}
-	if n.host == nil {
-		log.Printf("[SERVICE] contact_hello: host not started")
-		return
-	}
-	myID := n.host.ID().String()
-	if m.Sender == myID {
-		log.Printf("[SERVICE] contact_hello: self, dropped")
-		return
-	}
-	if m.Text == "" {
-		log.Printf("[SERVICE] contact_hello: empty payload from %s", m.Sender)
-		return
-	}
-
-	var payload struct {
-		PeerID     string `json:"peerID"`
-		Ed25519Pub string `json:"ed25519_pub"`
-		X25519Pub  string `json:"x25519_pub"`
-		Signature  string `json:"signature"`
-	}
-	if err := json.Unmarshal([]byte(m.Text), &payload); err != nil {
-		log.Printf("[SERVICE] contact_hello: parse failed from %s: %v", m.Sender, err)
-		return
-	}
-	if payload.PeerID != m.Sender {
-		log.Printf("[SERVICE] contact_hello: peerID mismatch (%s != %s), dropped", payload.PeerID, m.Sender)
-		return
-	}
-	if payload.Ed25519Pub == "" || payload.X25519Pub == "" {
-		log.Printf("[SERVICE] contact_hello: missing keys from %s", m.Sender)
-		return
-	}
-
-	// Проверяем подпись — если валидна, verified=true.
-	verified := false
-	if payload.Signature != "" {
-		if verifyContactSignature(payload.PeerID, payload.Ed25519Pub, payload.X25519Pub, payload.Signature) {
-			verified = true
-		}
-	}
-
-	// Если A уже в постоянных контактах — не создаём temp.
-	if _, ok := n.GetContact(m.Sender); !ok {
-		n.AddTempContact(Contact{
-			PeerID:      payload.PeerID,
-			Ed25519Pub:  payload.Ed25519Pub,
-			X25519Pub:   payload.X25519Pub,
-			Signature:   payload.Signature,
-			Verified:    verified,
-			Confirmed:   false,
-			ReadEnabled: true,
-		})
-	}
-
-	log.Printf("[SERVICE] contact_hello from %s — sending ack", m.Sender)
-	go func(sender string) {
-		if err := n.SendContactHelloAck(sender); err != nil {
-			log.Printf("[SERVICE] contact_hello_ack send failed to %s: %v", sender, err)
-		}
-	}(m.Sender)
-}
-
-// handleContactHelloAck — обрабатывает [CONTACT_HELLO_ACK] от B.
-// B прислал свои публичные ключи. Логируем. Дальнейшая логика — в Dart:
-// после получения ack UI шлёт [CONTACT_REQUEST] (E2E).
-func (n *Node) handleContactHelloAck(m Message) {
-	if m.Sender == "" {
-		log.Printf("[SERVICE] contact_hello_ack: empty sender, dropped")
-		return
-	}
-	if m.Version != 0 {
-		log.Printf("[SERVICE] contact_hello_ack: unexpected version %d, dropped", m.Version)
-		return
-	}
-	plaintext := m.Text
-	if plaintext == "" {
-		log.Printf("[SERVICE] contact_hello_ack: empty payload from %s", m.Sender)
-		return
-	}
-	var payload struct {
-		PeerID     string `json:"peerID"`
-		Ed25519Pub string `json:"ed25519_pub"`
-		X25519Pub  string `json:"x25519_pub"`
-		Signature  string `json:"signature"`
-	}
-	if err := json.Unmarshal([]byte(plaintext), &payload); err != nil {
-		log.Printf("[SERVICE] contact_hello_ack: parse failed from %s: %v", m.Sender, err)
-		return
-	}
-	if payload.PeerID != m.Sender {
-		log.Printf("[SERVICE] contact_hello_ack: peerID mismatch (%s != %s), dropped", payload.PeerID, m.Sender)
-		return
-	}
-	log.Printf("[SERVICE] contact_hello_ack from %s (keys: ed25519=%v, x25519=%v)",
-		m.Sender, payload.Ed25519Pub != "", payload.X25519Pub != "")
-
-	// Уведомляем UI через hook — чтобы Dart знал и мог отправить [CONTACT_REQUEST].
-	if n.messageHook != nil {
-		data, _ := json.Marshal(m)
-		n.messageHook(string(data))
-	}
-}
-
-func (n *Node) buildRelayAddrFor(targetID string) string {
-	if n.host == nil {
-		return ""
-	}
-	myID := n.host.ID().String()
-	for _, a := range n.host.Addrs() {
-		s := a.String()
-		if strings.Contains(s, "127.0.0.1") {
-			continue
-		}
-		if strings.Contains(s, "/ws") {
-			return s + "/p2p/" + myID + "/p2p-circuit/p2p/" + targetID
-		}
-	}
-	for _, a := range n.host.Addrs() {
-		s := a.String()
-		if strings.Contains(s, "127.0.0.1") {
-			continue
-		}
-		return s + "/p2p/" + myID + "/p2p-circuit/p2p/" + targetID
-	}
-	return ""
-}
-
-func (n *Node) handleReplicaData(data string) {
-	for _, line := range strings.Split(data, "\n") {
-		if strings.HasPrefix(line, REPLICA_PREFIX) {
-			payload := strings.TrimPrefix(line, REPLICA_PREFIX)
-			var replicaMsg Message
-			if err := json.Unmarshal([]byte(payload), &replicaMsg); err == nil {
-				if replicaMsg.Version < 2 {
-					if plaintext, ok := n.deobfuscate(replicaMsg.Text); ok {
-						replicaMsg.Text = plaintext
-					}
-				}
-				replicaMsg.ReplicatedAt = time.Now()
-				replicaMsg.IsOwn = false
-				replicaMsg.SenderName = n.nameForPeer(replicaMsg.Sender)
-				if n.memory.Add(replicaMsg) {
-					go n.replicateMessage(replicaMsg)
-					if n.messageHook != nil {
-						data, _ := json.Marshal(replicaMsg)
-						n.messageHook(string(data))
-					}
-				}
-			}
-		}
-	}
-}
-
-func (n *Node) handlePingStream(stream network.Stream) {
-	defer stream.Close()
-	buf := make([]byte, 64)
-	nr, _ := stream.Read(buf)
-	msg := strings.TrimSpace(string(buf[:nr]))
-	if msg == "PING" {
-		stream.Write([]byte("PONG\n"))
-	}
-}
-
-func (n *Node) pingPeers() {
-	go func() {
-		for {
-			time.Sleep(30 * time.Second)
-			if n.host == nil {
-				continue
-			}
-			peers := n.host.Network().Peers()
-			for _, p := range peers {
-				go func(peerID peer.ID) {
-					ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-					defer cancel()
-					s, err := n.host.NewStream(ctx, peerID, pingProtocolID)
-					if err != nil {
-						n.markPeerDead(peerID.String())
-						return
-					}
-					defer s.Close()
-					s.Write([]byte("PING\n"))
-					buf := make([]byte, 64)
-					s.SetReadDeadline(time.Now().Add(5 * time.Second))
-					nr, err := s.Read(buf)
-					if err != nil || strings.TrimSpace(string(buf[:nr])) != "PONG" {
-						n.markPeerDead(peerID.String())
-						return
-					}
-					if n.markPeerAlive(peerID.String()) {
-						go func() {
-							if n.hasPending() {
-								log.Printf("[PING] peer %s alive again, flushing pending", peerID)
-								n.flushPending()
-							}
-						}()
-					}
-				}(p)
-			}
-		}
-	}()
-}
-
-func (n *Node) reconnectLoop() {
-	go func() {
-		backoff := time.Second
-		const maxBackoff = 30 * time.Second
-
-		for {
-			time.Sleep(backoff)
-			if n.host == nil {
-				continue
-			}
-			peers := n.host.Network().Peers()
-			if len(peers) > 0 {
-				if backoff != time.Second {
-					backoff = time.Second
-				}
-				continue
-			}
-			log.Printf("[RECONNECT] Нет пиров, переподключаюсь к bootstrap (backoff=%s)", backoff)
-
-			bootstrapPeers := n.loadBootstrapPeers()
-			connected := false
-			for _, addr := range bootstrapPeers {
-				peerInfo, err := peer.AddrInfoFromString(addr)
-				if err != nil {
-					continue
-				}
-				ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-				err = n.host.Connect(ctx, *peerInfo)
-				cancel()
-				if err != nil {
-					log.Printf("[RECONNECT] Ошибка подключения к %s: %v", addr, err)
-					continue
-				}
-				log.Printf("[RECONNECT] Подключён к bootstrap: %s", addr)
-				go func(peerID peer.ID) {
-					time.Sleep(2 * time.Second)
-					n.ExchangePeers(peerID.String())
-					n.flushPending()
-				}(peerInfo.ID)
-				connected = true
-				break
-			}
-
-			if connected {
-				backoff = time.Second
-			} else {
-				backoff *= 2
-				if backoff > maxBackoff {
-					backoff = maxBackoff
-				}
-			}
-		}
-	}()
-}
-
-func (n *Node) announceLoop() {
-	go func() {
-		for {
-			time.Sleep(4 * time.Minute)
-			if len(n.announceMultiaddrs) > 0 {
-				n.SendAnnounce(n.announceMultiaddrs)
-			}
-			n.flushPending()
-		}
-	}()
-}
-
-func (n *Node) cleanupLoop() {
-	go func() {
-		ticker := time.NewTicker(1 * time.Minute)
-		defer ticker.Stop()
-		diagTicker := time.NewTicker(10 * time.Second)
-		defer diagTicker.Stop()
-		for {
-			select {
-			case <-ticker.C:
-				n.cleanupAnnounced()
-				if removed := n.memory.DeleteExpired(); removed > 0 {
-					log.Printf("[TTL] purged %d expired messages", removed)
-					n.scheduleSaveState()
-				}
-			case <-diagTicker.C:
-				var m runtime.MemStats
-				runtime.ReadMemStats(&m)
-				log.Printf("[DIAG] goroutines=%d, heap=%d KB, sys=%d KB",
-					runtime.NumGoroutine(), m.HeapAlloc/1024, m.Sys/1024)
-			}
-		}
-	}()
-}
-
-// cleanupPendingAcksLoop — раз в 30 сек проверяет окно pendingHookAcks.
-// Чанки старше hookAckTimeout (120 сек) — логирует [ACK_TIMEOUT] и удаляет
-// из окна. base64 не очищает: чанк не подтверждён — может ещё понадобиться.
-func (n *Node) cleanupPendingAcksLoop() {
-	go func() {
-		const hookAckTimeout = 120 * time.Second
-		ticker := time.NewTicker(30 * time.Second)
-		defer ticker.Stop()
-		for range ticker.C {
-			now := time.Now()
-			n.pendingHookAcksMu.Lock()
-			for mediaID, w := range n.pendingHookAcks {
-				for idx, addedAt := range w.Indices {
-					if now.Sub(addedAt) > hookAckTimeout {
-						log.Printf("[ACK_TIMEOUT] mediaID=%s idx=%d", mediaID, idx)
-						delete(w.Indices, idx)
-					}
-				}
-				if len(w.Indices) == 0 {
-					delete(n.pendingHookAcks, mediaID)
-				}
-			}
-			n.pendingHookAcksMu.Unlock()
-		}
-	}()
-}
-
-// cleanupSentLoop — раз в час чистит sent/:
-//  1. Файлы, где все чанки в memory имеют Status >= 2 — сразу удалить.
-//  2. Файлы старше 24 часов — принудительно удалить (не доставлены).
-//
-// Это резерв. Основной путь — счётчик deliveredCount в handleDeliveredRef.
-func (n *Node) cleanupSentLoop() {
-	go func() {
-		for {
-			time.Sleep(1 * time.Hour)
-			n.cleanupSentOnce()
-		}
-	}()
-}
-
-// cleanupSentOnce — однократная очистка sent/.
-func (n *Node) cleanupSentOnce() {
-	dir := n.sentDirPath()
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		return
-	}
-
-	// Собираем статусы всех чанков по mediaID из memory.
-	type fileStatus struct {
-		total     int
-		delivered int
-		createdAt time.Time
-	}
-	statuses := make(map[string]*fileStatus)
-	all := n.memory.GetAll()
-	for _, m := range all {
-		if !isChunkedMediaType(m.MediaType) || m.ChunkTotal <= 0 || m.MediaID == "" {
-			continue
-		}
-		st, ok := statuses[m.MediaID]
-		if !ok {
-			st = &fileStatus{total: m.ChunkTotal}
-			statuses[m.MediaID] = st
-		}
-		if m.Status >= StatusDelivered {
-			st.delivered++
-		}
-	}
-
-	cutoff := time.Now().Add(-24 * time.Hour)
-
-	for _, e := range entries {
-		if e.IsDir() || !strings.HasSuffix(e.Name(), ".bin") {
-			continue
-		}
-		mediaID := strings.TrimSuffix(e.Name(), ".bin")
-		fullPath := n.sentPath(mediaID)
-
-		info, err := os.Stat(fullPath)
-		if err != nil {
-			continue
-		}
-
-		// Удалить если старше 24 часов.
-		if info.ModTime().Before(cutoff) {
-			if err := os.Remove(fullPath); err == nil {
-				log.Printf("[SENT] removed %s (older than 24h)", mediaID)
-			}
-			continue
-		}
-
-		// Удалить если все чанки доставлены.
-		if st, ok := statuses[mediaID]; ok && st.total > 0 && st.delivered >= st.total {
-			if err := os.Remove(fullPath); err == nil {
-				log.Printf("[SENT] removed %s (all %d chunks delivered)", mediaID, st.total)
-			}
-		}
-	}
-}
-
-func (n *Node) markPeerAlive(peerID string) bool {
-	n.mu.Lock()
-	defer n.mu.Unlock()
-	if n.lastPing == nil {
-		n.lastPing = make(map[string]time.Time)
-	}
-	if n.deadPeers == nil {
-		n.deadPeers = make(map[string]bool)
-	}
-	wasDead := n.deadPeers[peerID]
-	n.lastPing[peerID] = time.Now()
-	if wasDead {
-		delete(n.deadPeers, peerID)
-	}
-	return wasDead
-}
-
-func (n *Node) markPeerDead(peerID string) {
-	n.mu.Lock()
-	defer n.mu.Unlock()
-	if n.deadPeers == nil {
-		n.deadPeers = make(map[string]bool)
-	}
-	if !n.deadPeers[peerID] {
-		n.deadPeers[peerID] = true
-	}
-}
-
-// isPeerDead — true, только если peer сейчас в Network().Peers()
-// и помечен мёртвым. Если peer вне Peers() — не «мёртв», а «нет
-// прямого пути». Для таких — сразу fallback (в sendToRecipient).
-func (n *Node) isPeerDead(peerID string) bool {
-	if n.host == nil {
-		return false
-	}
-	inPeers := false
-	for _, p := range n.host.Network().Peers() {
-		if p.String() == peerID {
-			inPeers = true
-			break
-		}
-	}
-	if !inPeers {
-		return false
-	}
-	n.mu.Lock()
-	defer n.mu.Unlock()
-	return n.deadPeers[peerID]
-}
-
-func (n *Node) getPeerWeight(peerID string) float64 {
-	msgs := n.memory.GetMessagesFrom(peerID)
-	if len(msgs) == 0 {
-		return 0.5
-	}
-	total := 0.0
-	for _, m := range msgs {
-		total += m.Weight
-	}
-	return total / float64(len(msgs))
-}
-
-func (n *Node) processMessageRelayed(msg string, senderID string) {
-	id := generateMsgID(msg)
-	newMsg := Message{
-		ID:       id,
-		Text:     msg,
-		Sender:   senderID,
-		Time:     time.Now().UTC().Format("2006-01-02T15:04:05"),
-		IsOwn:    false,
-		Score:    0,
-		Weight:   0.5,
-		Priority: 0,
-		Mode:     1,
-		Relayed:  true,
-	}
-	newMsg.SenderName = n.nameForPeer(newMsg.Sender)
-	if n.memory.Add(newMsg) {
-		n.replicateMessage(newMsg)
-		if n.messageHook != nil {
-			data, _ := json.Marshal(newMsg)
-			n.messageHook(string(data))
-		}
-	}
-}
-
-func (n *Node) replicateMessage(msg Message) {
-	if n.host == nil {
-		return
-	}
-	// B3: isFileChunk — файловый чанк. Пробрасываем вниз,
-	// чтобы sendReplicaToPeer не делал randomDelay для чанков.
-	isFileChunk := isChunkedMediaType(msg.MediaType) && msg.ChunkTotal > 0
-	// v2.0.4 c: тексты — в батч (до обнуления PlainText).
-	// PlainText — открытый текст (Text — E2E-шифрованный, не шифровать повторно).
-	isTextForSphinxBatch := (msg.MediaType == "" || msg.MediaType == "text") && msg.Recipient != ""
-	if isTextForSphinxBatch && n.useOnion && !n.isRelay {
-		n.addToBatch(msg.Recipient, msg.ID, msg.PlainText)
-		return
-	}
-	msg.ReplicatedFrom = msg.Sender
-	msg.IsOwn = false
-	// PlainText — открытый текст. Получатель расшифрует Text сам.
-	// По сети не передаём (экономия трафика). Локально в memory — остаётся.
-	msg.PlainText = ""
-	data, err := json.Marshal(msg)
-	if err != nil {
-		return
-	}
-
-	if msg.Recipient != "" {
-		// Sphinx (v2.0.1): если включён — пробуем через onion.
-		// При ошибке — fallback на sendToRecipient (доставка важнее).
-		if n.useOnion && !n.isRelay && !isFileChunk {
-			if n.sendViaSphinx(msg) {
-				return
-			}
-			log.Printf("[SPHINX] failed, fallback to direct (recipient=%s)", msg.Recipient)
-		}
-		// Адресное сообщение.
-		if isFileChunk && !n.isRelay {
-
-			// Файловый чанк — в очередь воркеров (не создаём горутину).
-			// На relay очереди нет — воркеры не запущены.
-			n.chunkQueue <- msg
-		} else {
-			// На relay файловые чанки — через семафор, чтобы не забить
-			// libp2p-стримы и не блокировать сервисные ([DELIVERED]/[READ]).
-			if isFileChunk && n.isRelay {
-				n.sendSem <- struct{}{}
-				defer func() { <-n.sendSem }()
-			}
-			n.sendToRecipient(msg, data, isFileChunk)
-		}
-		// В offline-очередь — только НЕ-сервисные, НЕ файловые чанки и только на клиенте.
-		if !n.isRelay && !n.isServiceType(msg.Type) && !isFileChunk {
-			n.enqueuePending(msg)
-		}
-		return
-	}
-
-	peers := n.host.Network().Peers()
-	log.Printf("[REPLICA] broadcast msg id=%s sender=%s: %d peers", msg.ID, msg.Sender, len(peers))
-
-	var alive []peer.ID
-	for _, p := range peers {
-		if p.String() == msg.Sender {
-			continue
-		}
-		alive = append(alive, p)
-	}
-	log.Printf("[REPLICA] alive=%d", len(alive))
-
-	if len(alive) == 0 {
-		if n.isRelay {
-			return
-		}
-		log.Printf("[REPLICA] SKIP: no alive peers — enqueue")
-		if !isFileChunk {
-			n.enqueuePending(msg)
-		}
-		return
-	}
-	replicaCount := 2
-	if len(alive) < replicaCount {
-		replicaCount = len(alive)
-	}
-	for i := 0; i < replicaCount; i++ {
-		go n.sendReplicaToPeer(alive[i], data, isFileChunk)
-	}
-}
-
-func (n *Node) requestRestore() {
-	if n.host == nil {
-		return
-	}
-	myID := n.host.ID().String()[:8]
-	peers := n.host.Network().Peers()
-	for _, p := range peers {
-		go func(peerID peer.ID) {
-			randomDelay(100, 500)
-			ctx := context.Background()
-			s, err := n.host.NewStream(ctx, peerID, protocolID)
-			if err != nil {
-				return
-			}
-			defer s.Close()
-			fmt.Fprintf(s, "%s%s\n", RESTORE_PREFIX, myID)
-			buf := make([]byte, 2*1024*1024)
-			s.SetReadDeadline(time.Now().Add(5 * time.Second))
-			nr, _ := s.Read(buf)
-			if nr > 0 {
-				n.handleReplicaData(strings.TrimSpace(string(buf[:nr])))
-			}
-		}(p)
-	}
-}
-
-func (n *Node) processMessageWithTTL(msg string, senderID string, isOwn bool, expiresAt time.Time) {
-	n.processMessageInternal(msg, senderID, isOwn, expiresAt, "", "", 0, "", TypeMessage, false, 0, "")
-}
-
-func (n *Node) processMessageWithID(msg string, senderID string, isOwn bool, expiresAt time.Time, id string) {
-	n.processMessageInternal(msg, senderID, isOwn, expiresAt, id, "", 0, "", TypeMessage, false, 0, "")
-}
-
-// processMessageWithRecipient — отправляет адресное сообщение конкретному получателю.
-// version — 2 для E2E-шифрованных.
-func (n *Node) processMessageWithRecipient(msg string, senderID string, isOwn bool, expiresAt time.Time, id string, recipient string, version int) {
-	n.processMessageInternal(msg, senderID, isOwn, expiresAt, id, recipient, version, "", TypeMessage, false, 0, "")
-}
-
-func (n *Node) processMessageWithModeAndTTL(msg string, senderID string, isOwn bool, mode int, expiresAt time.Time) {
-	if mode == 0 || n.host == nil {
-		n.processMessageInternal(msg, senderID, isOwn, expiresAt, "", "", 0, "", TypeMessage, false, 0, "")
-		return
-	}
-	relayCount := 4
-	if mode == 2 {
-		relayCount = 5
-		time.Sleep(10 * time.Second)
-	}
-	relays := n.selectRelays(relayCount)
-	if len(relays) < relayCount {
-		n.processMessageInternal(msg, senderID, isOwn, expiresAt, "", "", 0, "", TypeMessage, false, 0, "")
-		return
-	}
-	n.sendViaRelayChain(relays, msg)
-}
-
-func (n *Node) processMessageWithMode(msg string, senderID string, isOwn bool, mode int) {
-	n.processMessageWithModeAndTTL(msg, senderID, isOwn, mode, time.Time{})
-}
-
-func (n *Node) selectRelays(count int) []string {
-	peers := n.host.Network().Peers()
-	var trusted []peer.ID
-	var fallback []peer.ID
-	for _, p := range peers {
-		weight := n.getPeerWeight(p.String())
-		if weight > 0.7 {
-			trusted = append(trusted, p)
-		} else {
-			fallback = append(fallback, p)
-		}
-	}
-	if len(trusted) >= count {
-		perm := mathrand.Perm(len(trusted))
-		result := make([]string, count)
-		for i := 0; i < count; i++ {
-			result[i] = trusted[perm[i]].String()
-		}
-		return result
-	}
-	selected := make([]string, 0)
-	for _, p := range trusted {
-		selected = append(selected, p.String())
-	}
-	perm := mathrand.Perm(len(fallback))
-	for i := 0; len(selected) < count && i < len(fallback); i++ {
-		selected = append(selected, fallback[perm[i]].String())
-	}
-	return selected
-}
-
-func (n *Node) sendViaRelayChain(relays []string, msg string) {
-	if len(relays) == 0 {
-		return
-	}
-	obfuscated := n.obfuscate(msg)
-	chainMsg := fmt.Sprintf("CHAIN:%s:%s", strings.Join(relays[1:], ","), obfuscated)
-	relayPeer, err := peer.Decode(relays[0])
-	if err != nil {
-		return
-	}
-	randomDelay(10, 50)
-	ctx := context.Background()
-	s, err := n.host.NewStream(ctx, relayPeer, protocolID)
-	if err != nil {
-		return
-	}
-	defer s.Close()
-	s.Write([]byte(chainMsg + "\n"))
-}
-
-func (n *Node) processMessage(msg string, senderID string, isOwn bool) {
-	n.processMessageInternal(msg, senderID, isOwn, time.Time{}, "", "", 0, "", TypeMessage, false, 0, "")
-}
-
-func (n *Node) processMessageInternal(msg string, senderID string, isOwn bool, expiresAt time.Time, providedID string, recipient string, version int, plainText string, msgType MessageType, viaBootstrap bool, ttlPeriodSeconds int, ttlMode string) {
-	inputVector := textToVector(msg)
-	outputVector, _ := forward(inputVector, n.layers)
-	answer := vectorToText(outputVector)
-
-	n.mu.Lock()
-	similar := n.memory.FindSimilar(msg, 0.7)
-	var contextVector []float64
-	if len(similar) > 0 {
-		contextVector = make([]float64, VectorDim)
-		totalWeight := 0.0
-		for _, s := range similar {
-			sv := textToVector(s.Text)
-			w := s.Weight
-			for i := range sv {
-				contextVector[i] += sv[i] * w
-			}
-			totalWeight += w
-		}
-		for i := range contextVector {
-			contextVector[i] /= totalWeight
-		}
-		for i := range inputVector {
-			inputVector[i] = inputVector[i]*0.7 + contextVector[i]*0.3
-		}
-	}
-	lr := 0.01
-	if n.adaptive != nil {
-		lr = n.adaptive.LearningRate
-	}
-	n.layers = train(n.layers, inputVector, outputVector, inputVector, lr)
-	n.layersDirty = true
-	n.mu.Unlock()
-
-	go n.broadcastLayers()
-
-	ethicsVec := hashToVector(n.ethHash)
-	msgVec := textToVector(msg)
-	ethicsScore := cosineSimilarity(ethicsVec, msgVec)
-	initialWeight := 0.3 + ethicsScore*0.5
-
-	if n.preHash != "" {
-		preVec := hashToVector(n.preHash)
-		preScore := cosineSimilarity(preVec, msgVec)
-		preWeight := 0.2 + preScore*0.6
-		initialWeight = initialWeight*0.4 + preWeight*0.6
-	}
-	if n.antiHash != "" {
-		antiVec := hashToVector(n.antiHash)
-		antiScore := cosineSimilarity(antiVec, msgVec)
-		antiWeight := 0.3 + antiScore*0.5
-		initialWeight = initialWeight * (1.0 - antiWeight*0.8)
-		if initialWeight < 0.1 {
-			initialWeight = 0.1
-		}
-	}
-
-	priority := 0
-	if isOwn {
-		nodeWeight := 0.5
-		activeMsgs := n.memory.GetActiveMessages(0.5)
-		if len(activeMsgs) > 0 {
-			totalWeight := 0.0
-			for _, m := range activeMsgs {
-				totalWeight += m.Weight
-			}
-			nodeWeight = totalWeight / float64(len(activeMsgs))
-		}
-		if nodeWeight > 0.7 {
-			priority = 100
-		}
-	}
-
-	id := providedID
-	if id == "" {
-		id = generateMsgID(msg)
-	}
-
-	readEnabled := n.myReadEnabled
-	// Mixing (v2.0.2): свойство сообщения. Только при Sphinx.
-	mixingEnabled := false
-	if n.settingsStore != nil {
-		mixingEnabled = n.settingsStore.GetMixingEnabled() && n.useOnion
-	}
-	newMsg := Message{
-		ID:               id,
-		Text:             msg,
-		PlainText:        plainText,
-		Sender:           senderID,
-		Recipient:        recipient,
-		Version:          version,
-		Type:             msgType,
-		Time:             time.Now().UTC().Format("2006-01-02T15:04:05"),
-		IsOwn:            isOwn,
-		Score:            0,
-		Weight:           initialWeight,
-		Priority:         priority,
-		Mode:             0,
-		ExpiresAt:        expiresAt,
-		ReadEnabled:      &readEnabled,
-		TtlPeriodSeconds: ttlPeriodSeconds,
-		TtlMode:          ttlMode,
-		MixingEnabled:    mixingEnabled,
-	}
-	// Свои файловые чанки: base64 не нужен в Memory (файл на диске в sent/).
-	// Dart не запрашивает getChunk для isOwn. Экономия ~900 МБ на 670 МБ-файле.
-	if isOwn && isChunkedMediaType(newMsg.MediaType) && newMsg.ChunkTotal > 0 {
-		newMsg.Text = ""
-		newMsg.PlainText = ""
-	}
-	if n.memory.Add(newMsg) {
-		// Если это наше E2E-сообщение — фиксируем статус StatusSent.
-		if isOwn && version == MESSAGE_VERSION_E2E && newMsg.Type == TypeMessage {
-			n.setMessageStatus(id, StatusSent)
-		}
-		if viaBootstrap {
-			// Служебные контакт-протокола — всегда через bootstrap.
-			// Circuit может быть stale — direct таймаутит.
-			if err := n.sendServiceViaBootstrap(newMsg); err != nil {
-				log.Printf("[SERVICE] viaBootstrap failed for %s: %v", newMsg.ID, err)
-			}
-		} else {
-			n.replicateMessage(newMsg)
-		}
-		if n.messageHook != nil {
-			data, _ := json.Marshal(newMsg)
-			n.messageHook(string(data))
-		}
-	}
-
-	if answer != "" && recipient == "" {
-		answerMsg := Message{
-			ID:       generateMsgID(answer),
-			Text:     answer,
-			Sender:   "🌐 Сеть",
-			Time:     time.Now().UTC().Format("2006-01-02T15:04:05"),
-			IsOwn:    false,
-			Score:    0,
-			Weight:   0.5,
-			Priority: 0,
-			Mode:     0,
-		}
-		if n.memory.Add(answerMsg) {
-			n.replicateMessage(answerMsg)
-		}
-	}
-
-	go n.saveState()
-}
-
-func migrateTime(t string) string {
-	if strings.Contains(t, "T") {
-		return t
-	}
-	if len(t) == 8 && t[2] == ':' {
-		return time.Now().Format("2006-01-02") + "T" + t
-	}
-	return time.Now().Format("2006-01-02T15:04:05")
-}
-
-func (n *Node) loadBootstrapPeers() []string {
-	var raw []string
-	if len(n.configBootstrap) > 0 {
-		raw = n.configBootstrap
-	} else {
-		if envPeers := os.Getenv("ISOTOPE_BOOTSTRAP_PEERS"); envPeers != "" {
-			for _, p := range strings.Split(envPeers, ",") {
-				if p = strings.TrimSpace(p); p != "" {
-					raw = append(raw, p)
-				}
-			}
-		}
-		if data, err := os.ReadFile("bootstrap.txt"); err == nil {
-			for _, line := range strings.Split(string(data), "\n") {
-				if line = strings.TrimSpace(line); line != "" {
-					raw = append(raw, line)
-				}
-			}
-		}
-	}
-
-	// Расширяем: для каждого адреса — оба транспорта (WS + TCP).
-	// TODO: remove when obfuscation is in place (see roadmap).
-	expanded := make([]string, 0, len(raw)*2)
-	for _, addr := range raw {
-		expanded = append(expanded, expandTransportAlternatives(addr)...)
-	}
-	return expanded
-}
-
-// expandTransportAlternatives — возвращает список multiaddr для одного peer:
-// оригинал + альтернативный транспорт (WS ↔ TCP).
-// Порт вычисляется динамически (разница 1): VPS слушает port (TCP) и port+1 (WS).
-// Пример: /ip4/1.2.3.4/tcp/9001/ws/p2p/QmX →
-//
-//	[/ip4/1.2.3.4/tcp/9001/ws/p2p/QmX, /ip4/1.2.3.4/tcp/9000/p2p/QmX]
-//
-// TODO: remove when obfuscation is in place (see roadmap).
-func expandTransportAlternatives(addr string) []string {
-	result := []string{addr}
-
-	const tcpMark = "/tcp/"
-	i := strings.Index(addr, tcpMark)
-	if i < 0 {
-		return result
-	}
-	portStart := i + len(tcpMark)
-	portEnd := portStart
-	for portEnd < len(addr) && addr[portEnd] >= '0' && addr[portEnd] <= '9' {
-		portEnd++
-	}
-	port, err := strconv.Atoi(addr[portStart:portEnd])
-	if err != nil {
-		return result
-	}
-
-	if strings.Contains(addr, "/ws") {
-		// WS → TCP: убрать "/ws", порт -1.
-		altPort := strconv.Itoa(port - 1)
-		prefix := addr[:portStart]
-		suffix := addr[portEnd:]
-		suffix = strings.Replace(suffix, "/ws", "", 1)
-		result = append(result, prefix+altPort+suffix)
-	} else {
-		// TCP → WS: порт +1, вставить "/ws" после порта.
-		altPort := strconv.Itoa(port + 1)
-		prefix := addr[:portStart]
-		suffix := addr[portEnd:]
-		result = append(result, prefix+altPort+"/ws"+suffix)
-	}
-
-	return result
-}
-
-func (n *Node) loadState() error {
-	data, err := n.loadStateData()
-	if err != nil {
-		return err
-	}
-	var state struct {
-		Messages      []Message                `json:"messages"`
-		Layers        [][]float64              `json:"layers"`
-		MsgCount      int                      `json:"msgCount"`
-		PreHash       string                   `json:"preHash"`
-		AntiHash      string                   `json:"antiHash"`
-		RoutingTable  []string                 `json:"routingTable"`
-		MessageStatus map[string]MessageStatus `json:"messageStatus"`
-	}
-	if err := json.Unmarshal(data, &state); err != nil {
-		return err
-	}
-	// Миграция: старые state хранили статусы в отдельном map.
-	// Переносим их в Message.Status (новый единый источник истины).
-	if len(state.MessageStatus) > 0 {
-		for i := range state.Messages {
-			if status, ok := state.MessageStatus[state.Messages[i].ID]; ok {
-				state.Messages[i].Status = status
-			}
-		}
-		log.Printf("[STATUS] migrated %d statuses to Message.Status", len(state.MessageStatus))
-	}
-	for i := range state.Messages {
-		state.Messages[i].Time = migrateTime(state.Messages[i].Time)
-	}
-	for _, msg := range state.Messages {
-		n.memory.Add(msg)
-	}
-	n.layers = state.Layers
-	n.msgCount = state.MsgCount
-	n.preHash = state.PreHash
-	n.antiHash = state.AntiHash
-	n.layersDirty = true
-
-	if len(state.RoutingTable) > 0 {
-		if n.dhtNode != nil {
-			data, _ := json.Marshal(state.RoutingTable)
-			n.dhtNode.LoadRoutingTable(data)
-		}
-	}
-	return nil
 }
 
 // InitP2P — инициализирует P2P
@@ -4063,7 +389,6 @@ func (n *Node) InitP2P() error {
 		log.Println("[INIT] Состояние не найдено, начинаем с нуля")
 	}
 
-	// Однократная очистка своих E2E-сообщений без PlainText (баг до фикса).
 	n.runE2ECleanupOnce()
 
 	if n.pendingFile == "" {
@@ -4073,20 +398,48 @@ func (n *Node) InitP2P() error {
 	}
 	n.loadPendingQueue()
 
-	// Директория sent/ для копий отправленных файлов.
-	// Используется flushPending и fillFileChunkFromSent.
 	if n.stateFile != "" {
 		_ = os.MkdirAll(n.sentDirPath(), 0700)
 	}
 
-	// Восстановление незавершённых файловых отправок после перезапуска.
-	// Восстанавливает deliveredCount и unackedChunks.
 	go n.resumeIncompleteFiles()
 
-	// Инициализация E2E-ключей (Ed25519 + X25519).
-	n.loadOrGenerateE2EKeys()
+	// SEED (v2.0.6): если seed задан — Ed25519 (PeerID) + X25519 из seed.
+	// loadOrGenerateE2EKeys и loadPrivateKey (RSA) при seed НЕ вызываются.
+	// Иначе — как раньше (E2E из файлов + RSA identity).
+	var seedIdentity crypto.PrivKey
+	if n.seedPhrase != "" {
+		sp, _, err := SeedToEd25519(n.seedPhrase)
+		if err != nil {
+			return fmt.Errorf("seed: SeedToEd25519: %w", err)
+		}
+		ed, ok := sp.(*crypto.Ed25519PrivateKey)
+		if !ok {
+			return fmt.Errorf("seed: unexpected libp2p key type")
+		}
+		raw, err := ed.Raw()
+		if err != nil {
+			return fmt.Errorf("seed: Ed25519 Raw: %w", err)
+		}
+		if len(raw) != ed25519.PrivateKeySize {
+			return fmt.Errorf("seed: unexpected Ed25519 raw length %d", len(raw))
+		}
+		n.ed25519Priv = ed25519.PrivateKey(raw)
+		n.ed25519Pub = n.ed25519Priv.Public().(ed25519.PublicKey)
 
-	// Инициализация хранилища контактов (отдельно от state).
+		xPriv, xPub, err := SeedToX25519(n.seedPhrase)
+		if err != nil {
+			return fmt.Errorf("seed: SeedToX25519: %w", err)
+		}
+		n.x25519Priv = xPriv
+		n.x25519Pub = xPub
+
+		seedIdentity = sp
+		log.Printf("[SEED] identity from seed (Ed25519)")
+	} else {
+		n.loadOrGenerateE2EKeys()
+	}
+
 	if n.contactsFile == "" && n.stateFile != "" {
 		n.contactsFile = filepath.Join(filepath.Dir(n.stateFile), "isotope_contacts.json")
 	}
@@ -4095,7 +448,6 @@ func (n *Node) InitP2P() error {
 		n.contacts = NewContactsStore(n.contactsFile)
 	}
 
-	// Инициализация хранилища входящих запросов (отдельно от state).
 	if n.requestsFile == "" && n.stateFile != "" {
 		n.requestsFile = filepath.Join(filepath.Dir(n.stateFile), "isotope_requests.json")
 	}
@@ -4104,7 +456,6 @@ func (n *Node) InitP2P() error {
 		n.requests = NewRequestsStore(n.requestsFile)
 	}
 
-	// Инициализация списка удалённых (отдельно от state).
 	if n.deletedFile == "" && n.stateFile != "" {
 		n.deletedFile = filepath.Join(filepath.Dir(n.stateFile), "isotope_deleted.json")
 	}
@@ -4113,22 +464,23 @@ func (n *Node) InitP2P() error {
 		n.deleted = NewDeletedStore(n.deletedFile)
 	}
 
-	// Инициализация пользовательских настроек (отдельно от state).
-	// isotope_settings.json — рядом со state.
 	settingsFile := filepath.Join(filepath.Dir(n.stateFile), "isotope_settings.json")
 	_ = os.MkdirAll(filepath.Dir(settingsFile), 0700)
 	n.settingsStore = NewSettingsStore(settingsFile)
-	// Синхронизация кэша с загруженным значением.
 	n.myReadEnabled = n.settingsStore.GetMyReadEnabled()
 
 	var priv crypto.PrivKey
-	keyBytes, err := n.loadPrivateKey()
-	if err != nil {
-		priv, _, _ = crypto.GenerateKeyPair(crypto.RSA, 2048)
-		keyBytes, _ = crypto.MarshalPrivateKey(priv)
-		n.savePrivateKey(keyBytes)
+	if seedIdentity != nil {
+		priv = seedIdentity
 	} else {
-		priv, _ = crypto.UnmarshalPrivateKey(keyBytes)
+		keyBytes, err := n.loadPrivateKey()
+		if err != nil {
+			priv, _, _ = crypto.GenerateKeyPair(crypto.RSA, 2048)
+			keyBytes, _ = crypto.MarshalPrivateKey(priv)
+			n.savePrivateKey(keyBytes)
+		} else {
+			priv, _ = crypto.UnmarshalPrivateKey(keyBytes)
+		}
 	}
 
 	listenAddr := fmt.Sprintf("/ip4/%s/tcp/%d", n.configListenIP, n.configPort)
@@ -4161,7 +513,6 @@ func (n *Node) InitP2P() error {
 	}
 	n.host = host
 
-	// Автоочистка: удалить self-contact (баг старых версий — свой QR).
 	if n.contacts != nil {
 		myID := n.host.ID().String()
 		if _, ok := n.contacts.Get(myID); ok {
@@ -4248,7 +599,6 @@ func (n *Node) InitP2P() error {
 		}
 	}
 
-	// Sphinx (v2.0.1): настройка из SettingsStore.
 	if n.settingsStore != nil {
 		n.useOnion = n.settingsStore.GetSphinxEnabled()
 	}
@@ -4256,16 +606,10 @@ func (n *Node) InitP2P() error {
 		log.Printf("[SPHINX] enabled (relays: %d)", len(n.selectSphinxRelays("")))
 	}
 
-	// Mixing (v2.0.2): настройка только на отправителе — флаг в Message.
-	// Relay читает флаг из Sphinx-пакета (handleStream), не свою настройку.
 	if n.settingsStore != nil && n.settingsStore.GetMixingEnabled() {
 		log.Printf("[MIXING] enabled (sender-side flag)")
 	}
 
-	// Воркер-пул для файловых чанков (10 воркеров).
-	// Защита от 10 700 горутин: чанки идут через chunkQueue, не через go func.
-	// На relay воркеры не запускаются: relay не отправитель, sent/ у него нет,
-	// unackedChunks копить не нужно. См. HANDOFF-2026-10-16 (дополнение 2).
 	if !n.isRelay {
 		for i := 0; i < SendSemaphoreCapacity; i++ {
 			go n.chunkWorker()
@@ -4344,164 +688,6 @@ func (n *Node) Stop() error {
 		return n.host.Close()
 	}
 	return nil
-}
-
-// GetMessages — возвращает все НЕ истёкшие сообщения.
-// Для файловых чанков Text/PlainText обнуляются — чтобы base64
-// не летел через MethodChannel (OOM). base64 — через GetChunk.
-func (n *Node) GetMessages() []Message {
-	all := n.memory.GetAll()
-	now := time.Now()
-	alive := make([]Message, 0, len(all))
-	for _, m := range all {
-		if !m.ExpiresAt.IsZero() && now.After(m.ExpiresAt) {
-			continue
-		}
-		// Файловые чанки: не отдаём base64. Только метаданные.
-		// Оригинал в memory не трогаем — GetChunk читает оттуда.
-		if isChunkedMediaType(m.MediaType) && m.ChunkTotal > 0 {
-			m.Text = ""
-			m.PlainText = ""
-		}
-		alive = append(alive, m)
-	}
-	return alive
-}
-
-// GetChunk — возвращает base64 одного чанка файла по mediaID + chunkIndex.
-// Используется Dart-ом, чтобы получить base64 без пересылки всего списка
-// сообщений через MethodChannel (OOM при больших файлах).
-//   - свои чанки  → PlainText (открытый base64);
-//   - чужие чанки → Text (после расшифровки).
-func (n *Node) GetChunk(mediaID string, chunkIndex int) (string, error) {
-	if mediaID == "" {
-		return "", fmt.Errorf("mediaID is required")
-	}
-	msg, ok := n.memory.GetFileChunk(mediaID, chunkIndex)
-	if !ok {
-		return "", fmt.Errorf("chunk not found: mediaID=%s index=%d", mediaID, chunkIndex)
-	}
-	if msg.IsOwn {
-		return msg.PlainText, nil
-	}
-	return msg.Text, nil
-}
-
-// ClearChunkData — очищает Text/PlainText у конкретного чанка в memory.
-// Используется получателем: после saveChunk на диск base64 больше не нужен
-// в памяти. Освобождает ~170 КБ на чанк (для больших файлов — сотни МБ).
-// Метаданные (ID, MediaID, ChunkIndex, ChunkTotal, FileName, FileSize) остаются.
-// Возвращает true, если чанк найден.
-func (n *Node) ClearChunkData(mediaID string, chunkIndex int) bool {
-	if mediaID == "" {
-		return false
-	}
-	return n.memory.ClearFileChunk(mediaID, chunkIndex)
-}
-
-// FileAck — подтверждает приём группы чанков файла от Dart.
-// Dart вызывает после saveChunk на диск. Go очищает base64 (ClearFileChunk)
-// и удаляет индексы из окна pendingHookAcks.
-// Идемпотентно: если чанк уже очищен / не в окне — не ошибка.
-// Вызывается из mobile.go (уже под nodeMu).
-func (n *Node) FileAck(mediaID string, indices []int) {
-	if mediaID == "" || len(indices) == 0 {
-		return
-	}
-
-	for _, idx := range indices {
-		n.memory.ClearFileChunk(mediaID, idx)
-	}
-
-	n.pendingHookAcksMu.Lock()
-	if w := n.pendingHookAcks[mediaID]; w != nil {
-		for _, idx := range indices {
-			delete(w.Indices, idx)
-		}
-		if len(w.Indices) == 0 {
-			delete(n.pendingHookAcks, mediaID)
-		}
-	}
-	n.pendingHookAcksMu.Unlock()
-
-	log.Printf("[ACK] mediaID=%s count=%d", mediaID, len(indices))
-}
-
-// DeleteFile — удаляет все чанки файла из memory по mediaID.
-// Также удаляет sent/<MediaID>.bin (если есть) и счётчик deliveredCount.
-// Используется при удалении файла из чата (свайп).
-// Возвращает количество удалённых чанков.
-func (n *Node) DeleteFile(mediaID string) int {
-	if mediaID == "" {
-		return 0
-	}
-	all := n.memory.GetAll()
-	removed := 0
-	for _, m := range all {
-		if m.MediaID == mediaID {
-			if n.memory.Remove(m.ID) {
-				removed++
-			}
-		}
-	}
-	// Удаляем sent/<MediaID>.bin, если остался.
-	sentPath := n.sentPath(mediaID)
-	_ = os.Remove(sentPath)
-	// Удаляем files/<MediaID>.* — постоянная копия (превью, «Открыть»).
-	filesPattern := filepath.Join(n.filesDirPath(), mediaID+".*")
-	if matches, err := filepath.Glob(filesPattern); err == nil {
-		for _, p := range matches {
-			_ = os.Remove(p)
-		}
-	}
-	// Очищаем счётчики.
-	n.deliveredCountMu.Lock()
-	delete(n.deliveredCount, mediaID)
-	n.deliveredCountMu.Unlock()
-	n.acceptedCountMu.Lock()
-	delete(n.acceptedCount, mediaID)
-	n.acceptedCountMu.Unlock()
-	// Очищаем состояние завершённости.
-	n.fileStatusMu.Lock()
-	delete(n.completedFiles, mediaID)
-	delete(n.fileStatusLastPush, mediaID)
-	n.fileStatusMu.Unlock()
-	// Очищаем окно ack.
-	n.pendingHookAcksMu.Lock()
-	delete(n.pendingHookAcks, mediaID)
-	n.pendingHookAcksMu.Unlock()
-
-	if removed > 0 {
-		log.Printf("[DELETE] file %s — removed %d chunks", mediaID, removed)
-		n.scheduleSaveState()
-	}
-	return removed
-}
-
-// GetPeers — возвращает список активных пиров
-func (n *Node) GetPeers() []string {
-	if n.host == nil {
-		return []string{}
-	}
-	peers := n.host.Network().Peers()
-	result := make([]string, 0, len(peers))
-	for _, p := range peers {
-		result = append(result, p.String())
-	}
-	return result
-}
-
-// GetWeight — возвращает вес узла
-func (n *Node) GetWeight() float64 {
-	msgs := n.memory.GetActiveMessages(0.5)
-	if len(msgs) == 0 {
-		return 0.5
-	}
-	total := 0.0
-	for _, m := range msgs {
-		total += m.Weight
-	}
-	return total / float64(len(msgs))
 }
 
 // GetStatus — возвращает JSON-статус
@@ -4588,1508 +774,6 @@ func (n *Node) handlePeersFull(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(result)
 }
 
-// GetMultiaddrs — возвращает все адреса узла.
-func (n *Node) GetMultiaddrs() []string {
-	if n.host == nil {
-		return []string{}
-	}
-	myID := n.host.ID().String()
-
-	ifaceAddrs, err := n.host.Network().InterfaceListenAddresses()
-	if err != nil {
-		ifaceAddrs = nil
-	}
-
-	fallbackAddrs := n.host.Addrs()
-
-	seen := make(map[string]bool)
-	var result []string
-
-	addAddr := func(addr string) {
-		if seen[addr] {
-			return
-		}
-		seen[addr] = true
-		result = append(result, addr+"/p2p/"+myID)
-	}
-
-	for _, a := range ifaceAddrs {
-		s := a.String()
-		if strings.Contains(s, "127.0.0.1") {
-			continue
-		}
-		addAddr(s)
-	}
-
-	for _, a := range fallbackAddrs {
-		s := a.String()
-		if strings.Contains(s, "127.0.0.1") {
-			continue
-		}
-		addAddr(s)
-	}
-
-	return result
-}
-
-// ConnectToPeer — подключение к пиру
-func (n *Node) ConnectToPeer(multiaddr string) error {
-	if n.host == nil {
-		return fmt.Errorf("node not started")
-	}
-	peerInfo, err := peer.AddrInfoFromString(multiaddr)
-	if err != nil {
-		return err
-	}
-	ctx := context.Background()
-	if err := n.host.Connect(ctx, *peerInfo); err != nil {
-		return err
-	}
-	go func() {
-		time.Sleep(2 * time.Second)
-		n.ExchangePeers(peerInfo.ID.String())
-	}()
-	return nil
-}
-
-// ConnectToPeerWithFallback — пробует все multiaddr параллельно.
-func (n *Node) ConnectToPeerWithFallback(multiaddrs []string) (string, error) {
-	if len(multiaddrs) == 0 {
-		return "", fmt.Errorf("empty multiaddrs list")
-	}
-	if n.host == nil {
-		return "", fmt.Errorf("node not started")
-	}
-
-	type result struct {
-		addr string
-		err  error
-	}
-
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	results := make(chan result, len(multiaddrs))
-
-	for _, ma := range multiaddrs {
-		go func(addr string) {
-			peerInfo, err := peer.AddrInfoFromString(addr)
-			if err != nil {
-				results <- result{addr: addr, err: err}
-				return
-			}
-
-			dialCtx, dialCancel := context.WithTimeout(ctx, 10*time.Second)
-			defer dialCancel()
-
-			if err := n.host.Connect(dialCtx, *peerInfo); err != nil {
-				results <- result{addr: addr, err: err}
-				return
-			}
-			results <- result{addr: addr, err: nil}
-		}(ma)
-	}
-
-	var lastErr error
-	for i := 0; i < len(multiaddrs); i++ {
-		r := <-results
-		if r.err == nil {
-			cancel()
-			log.Printf("[CONNECT] success %s", r.addr)
-			go func() {
-				time.Sleep(2 * time.Second)
-				peerInfo, err := peer.AddrInfoFromString(r.addr)
-				if err == nil {
-					n.ExchangePeers(peerInfo.ID.String())
-				}
-			}()
-			return r.addr, nil
-		}
-		lastErr = r.err
-		log.Printf("[CONNECT] failed %s: %v", r.addr, r.err)
-	}
-
-	return "", fmt.Errorf("all dials failed: %v", lastErr)
-}
-
-// SendMessage — отправляет сообщение всем пирам (broadcast).
-func (n *Node) SendMessage(text string, ttlPeriod string, ttlMode string) (string, error) {
-	if n.host == nil {
-		return "", fmt.Errorf("node not started")
-	}
-	ttlSeconds := parsePeriod(ttlPeriod)
-	var expiresAt time.Time
-	if ttlSeconds > 0 && ttlMode == "hard" {
-		expiresAt = time.Now().Add(time.Duration(ttlSeconds) * time.Second)
-	}
-	id := generateMsgID(text)
-	n.processMessageInternal(text, n.host.ID().String(), true, expiresAt, id, "", 0, "", TypeMessage, false, ttlSeconds, ttlMode)
-	return id, nil
-}
-
-// SendToPeer — отправляет сообщение конкретному пиру (адресно).
-// Требуется контакт с x25519_pub. Шифрует через box.Seal (Version=2).
-func (n *Node) SendToPeer(peerID string, text string, ttlPeriod string, ttlMode string) (string, error) {
-	if n.host == nil {
-		return "", fmt.Errorf("node not started")
-	}
-	if peerID == "" {
-		return "", fmt.Errorf("peerID is required")
-	}
-	log.Printf("[SEND] SendToPeer: peerID=%s me=%s text=%q ttlPeriod=%s ttlMode=%s",
-		peerID, n.host.ID().String(), truncate(text, 40), ttlPeriod, ttlMode)
-
-	encrypted, err := n.encryptForRecipient(peerID, text)
-	if err != nil {
-		return "", fmt.Errorf("encrypt failed: %w", err)
-	}
-
-	ttlSeconds := parsePeriod(ttlPeriod)
-	var expiresAt time.Time
-	if ttlSeconds > 0 && ttlMode == "hard" {
-		expiresAt = time.Now().Add(time.Duration(ttlSeconds) * time.Second)
-	}
-	id := generateMsgID(text)
-	n.processMessageInternal(encrypted, n.host.ID().String(), true, expiresAt, id, peerID, MESSAGE_VERSION_E2E, text, TypeMessage, false, ttlSeconds, ttlMode)
-	return id, nil
-}
-
-// SendDelivered — отправляет подтверждение доставки сообщения отправителю.
-// См. SendRead.
-func (n *Node) SendDelivered(ref, recipient string) error {
-	return n.sendConfirmation(TypeDelivered, ref, recipient)
-}
-
-// GetMessageChunkBase64 — обёртка над GetChunk для MethodChannel.
-func (n *Node) GetMessageChunkBase64(mediaID string, chunkIndex int) (string, error) {
-	return n.GetChunk(mediaID, chunkIndex)
-}
-
-// SendDeliveredBatch — отправляет батч подтверждений доставки.
-// Одно сообщение [DELIVERED] с массивом Refs вместо N отдельных.
-func (n *Node) SendDeliveredBatch(refs []string, recipient string) error {
-	if n.host == nil {
-		return fmt.Errorf("node not started")
-	}
-	if recipient == "" {
-		return fmt.Errorf("recipient is required")
-	}
-	if len(refs) == 0 {
-		return nil
-	}
-	id := generateMsgID(fmt.Sprintf("delivered-batch:%d", len(refs)))
-	readEnabled := n.myReadEnabled
-	msg := Message{
-		ID:          id,
-		Text:        "",
-		Sender:      n.host.ID().String(),
-		Recipient:   recipient,
-		Type:        TypeDelivered,
-		Refs:        refs,
-		Version:     0,
-		Time:        time.Now().UTC().Format("2006-01-02T15:04:05"),
-		ReadEnabled: &readEnabled,
-	}
-	if err := n.sendServiceViaBootstrap(msg); err != nil {
-		log.Printf("[CONFIRM] delivered-batch (%d refs) to %s failed: %v", len(refs), recipient, err)
-		return err
-	}
-	log.Printf("[CONFIRM] delivered-batch (%d refs) to %s", len(refs), recipient)
-	return nil
-}
-
-// queueDelivered — добавляет ref в буфер.
-// Один таймер на sender: при первом ref запускается окно 2 сек.
-// Пока окно открыто — refs копятся. По истечении — один батч [DELIVERED].
-// Если накопилось 10 — flush немедленно.
-// Дубликаты не накапливаются: если ref уже в буфере — пропускаем.
-// Это защита от повторных [DELIVERED] при retry (мы шлём [DELIVERED] всегда).
-func (n *Node) queueDelivered(sender, ref string) {
-	if sender == "" || ref == "" {
-		return
-	}
-	n.pendingDeliveredMu.Lock()
-	// Проверка дубликатов.
-	already := false
-	for _, r := range n.pendingDelivered[sender] {
-		if r == ref {
-			already = true
-			break
-		}
-	}
-	if already {
-		n.pendingDeliveredMu.Unlock()
-		return
-	}
-	n.pendingDelivered[sender] = append(n.pendingDelivered[sender], ref)
-	count := len(n.pendingDelivered[sender])
-
-	needFlush := count >= 10
-	if needFlush {
-		// Достигли 10 — сбрасываем таймер (если был) и флашим немедленно.
-		if t, ok := n.pendingDeliveredTimers[sender]; ok {
-			t.Stop()
-			delete(n.pendingDeliveredTimers, sender)
-		}
-	} else {
-		// Один таймер на sender. Если уже запущен — не трогаем.
-		if _, hasTimer := n.pendingDeliveredTimers[sender]; !hasTimer {
-			n.pendingDeliveredTimers[sender] = time.AfterFunc(2*time.Second, func() {
-				n.pendingDeliveredMu.Lock()
-				delete(n.pendingDeliveredTimers, sender)
-				n.pendingDeliveredMu.Unlock()
-				n.flushDelivered(sender)
-			})
-		}
-	}
-	n.pendingDeliveredMu.Unlock()
-
-	if needFlush {
-		go n.flushDelivered(sender)
-	}
-}
-
-// flushDelivered — отправляет батч [DELIVERED] для указанного sender.
-// refs копируется под локом; ключ удаляется атомарно с копией.
-// Это устраняет race, когда новый ref добавляется между чтением и delete.
-// При ошибке отправки refs возвращаются в буфер + повтор через 5 секунд.
-func (n *Node) flushDelivered(sender string) {
-	n.pendingDeliveredMu.Lock()
-	// Останавливаем таймер, если он ещё запущен.
-	if t, ok := n.pendingDeliveredTimers[sender]; ok {
-		t.Stop()
-		delete(n.pendingDeliveredTimers, sender)
-	}
-	refs, ok := n.pendingDelivered[sender]
-	if !ok || len(refs) == 0 {
-		n.pendingDeliveredMu.Unlock()
-		return
-	}
-	// Копия среза — чтобы append после unlock не влиял.
-	refsCopy := make([]string, len(refs))
-	copy(refsCopy, refs)
-	delete(n.pendingDelivered, sender)
-	n.pendingDeliveredMu.Unlock()
-
-	if err := n.SendDeliveredBatch(refsCopy, sender); err != nil {
-		log.Printf("[CONFIRM] delivered-batch flush failed for %s: %v", sender, err)
-		// Ошибка — вернуть refs в буфер. Иначе они потеряны навсегда.
-		n.pendingDeliveredMu.Lock()
-		existing := make(map[string]bool, len(n.pendingDelivered[sender]))
-		for _, r := range n.pendingDelivered[sender] {
-			existing[r] = true
-		}
-		for _, r := range refsCopy {
-			if !existing[r] {
-				n.pendingDelivered[sender] = append(n.pendingDelivered[sender], r)
-				existing[r] = true
-			}
-		}
-		n.pendingDeliveredMu.Unlock()
-		// Повторная попытка через 5 секунд.
-		time.AfterFunc(5*time.Second, func() {
-			n.flushDelivered(sender)
-		})
-	}
-}
-
-// handleDeliveredRef — обработка одного ref из [DELIVERED] (одиночного или батча).
-func (n *Node) handleDeliveredRef(ref, sender string) {
-	if ref == "" {
-		return
-	}
-	n.removePendingByRef(ref)
-
-	// Чанк подтверждён — убираем из unackedChunks.
-	n.unackedChunksMu.Lock()
-	delete(n.unackedChunks, ref)
-	n.unackedChunksMu.Unlock()
-
-	peerReadEnabled := n.getPeerReadEnabled(sender)
-	if !n.myReadEnabled || !peerReadEnabled {
-		isFileChunkHidden := false
-		if msg, ok := n.findMyMessageByID(ref); ok && isChunkedMediaType(msg.MediaType) && msg.ChunkTotal > 0 {
-			isFileChunkHidden = true
-		}
-		if !isFileChunkHidden {
-			n.setMessageStatus(ref, StatusHidden)
-			log.Printf("[SERVICE] delivered ack (hidden) ref=%s from=%s", ref, sender)
-		}
-
-		if msg, ok := n.findMyMessageByID(ref); ok {
-			if msg.TtlMode == "after_read" && msg.ExpiresAt.IsZero() && msg.TtlPeriodSeconds > 0 {
-				expiresAt := time.Now().Add(time.Duration(msg.TtlPeriodSeconds) * time.Second)
-				if n.memory.SetExpiresAt(ref, expiresAt) {
-					log.Printf("[TTL] after_read → hard (hidden): set ExpiresAt for %s (+%ds)", ref, msg.TtlPeriodSeconds)
-					n.scheduleSaveState()
-					if updated, ok := n.findMyMessageByID(ref); ok {
-						if data, err := json.Marshal(updated); err == nil {
-							if n.messageHook != nil {
-								n.messageHook(string(data))
-							}
-						}
-					}
-					if err := n.SendTtlUpdate(ref, msg.TtlPeriodSeconds, sender); err != nil {
-						log.Printf("[TTL_UPDATE] send failed ref=%s: %v", ref, err)
-					}
-				}
-			}
-		}
-	} else {
-		isFileChunk := false
-		if msg, ok := n.findMyMessageByID(ref); ok && isChunkedMediaType(msg.MediaType) && msg.ChunkTotal > 0 {
-			isFileChunk = true
-		}
-		if !isFileChunk {
-			n.setMessageStatus(ref, StatusDelivered)
-			log.Printf("[SERVICE] delivered ack ref=%s from=%s", ref, sender)
-		}
-	}
-
-	// Счётчик доставленных чанков для файлового mediaID.
-	// Работает в обеих ветках (hidden и visible) — прогресс-бар в UI
-	// должен идти при любом read_enabled. Статус файла (2/3) ставит
-	// только handleFileComplete. Здесь — только счётчик и очистка unacked.
-	if msg, ok := n.findMyMessageByID(ref); ok {
-		if isChunkedMediaType(msg.MediaType) && msg.ChunkTotal > 0 && msg.MediaID != "" {
-			n.deliveredCountMu.Lock()
-			// Идемпотентность: не увеличиваем счётчик выше total.
-			// Иначе повторные [DELIVERED] (retry-эхо) дают delivered > total.
-			cur := n.deliveredCount[msg.MediaID]
-			total := msg.ChunkTotal
-			mediaID := msg.MediaID
-			if cur < total {
-				n.deliveredCount[msg.MediaID] = cur + 1
-				cur = cur + 1
-			}
-			n.deliveredCountMu.Unlock()
-
-			// Push агрегата в Dart (throttled).
-			n.pushFileStatus(mediaID, cur, total)
-
-			// Все чанки доставлены — очищаем unacked.
-			if cur >= total {
-				n.unackedChunksMu.Lock()
-				for id, info := range n.unackedChunks {
-					if info.mediaID == mediaID {
-						delete(n.unackedChunks, id)
-					}
-				}
-				n.unackedChunksMu.Unlock()
-			}
-		}
-	}
-}
-
-// SendTtlUpdate — отправляет получателю [TTL_UPDATE] с expires_in_seconds.
-// Используется при auto-hard (отправитель знает, что прочтения не будет).
-func (n *Node) SendTtlUpdate(ref string, seconds int, recipient string) error {
-	if n.host == nil {
-		return fmt.Errorf("node not started")
-	}
-	if ref == "" || recipient == "" || seconds <= 0 {
-		return fmt.Errorf("ref, recipient, seconds required")
-	}
-	text := strconv.Itoa(seconds)
-	return n.sendTtlUpdate(ref, text, recipient)
-}
-
-// sendTtlUpdate — общая логика отправки [TTL_UPDATE].
-// Version=0, Type=TypeTtlUpdate, Ref=msg_id, Text=seconds. Через bootstrap.
-func (n *Node) sendTtlUpdate(ref, text, recipient string) error {
-	if n.host == nil {
-		return fmt.Errorf("node not started")
-	}
-	id := generateMsgID(ref + ":" + recipient)
-	msg := Message{
-		ID:        id,
-		Text:      text,
-		Sender:    n.host.ID().String(),
-		Recipient: recipient,
-		Version:   0,
-		Type:      TypeTtlUpdate,
-		Ref:       ref,
-		Time:      time.Now().UTC().Format("2006-01-02T15:04:05"),
-		IsOwn:     true,
-		Weight:    0.5,
-	}
-	if err := n.sendServiceViaBootstrap(msg); err != nil {
-		return fmt.Errorf("sendServiceViaBootstrap: %w", err)
-	}
-	return nil
-}
-
-// SendRead — отправляет подтверждение прочтения сообщения отправителю.
-// См. SendDelivered.
-// Плюс: локально запускает TTL у получателя — если это after_read,
-// ставим ExpiresAt = now + period для входящего сообщения.
-// Файловые чанки (MediaType=file, ChunkTotal>0) не отправляют [READ] —
-// только [DELIVERED]. Меньше трафика при передаче файлов.
-func (n *Node) SendRead(ref, recipient string) error {
-	if msg, ok := n.findMyMessageByID(ref); ok {
-		if isChunkedMediaType(msg.MediaType) && msg.ChunkTotal > 0 {
-			// [READ] для файла — только по последнему чанку.
-			if msg.ChunkIndex != msg.ChunkTotal-1 {
-				return nil
-			}
-		}
-	}
-	// Локальный TTL: получатель прочитал — запускаем таймер удаления.
-	if msg, ok := n.findMyMessageByID(ref); ok {
-		if msg.TtlMode == "after_read" && msg.ExpiresAt.IsZero() && msg.TtlPeriodSeconds > 0 {
-			expiresAt := time.Now().Add(time.Duration(msg.TtlPeriodSeconds) * time.Second)
-			if n.memory.SetExpiresAt(ref, expiresAt) {
-				log.Printf("[TTL] after_read (recipient): set ExpiresAt for %s (+%ds)", ref, msg.TtlPeriodSeconds)
-				n.scheduleSaveState()
-				// Push в Dart: сообщаем об обновлении ExpiresAt.
-				if updated, ok := n.findMyMessageByID(ref); ok {
-					if data, err := json.Marshal(updated); err == nil {
-						if n.messageHook != nil {
-							n.messageHook(string(data))
-						}
-					}
-				}
-			}
-		}
-	}
-	return n.sendConfirmation(TypeRead, ref, recipient)
-}
-
-// SendReadBatch — отправляет батч подтверждений прочтения.
-// Одно сообщение [READ] с массивом Refs вместо N отдельных.
-// Version=0, Type=TypeRead, Refs=msg_ids. Отправка — через bootstrap.
-// Локально у получателя — TTL after_read для каждого ref (как в SendRead).
-// Если !myReadEnabled — не отправляем.
-func (n *Node) SendReadBatch(refs []string, recipient string) error {
-	if n.host == nil {
-		return fmt.Errorf("node not started")
-	}
-	if recipient == "" {
-		return fmt.Errorf("recipient is required")
-	}
-	if len(refs) == 0 {
-		return nil
-	}
-	// [READ] отправляется только если делюсь статусом прочтения.
-	if !n.myReadEnabled {
-		return nil
-	}
-
-	// Фильтр: файловые чанки — оставляем только ПОСЛЕДНИЙ чанк каждого файла.
-	// Остальные отбрасываем, чтобы [READ] был один на файл.
-	seenMedia := make(map[string]bool)
-	filtered := make([]string, 0, len(refs))
-	for _, ref := range refs {
-		if msg, ok := n.findMyMessageByID(ref); ok {
-			if isChunkedMediaType(msg.MediaType) && msg.ChunkTotal > 0 {
-				// Для файлов [READ] шлём с mediaID (общий для отправителя и получателя).
-				if seenMedia[msg.MediaID] {
-					continue
-				}
-				seenMedia[msg.MediaID] = true
-				filtered = append(filtered, msg.MediaID)
-				continue
-			}
-		}
-		filtered = append(filtered, ref)
-	}
-	refs = filtered
-	if len(refs) == 0 {
-		return nil
-	}
-
-	// Локальный TTL after_read — для каждого входящего.
-	for _, ref := range refs {
-		if msg, ok := n.findMyMessageByID(ref); ok {
-			if msg.TtlMode == "after_read" && msg.ExpiresAt.IsZero() && msg.TtlPeriodSeconds > 0 {
-				expiresAt := time.Now().Add(time.Duration(msg.TtlPeriodSeconds) * time.Second)
-				if n.memory.SetExpiresAt(ref, expiresAt) {
-					log.Printf("[TTL] after_read (recipient batch): set ExpiresAt for %s (+%ds)", ref, msg.TtlPeriodSeconds)
-					n.scheduleSaveState()
-					if updated, ok := n.findMyMessageByID(ref); ok {
-						if data, err := json.Marshal(updated); err == nil {
-							if n.messageHook != nil {
-								n.messageHook(string(data))
-							}
-						}
-					}
-				}
-			}
-		}
-	}
-
-	id := generateMsgID(fmt.Sprintf("read-batch:%d", len(refs)))
-	readEnabled := n.myReadEnabled
-	msg := Message{
-		ID:          id,
-		Text:        "",
-		Sender:      n.host.ID().String(),
-		Recipient:   recipient,
-		Type:        TypeRead,
-		Refs:        refs,
-		Version:     0,
-		Time:        time.Now().UTC().Format("2006-01-02T15:04:05"),
-		ReadEnabled: &readEnabled,
-	}
-	// [DELIVERED] — через sendToRecipient (как чанки, с retry), не
-	// sendServiceViaBootstrap. Ревью Публикатора 2026-10-29: (a).
-	// sendServiceViaBootstrap — синхронный NewStream к VPS, без retry.
-	// VPS мог не получить — Xiaomi не знает. sendToRecipient — tryDirectSend
-	// + fallback, надёжнее.
-	data, err := json.Marshal(msg)
-	if err != nil {
-		log.Printf("[CONFIRM] delivered-batch marshal failed: %v", err)
-		return err
-	}
-	if !n.sendToRecipient(msg, data, false) {
-		log.Printf("[CONFIRM] delivered-batch (%d refs) to %s failed (sendToRecipient)", len(refs), recipient)
-		return fmt.Errorf("delivered-batch send failed")
-	}
-	log.Printf("[CONFIRM] delivered-batch (%d refs) to %s", len(refs), recipient)
-	return nil
-}
-
-// MarkReadLocally — помечает входящие сообщения как прочитанные локально.
-// Вызывается из Dart при открытии чата (перед sendReadBatch).
-// Идемпотентно. Push в Dart не делает — UI обновит _unreadByPeer сам.
-// Возвращает количество изменённых.
-func (n *Node) MarkReadLocally(refs []string) int {
-	if len(refs) == 0 {
-		return 0
-	}
-	changed := n.memory.MarkReadLocally(refs)
-	if changed > 0 {
-		log.Printf("[READ] marked %d messages as read locally", changed)
-		// Немедленное сохранение — отметка прочтения должна выжить
-		// при убийстве приложения Android. scheduleSaveState (5 сек)
-		// не успевает — окно потери.
-		go func() {
-			if err := n.saveState(); err != nil {
-				log.Printf("[STATE] save failed: %v", err)
-			}
-		}()
-	}
-	return changed
-}
-
-// sendConfirmation — общая логика отправки [DELIVERED]/[READ].
-// Version=0, Type=delivered|read, Ref=msg_id. Прямо или через relay.
-func (n *Node) sendConfirmation(msgType MessageType, ref, recipient string) error {
-	if n.host == nil {
-		return fmt.Errorf("node not started")
-	}
-	if ref == "" || recipient == "" {
-		return fmt.Errorf("ref and recipient are required")
-	}
-	log.Printf("[CONFIRM] sendConfirmation: type=%s ref=%s recipient=%s me=%s",
-		msgTypeString(msgType), ref, recipient, n.host.ID().String())
-	// [READ] отправляется только если делюсь статусом прочтения.
-	// [DELIVERED] — всегда.
-	if msgType == TypeRead && !n.myReadEnabled {
-		return nil
-	}
-
-	id := generateMsgID(fmt.Sprintf("%s:%s", ref, msgTypeString(msgType)))
-	readEnabled := n.myReadEnabled
-	msg := Message{
-		ID:          id,
-		Text:        "",
-		Sender:      n.host.ID().String(),
-		Recipient:   recipient,
-		Type:        msgType,
-		Ref:         ref,
-		Version:     0,
-		Time:        time.Now().UTC().Format("2006-01-02T15:04:05"),
-		ReadEnabled: &readEnabled,
-	}
-
-	data, err := json.Marshal(msg)
-	if err != nil {
-		return err
-	}
-
-	// [DELIVERED]/[READ] — сервисные. Сразу fallback (relay → bootstrap),
-	// без tryDirectSend (3 сек timeout при нагрузке Huawei — бесполезно).
-	if n.fallbackSend(recipient, data, false) {
-		log.Printf("[CONFIRM] %s ref=%s to %s (via fallback)", msgTypeString(msgType), ref, recipient)
-		return nil
-	}
-	return fmt.Errorf("no route for confirmation")
-}
-
-// msgTypeString — строковое имя типа для логов.
-func msgTypeString(t MessageType) string {
-	switch t {
-	case TypeDelivered:
-		return "delivered"
-	case TypeRead:
-		return "read"
-	case TypeContactRequest:
-		return "contact_request"
-	case TypeContactAccept:
-		return "contact_accept"
-	case TypeContactReject:
-		return "contact_reject"
-	case TypeContactHello:
-		return "contact_hello"
-	case TypeContactHelloAck:
-		return "contact_hello_ack"
-	case TypeTtlUpdate:
-		return "ttl_update"
-	default:
-		return "message"
-	}
-}
-
-// SendContactRequest — отправляет запрос на добавление в контакты.
-// recipient — PeerID получателя (должен быть в контактах, чтобы был x25519_pub).
-// displayName — представление отправителя. Если пусто — берётся MyDisplayName.
-// Payload (имя, ключи, подпись, read_enabled) шифруется E2E.
-// Version=2.
-func (n *Node) SendContactRequest(recipient, displayName string) (string, error) {
-	if n.host == nil {
-		return "", fmt.Errorf("node not started")
-	}
-	if recipient == "" {
-		return "", fmt.Errorf("recipient is required")
-	}
-
-	if displayName == "" {
-		displayName = n.GetMyDisplayName()
-	}
-	readEnabled := n.myReadEnabled
-
-	payload := map[string]interface{}{
-		"name":         displayName,
-		"ed25519_pub":  base64.StdEncoding.EncodeToString(n.ed25519Pub),
-		"x25519_pub":   base64.StdEncoding.EncodeToString(n.x25519Pub[:]),
-		"signature":    n.signMyX25519(),
-		"read_enabled": readEnabled,
-	}
-	payloadJSON, err := json.Marshal(payload)
-	if err != nil {
-		return "", err
-	}
-
-	encrypted, err := n.encryptForRecipient(recipient, string(payloadJSON))
-	if err != nil {
-		return "", fmt.Errorf("encrypt failed: %w", err)
-	}
-
-	id := generateMsgID(fmt.Sprintf("req:%s:%d", recipient, time.Now().UnixNano()))
-	n.processMessageInternal(encrypted, n.host.ID().String(), true, time.Time{}, id, recipient, MESSAGE_VERSION_E2E, "", TypeContactRequest, true, 0, "")
-
-	return id, nil
-}
-
-// SendContactHello — отправляет [CONTACT_HELLO] получателю.
-// Открытое (Version=0). Payload: peerID + публичные ключи + подпись A.
-// Нужно, чтобы B мог AddTempContact(A) → расшифровать [CONTACT_REQUEST] (E2E).
-func (n *Node) SendContactHello(recipient string) error {
-	if n.host == nil {
-		return fmt.Errorf("node not started")
-	}
-	if recipient == "" {
-		return fmt.Errorf("recipient is required")
-	}
-
-	payload := map[string]interface{}{
-		"peerID":      n.host.ID().String(),
-		"ed25519_pub": base64.StdEncoding.EncodeToString(n.ed25519Pub),
-		"x25519_pub":  base64.StdEncoding.EncodeToString(n.x25519Pub[:]),
-		"signature":   n.signMyX25519(),
-	}
-	payloadJSON, err := json.Marshal(payload)
-	if err != nil {
-		return err
-	}
-
-	id := generateMsgID(fmt.Sprintf("hello:%s:%d", recipient, time.Now().UnixNano()))
-	msg := Message{
-		ID:        id,
-		Text:      string(payloadJSON),
-		Sender:    n.host.ID().String(),
-		Recipient: recipient,
-		Type:      TypeContactHello,
-		Version:   0,
-		Time:      time.Now().UTC().Format("2006-01-02T15:04:05"),
-	}
-	if err := n.sendServiceViaBootstrap(msg); err != nil {
-		return fmt.Errorf("send hello failed: %w", err)
-	}
-	log.Printf("[REQUESTS] contact_hello sent to %s (id=%s)", recipient, id)
-	return nil
-}
-
-// SendContactHelloAck — отправляет [CONTACT_HELLO_ACK] отправителю.
-// Открытое (Version=0). Payload: peerID + публичные ключи + подпись.
-func (n *Node) SendContactHelloAck(recipient string) error {
-	if n.host == nil {
-		return fmt.Errorf("node not started")
-	}
-	if recipient == "" {
-		return fmt.Errorf("recipient is required")
-	}
-
-	payload := map[string]interface{}{
-		"peerID":      n.host.ID().String(),
-		"ed25519_pub": base64.StdEncoding.EncodeToString(n.ed25519Pub),
-		"x25519_pub":  base64.StdEncoding.EncodeToString(n.x25519Pub[:]),
-		"signature":   n.signMyX25519(),
-	}
-	payloadJSON, err := json.Marshal(payload)
-	if err != nil {
-		return err
-	}
-
-	id := generateMsgID(fmt.Sprintf("hello_ack:%s:%d", recipient, time.Now().UnixNano()))
-	msg := Message{
-		ID:        id,
-		Text:      string(payloadJSON),
-		Sender:    n.host.ID().String(),
-		Recipient: recipient,
-		Type:      TypeContactHelloAck,
-		Version:   0,
-		Time:      time.Now().UTC().Format("2006-01-02T15:04:05"),
-	}
-	if err := n.sendServiceViaBootstrap(msg); err != nil {
-		return fmt.Errorf("send hello_ack failed: %w", err)
-	}
-	log.Printf("[REQUESTS] contact_hello_ack sent to %s (id=%s)", recipient, id)
-	return nil
-}
-
-// SendContactAccept — отправляет принятие запроса на контакт.
-// requestID — ID исходного запроса (Ref). recipient — PeerID запросившего.
-// Version=2, E2E.
-func (n *Node) SendContactAccept(requestID, recipient string) error {
-	return n.sendContactControl(TypeContactAccept, requestID, recipient)
-}
-
-// SendContactReject — отправляет отклонение запроса на контакт.
-func (n *Node) SendContactReject(requestID, recipient string) error {
-	return n.sendContactControl(TypeContactReject, requestID, recipient)
-}
-
-// sendContactControl — общая логика accept/reject.
-// Шифруем E2E. Version=2.
-// Payload: request_id, display_name (моё представление), read_enabled.
-// Ключи (ed25519_pub, x25519_pub, signature) — для случая, если у A
-// ещё нет контакта B (например, при [CONTACT_REJECT] из ниоткуда).
-func (n *Node) sendContactControl(msgType MessageType, requestID, recipient string) error {
-	if n.host == nil {
-		return fmt.Errorf("node not started")
-	}
-	if requestID == "" || recipient == "" {
-		return fmt.Errorf("requestID and recipient are required")
-	}
-
-	readEnabled := n.myReadEnabled
-	payload := map[string]interface{}{
-		"request_id":   requestID,
-		"name":         n.GetMyDisplayName(),
-		"ed25519_pub":  base64.StdEncoding.EncodeToString(n.ed25519Pub),
-		"x25519_pub":   base64.StdEncoding.EncodeToString(n.x25519Pub[:]),
-		"signature":    n.signMyX25519(),
-		"read_enabled": readEnabled,
-	}
-	payloadJSON, err := json.Marshal(payload)
-	if err != nil {
-		return err
-	}
-	encrypted, err := n.encryptForRecipient(recipient, string(payloadJSON))
-	if err != nil {
-		return fmt.Errorf("encrypt failed: %w", err)
-	}
-
-	id := generateMsgID(fmt.Sprintf("%s:%s:%d", msgTypeString(msgType), requestID, time.Now().UnixNano()))
-	n.processMessageInternal(encrypted, n.host.ID().String(), true, time.Time{}, id, recipient, MESSAGE_VERSION_E2E, "", msgType, true, 0, "")
-
-	return nil
-}
-
-// setMessageStatus — устанавливает статус сообщения по ID.
-// Правила приоритета (в Memory.SetStatus):
-//   - hidden (3) — терминальное. Не повышается.
-//   - остальные — не понижаются (только повышение).
-func (n *Node) setMessageStatus(id string, status MessageStatus) {
-	if id == "" {
-		return
-	}
-	if n.memory.SetStatus(id, status) {
-		log.Printf("[STATUS] %s → %d", id, status)
-		// Throttled save — статусы сохраняются раз в 5 сек.
-		n.scheduleSaveState()
-	}
-}
-
-// scheduleSaveState — отложенная запись state (throttle 5 сек).
-// Защита от лишних I/O при частых setMessageStatus.
-func (n *Node) scheduleSaveState() {
-	n.mu.Lock()
-	if n.saveStateScheduled {
-		n.mu.Unlock()
-		return
-	}
-	n.saveStateScheduled = true
-	n.mu.Unlock()
-
-	go func() {
-		time.Sleep(5 * time.Second)
-		n.mu.Lock()
-		n.saveStateScheduled = false
-		n.mu.Unlock()
-		if err := n.saveState(); err != nil {
-			log.Printf("[STATE] save failed: %v", err)
-		}
-	}()
-}
-
-// getMessageStatus — возвращает статус сообщения по ID.
-// 0 — неизвестен.
-func (n *Node) getMessageStatus(id string) MessageStatus {
-	if msg, ok := n.findMyMessageByID(id); ok {
-		return msg.Status
-	}
-	return 0
-}
-
-// GetMessageStatuses — возвращает map статусов для UI.
-// Формат: map[msg_id]status (1/2/3/4). Статус 0 не включается.
-// Пробегает memory.GetAll() — статус теперь в Message.Status.
-func (n *Node) GetMessageStatuses() map[string]MessageStatus {
-	all := n.memory.GetAll()
-	result := make(map[string]MessageStatus, len(all))
-	for _, msg := range all {
-		if msg.Status > 0 {
-			// Файловые чанки — через [FILE_STATUS] push. Не дублируем.
-			if isChunkedMediaType(msg.MediaType) && msg.ChunkTotal > 0 {
-				continue
-			}
-			result[msg.ID] = msg.Status
-		}
-	}
-	return result
-}
-
-// FileStatusEntry — статус файловой отправки для Dart.
-// Восстановление прогресса после перезапуска: Dart получает
-// delivered/total для каждого mediaID и заполняет _fileProgress.
-type FileStatusEntry struct {
-	MediaID   string `json:"media_id"`
-	Delivered int    `json:"delivered"`
-	Total     int    `json:"total"`
-	Status    int    `json:"status"` // max по чанкам: 1=sent, 2=delivered, 3=hidden, 4=read
-}
-
-// GetFileStatuses — статус всех файловых отправок (delivered/total).
-// Используется Dart при старте: восстановить прогресс после перезапуска.
-// Считает по memory: для каждого mediaID — сколько чанков Status >= StatusDelivered.
-func (n *Node) GetFileStatuses() []FileStatusEntry {
-	all := n.memory.GetAll()
-	type acc struct {
-		total       int
-		delivered   int
-		status      MessageStatus
-		lastChunkID string
-		isOwn       bool
-	}
-	m := make(map[string]*acc)
-	for _, msg := range all {
-		if !isChunkedMediaType(msg.MediaType) || msg.ChunkTotal <= 0 || msg.MediaID == "" {
-			continue
-		}
-		a, ok := m[msg.MediaID]
-		if !ok {
-			a = &acc{total: msg.ChunkTotal, isOwn: msg.IsOwn}
-			m[msg.MediaID] = a
-		}
-		if msg.Status >= StatusDelivered {
-			a.delivered++
-		}
-		// Статус файла — максимум по чанкам (read > hidden > delivered > sent).
-		if msg.Status > a.status {
-			a.status = msg.Status
-		}
-		// ID последнего чанка — для [READ] из Dart.
-		if msg.ChunkIndex == msg.ChunkTotal-1 {
-			a.lastChunkID = msg.ID
-		}
-	}
-	result := make([]FileStatusEntry, 0, len(m))
-	for id, a := range m {
-		// Получатель: если файл собран на диске (files/<mediaID>.*), но memory
-		// после перезапуска неполный — delivered=total. Иначе UI 7% на собранном
-		// файле. Только для чужих (свои — deliveredCount по [DELIVERED]).
-		if !a.isOwn {
-			if matches, _ := filepath.Glob(filepath.Join(n.filesDirPath(), id+".*")); len(matches) > 0 {
-				a.delivered = a.total
-				if a.status < StatusDelivered {
-					a.status = StatusDelivered
-				}
-			}
-		}
-		result = append(result, FileStatusEntry{
-			MediaID:   id,
-			Delivered: a.delivered,
-			Total:     a.total,
-			Status:    int(a.status),
-		})
-	}
-	return result
-}
-
-// GetRequests — возвращает все pending-запросы на контакт.
-func (n *Node) GetRequests() []ContactRequest {
-	if n.requests == nil {
-		return []ContactRequest{}
-	}
-	return n.requests.GetPending()
-}
-
-// AcceptRequestByID — принимает входящий запрос по ID.
-// Добавляет контакт, отправляет [CONTACT_ACCEPT], удаляет запрос.
-func (n *Node) AcceptRequestByID(id string) error {
-	if n.requests == nil {
-		return fmt.Errorf("requests store not initialized")
-	}
-	req, ok := n.requests.Get(id)
-	if !ok {
-		return fmt.Errorf("request not found: %s", id)
-	}
-
-	if err := n.AddContact(req.PeerID, req.Ed25519Pub, req.X25519Pub, req.Signature, "", req.Name, req.ReadEnabled); err != nil {
-		return fmt.Errorf("add contact failed: %w", err)
-	}
-
-	if n.contacts != nil {
-		_ = n.contacts.SetConfirmed(req.PeerID)
-	}
-
-	if err := n.SendContactAccept(id, req.PeerID); err != nil {
-		log.Printf("[REQUESTS] accept send failed: %v", err)
-	}
-
-	if err := n.requests.Remove(id); err != nil {
-		log.Printf("[REQUESTS] remove failed: %v", err)
-	}
-	log.Printf("[REQUESTS] accepted %s (peer=%s)", id, req.PeerID)
-	return nil
-}
-
-// RejectRequestByID — отклоняет входящий запрос по ID.
-// Отправляет [CONTACT_REJECT], удаляет запрос.
-func (n *Node) RejectRequestByID(id string) error {
-	if n.requests == nil {
-		return fmt.Errorf("requests store not initialized")
-	}
-	req, ok := n.requests.Get(id)
-	if !ok {
-		return fmt.Errorf("request not found: %s", id)
-	}
-
-	if err := n.SendContactReject(id, req.PeerID); err != nil {
-		log.Printf("[REQUESTS] reject send failed: %v", err)
-	}
-
-	if err := n.requests.Remove(id); err != nil {
-		log.Printf("[REQUESTS] remove failed: %v", err)
-	}
-	log.Printf("[REQUESTS] rejected %s (peer=%s)", id, req.PeerID)
-	return nil
-}
-
-// GetKnownPeers — возвращает список известных multiaddr
-func (n *Node) GetKnownPeers() []string {
-	if n.host == nil {
-		return []string{}
-	}
-	var addrs []string
-	peers := n.host.Peerstore().Peers()
-	for _, p := range peers {
-		peerInfo := n.host.Peerstore().PeerInfo(p)
-		for _, addr := range peerInfo.Addrs {
-			addrStr := addr.String() + "/p2p/" + p.String()
-			if strings.Contains(addrStr, "127.0.0.1") {
-				continue
-			}
-			addrs = append(addrs, addrStr)
-		}
-	}
-	return addrs
-}
-
-// ExchangePeers — обменивается списками узлов
-func (n *Node) ExchangePeers(peerID string) error {
-	if n.host == nil {
-		return fmt.Errorf("node not started")
-	}
-	pid, err := peer.Decode(peerID)
-	if err != nil {
-		return err
-	}
-	allKnownAddrs := n.GetKnownPeers()
-	myAddrs := n.GetMultiaddrs()
-	for _, addr := range myAddrs {
-		if !strings.Contains(addr, "127.0.0.1") {
-			found := false
-			for _, known := range allKnownAddrs {
-				if known == addr {
-					found = true
-					break
-				}
-			}
-			if !found {
-				allKnownAddrs = append(allKnownAddrs, addr)
-			}
-		}
-	}
-	ctx := context.Background()
-	s, err := n.host.NewStream(ctx, pid, protocolID)
-	if err != nil {
-		return err
-	}
-	defer s.Close()
-	data, _ := json.Marshal(allKnownAddrs)
-	fmt.Fprintf(s, "PEERS:%s\n", string(data))
-	buf := make([]byte, 256*1024)
-	s.SetReadDeadline(time.Now().Add(15 * time.Second))
-	nr, _ := s.Read(buf)
-	response := strings.TrimSpace(string(buf[:nr]))
-	if strings.HasPrefix(response, "PEERS:") {
-		payload := strings.TrimPrefix(response, "PEERS:")
-		var peerAddrs []string
-		if err := json.Unmarshal([]byte(payload), &peerAddrs); err == nil {
-			for _, addr := range peerAddrs {
-				peerInfo, err := peer.AddrInfoFromString(addr)
-				if err == nil {
-					n.host.Peerstore().AddAddrs(peerInfo.ID, peerInfo.Addrs, time.Hour*24)
-				}
-			}
-		}
-	}
-	return nil
-}
-
-// AddContact — добавляет или обновляет контакт.
-// 4.4: проверяет подпись над peerID || x25519_pub.
-// localName — как я называю контакт (не передаётся в сеть).
-// remoteName — представление контакта о себе (пришло в payload/QR).
-// Результат:
-//   - подпись валидна       → Verified: true
-//   - подписи нет           → Verified: false
-//   - подпись невалидна     → Verified: false + лог
-//   - Ed25519Pub пустой при непустой Signature → Verified: false + лог
-//
-// Отправка блокируется не здесь, а в encryptForRecipient (требует X25519Pub).
-func (n *Node) AddContact(peerID, ed25519Pub, x25519Pub, signature, localName, remoteName string, readEnabled bool) error {
-	if n.contacts == nil {
-		return fmt.Errorf("contacts store not initialized")
-	}
-
-	// Защита на уровне ядра: нельзя добавить себя в контакты.
-	if n.host != nil && peerID == n.host.ID().String() {
-		return fmt.Errorf("cannot add self as contact")
-	}
-
-	// Если пользователь явно добавляет контакт (QR) — убрать из удалённых.
-	if n.deleted != nil {
-		if err := n.deleted.RemoveFromDeleted(peerID); err != nil {
-			log.Printf("[DELETED] removeFromDeleted failed for %s: %v", peerID, err)
-		}
-	}
-
-	verified := false
-
-	if signature != "" {
-		if ed25519Pub == "" || x25519Pub == "" {
-			log.Printf("[CONTACT] incomplete keys for %s (ed25519=%v, x25519=%v) — contact saved as unverified",
-				peerID, ed25519Pub != "", x25519Pub != "")
-		} else if verifyContactSignature(peerID, ed25519Pub, x25519Pub, signature) {
-			verified = true
-			log.Printf("[CONTACT] signature verified for %s", peerID)
-		} else {
-			log.Printf("[CONTACT] signature invalid for %s — contact saved as unverified", peerID)
-		}
-	}
-
-	return n.contacts.Add(Contact{
-		PeerID:      peerID,
-		Ed25519Pub:  ed25519Pub,
-		X25519Pub:   x25519Pub,
-		Signature:   signature,
-		Verified:    verified,
-		Name:        localName,
-		RemoteName:  remoteName,
-		ReadEnabled: readEnabled,
-	})
-}
-
-// SetContactReadEnabled — устанавливает read_enabled для контакта.
-// Использует UpdateReadEnabled — явное значение (не «не понижает»).
-func (n *Node) SetContactReadEnabled(peerID string, enabled bool) error {
-	if n.contacts == nil {
-		return fmt.Errorf("contacts store not initialized")
-	}
-	return n.contacts.UpdateReadEnabled(peerID, enabled)
-}
-
-// RenameContact — устанавливает локальное имя контакта (Name).
-// Локальное имя — как я называю контакт. Не передаётся в сеть.
-func (n *Node) RenameContact(peerID, localName string) error {
-	if n.contacts == nil {
-		return fmt.Errorf("contacts store not initialized")
-	}
-	return n.contacts.RenameContact(peerID, localName)
-}
-
-// RemoveContact — удаляет контакт у меня. У собеседника остаётся.
-// Отправка сообщений контакту после удаления невозможна (encryptForRecipient
-// не найдёт x25519_pub). Также удаляет всю переписку с этим контактом —
-// сообщения в памяти и их статусы. И добавляет peerID в список удалённых —
-// чтобы он не вернулся после перезапуска (из P2PService history / UI).
-func (n *Node) RemoveContact(peerID string) error {
-	if n.contacts == nil {
-		return fmt.Errorf("contacts store not initialized")
-	}
-
-	// 1. Удаляем контакт из isotope_contacts.json (если есть).
-	// Если контакта нет — не ошибка (удаляем «старый узел»).
-	_ = n.contacts.Remove(peerID)
-
-	// 2. Добавляем в список удалённых.
-	if n.deleted != nil {
-		if err := n.deleted.Add(peerID); err != nil {
-			log.Printf("[DELETED] add failed for %s: %v", peerID, err)
-		}
-	}
-
-	// 3. Удаляем все сообщения с этим peerID (sender или recipient).
-	all := n.memory.GetAll()
-	for _, m := range all {
-		if m.Sender == peerID || m.Recipient == peerID {
-			n.memory.Remove(m.ID)
-			// Статус уходит вместе с сообщением (Message.Status).
-		}
-	}
-
-	// 4. Сохраняем state (messageStatus изменился).
-	n.scheduleSaveState()
-
-	log.Printf("[CONTACTS] removed %s + messages purged + added to deleted", peerID)
-	return nil
-}
-
-// getPeerReadEnabled — возвращает read_enabled контакта (из isotope_contacts.json).
-// Если контакта нет или ошибка — дефолт true (обратная совместимость).
-func (n *Node) getPeerReadEnabled(peerID string) bool {
-	if n.contacts == nil {
-		return true
-	}
-	c, ok := n.contacts.Get(peerID)
-	if !ok {
-		return true
-	}
-	return c.ReadEnabled
-}
-
-// SetMyReadEnabled — устанавливает мою настройку "делюсь ли статусом прочтения".
-// Сохраняет в isotope_settings.json. Обновляет кэш в Node.
-// Используется UI (Приватность).
-func (n *Node) SetMyReadEnabled(enabled bool) {
-	n.myReadEnabled = enabled
-	if n.settingsStore != nil {
-		if err := n.settingsStore.SetMyReadEnabled(enabled); err != nil {
-			log.Printf("[SETTINGS] save my_read_enabled failed: %v", err)
-		}
-	}
-}
-
-// GetMyReadEnabled — возвращает текущую настройку (из кэша).
-func (n *Node) GetMyReadEnabled() bool {
-	return n.myReadEnabled
-}
-
-// SetMyDisplayName — устанавливает представление по умолчанию.
-// Сохраняется в isotope_settings.json. Используется в QR и [CONTACT_REQUEST].
-func (n *Node) SetMyDisplayName(name string) error {
-	if n.settingsStore == nil {
-		return fmt.Errorf("settings store not initialized")
-	}
-	return n.settingsStore.SetMyDisplayName(name)
-}
-
-// GetShowNotificationContent — показывать ли содержимое в уведомлениях.
-// Источник истины — settingsStore.
-func (n *Node) GetShowNotificationContent() bool {
-	if n.settingsStore == nil {
-		return true
-	}
-	return n.settingsStore.GetShowNotificationContent()
-}
-
-// SetShowNotificationContent — устанавливает настройку и сохраняет.
-func (n *Node) SetShowNotificationContent(enabled bool) error {
-	if n.settingsStore == nil {
-		return fmt.Errorf("settings store not initialized")
-	}
-	return n.settingsStore.SetShowNotificationContent(enabled)
-}
-
-// GetNotificationCount — показывать ли количество непрочитанных в шторке.
-func (n *Node) GetNotificationCount() bool {
-	if n.settingsStore == nil {
-		return false
-	}
-	return n.settingsStore.GetNotificationCount()
-}
-
-// SetNotificationCount — устанавливает и сохраняет.
-func (n *Node) SetNotificationCount(enabled bool) error {
-	if n.settingsStore == nil {
-		return fmt.Errorf("settings store not initialized")
-	}
-	return n.settingsStore.SetNotificationCount(enabled)
-}
-
-// GetNotificationNames — показывать ли имена контактов в шторке.
-func (n *Node) GetNotificationNames() bool {
-	if n.settingsStore == nil {
-		return false
-	}
-	return n.settingsStore.GetNotificationNames()
-}
-
-// SetNotificationNames — устанавливает и сохраняет.
-func (n *Node) SetNotificationNames(enabled bool) error {
-	if n.settingsStore == nil {
-		return fmt.Errorf("settings store not initialized")
-	}
-	return n.settingsStore.SetNotificationNames(enabled)
-}
-
-// GetNotificationProgress — показывать ли прогресс передачи в шторке.
-func (n *Node) GetNotificationProgress() bool {
-	if n.settingsStore == nil {
-		return false
-	}
-	return n.settingsStore.GetNotificationProgress()
-}
-
-// SetNotificationProgress — устанавливает и сохраняет.
-func (n *Node) SetNotificationProgress(enabled bool) error {
-	if n.settingsStore == nil {
-		return fmt.Errorf("settings store not initialized")
-	}
-	return n.settingsStore.SetNotificationProgress(enabled)
-}
-
-// GetDeletedPeers — возвращает список удалённых peerID (для Dart).
-// Dart фильтрует _discoveredNodes по этому списку — удалённые не показываются.
-func (n *Node) GetDeletedPeers() []string {
-	if n.deleted == nil {
-		return []string{}
-	}
-	return n.deleted.GetAll()
-}
-
-// RemoveFromDeleted — убирает peerID из списка удалённых.
-// Вызывается при QR-возврате контакта.
-func (n *Node) RemoveFromDeleted(peerID string) error {
-	if n.deleted == nil {
-		return fmt.Errorf("deleted store not initialized")
-	}
-	return n.deleted.RemoveFromDeleted(peerID)
-}
-
-// IsDeleted — true, если peerID в списке удалённых.
-func (n *Node) IsDeleted(peerID string) bool {
-	if n.deleted == nil {
-		return false
-	}
-	return n.deleted.IsDeleted(peerID)
-}
-
-// GetMyDisplayName — возвращает представление по умолчанию.
-func (n *Node) GetMyDisplayName() string {
-	if n.settingsStore == nil {
-		return ""
-	}
-	return n.settingsStore.GetMyDisplayName()
-}
-
-// SetTtl — устанавливает период и режим удаления сообщений.
-// period: "10s" | "30s" | "1m" | "5m" | "15m" | "30m" | "1h" | "4h" | "24h" | "never".
-// mode: nil (при never) | "after_read" | "hard".
-func (n *Node) SetTtl(period string, mode string) error {
-	if n.settingsStore == nil {
-		return fmt.Errorf("settings store not initialized")
-	}
-	var modePtr *string
-	if mode != "" && period != "never" && period != "forever" {
-		m := mode
-		modePtr = &m
-	}
-	return n.settingsStore.SetTtl(period, modePtr)
-}
-
-// GetTtl — возвращает период и режим удаления сообщений.
-// period: "10s" | "30s" | "1m" | ... | "never".
-// mode: "" (при never) | "after_read" | "hard".
-func (n *Node) GetTtl() (string, string) {
-	if n.settingsStore == nil {
-		return "never", ""
-	}
-	period, modePtr := n.settingsStore.GetTtl()
-	mode := ""
-	if modePtr != nil {
-		mode = *modePtr
-	}
-	return period, mode
-}
-
-// SetSphinxEnabled — включает/выключает Sphinx на лету + сохраняет в настройках.
-func (n *Node) SetSphinxEnabled(enabled bool) error {
-	if n.settingsStore != nil {
-		if err := n.settingsStore.SetSphinxEnabled(enabled); err != nil {
-			return err
-		}
-	}
-	n.mu.Lock()
-	n.useOnion = enabled
-	n.mu.Unlock()
-	log.Printf("[SPHINX] enabled=%v", enabled)
-	return nil
-}
-
-// GetSphinxEnabled — текущее значение Sphinx.
-func (n *Node) GetSphinxEnabled() bool {
-	n.mu.Lock()
-	defer n.mu.Unlock()
-	return n.useOnion
-}
-
-// SetMixingEnabled — включает/выключает Mixing на лету + сохраняет в настройках.
-// Mixing применяется только при SphinxEnabled == true (см. handleStream).
-func (n *Node) SetMixingEnabled(enabled bool) error {
-	if n.settingsStore != nil {
-		if err := n.settingsStore.SetMixingEnabled(enabled); err != nil {
-			return err
-		}
-	}
-	n.mu.Lock()
-	n.mixingEnabled = enabled
-	n.mu.Unlock()
-	log.Printf("[MIXING] enabled=%v", enabled)
-	return nil
-}
-
-// GetMixingEnabled — текущее значение Mixing.
-func (n *Node) GetMixingEnabled() bool {
-	n.mu.Lock()
-	defer n.mu.Unlock()
-	return n.mixingEnabled
-}
-
-// GetMaskingEnabled — текущее значение dummy-трафика (v2.0.4 d).
-func (n *Node) GetMaskingEnabled() bool {
-	if n.settingsStore == nil {
-		return false
-	}
-	return n.settingsStore.GetMaskingEnabled()
-}
-
-// SetMaskingEnabled — включает/выключает dummy-трафик на лету + сохраняет.
-func (n *Node) SetMaskingEnabled(enabled bool) error {
-	if n.settingsStore == nil {
-		return fmt.Errorf("settings store not initialized")
-	}
-	log.Printf("[MASKING] enabled=%v", enabled)
-	return n.settingsStore.SetMaskingEnabled(enabled)
-}
-
-// GetContacts — возвращает все контакты.
-func (n *Node) GetContacts() []Contact {
-	if n.contacts == nil {
-		return []Contact{}
-	}
-	return n.contacts.GetAll()
-}
-
-// GetContact — возвращает контакт по PeerID.
-func (n *Node) GetContact(peerID string) (Contact, bool) {
-	if n.contacts == nil {
-		return Contact{}, false
-	}
-	return n.contacts.Get(peerID)
-}
-
-// nameForPeer — возвращает имя отправителя по приоритету:
-//   - свой peerID → MyDisplayName;
-//   - контакт → Name → RemoteName;
-//   - иначе — пусто (UI возьмёт короткий PeerID).
-func (n *Node) nameForPeer(peerID string) string {
-	if peerID == "" {
-		return ""
-	}
-	if n.host != nil && peerID == n.host.ID().String() {
-		if n.settingsStore != nil {
-			return n.settingsStore.GetMyDisplayName()
-		}
-		return ""
-	}
-	if n.contacts != nil {
-		if c, ok := n.contacts.Get(peerID); ok {
-			if c.Name != "" {
-				return c.Name
-			}
-			if c.RemoteName != "" {
-				return c.RemoteName
-			}
-		}
-	}
-	return ""
-}
-
-// AddTempContact — добавляет временный контакт (только в памяти).
-// Используется при получении [CONTACT_HELLO] от A — чтобы B мог
-// расшифровать [CONTACT_REQUEST] от A (E2E). Не сохраняется на диск.
-func (n *Node) AddTempContact(c Contact) {
-	if c.PeerID == "" {
-		return
-	}
-	n.tempContactsMu.Lock()
-	defer n.tempContactsMu.Unlock()
-	if n.tempContacts == nil {
-		n.tempContacts = make(map[string]Contact)
-	}
-	n.tempContacts[c.PeerID] = c
-	log.Printf("[CONTACTS] temp added %s (verified=%v)", c.PeerID, c.Verified)
-}
-
-// GetContactTemp — возвращает контакт по PeerID: сначала постоянный,
-// потом временный. Используется в decryptFromSender — прозрачно.
-func (n *Node) GetContactTemp(peerID string) (Contact, bool) {
-	if c, ok := n.GetContact(peerID); ok {
-		return c, true
-	}
-	n.tempContactsMu.Lock()
-	defer n.tempContactsMu.Unlock()
-	c, ok := n.tempContacts[peerID]
-	return c, ok
-}
-
-// RemoveTempContact — удаляет временный контакт по PeerID.
-// Вызывается после requests.Add (A попал в requests store).
-func (n *Node) RemoveTempContact(peerID string) {
-	n.tempContactsMu.Lock()
-	defer n.tempContactsMu.Unlock()
-	if _, ok := n.tempContacts[peerID]; ok {
-		delete(n.tempContacts, peerID)
-		log.Printf("[CONTACTS] temp removed %s", peerID)
-	}
-}
-
 // GetHost — возвращает libp2p host
 func (n *Node) GetHost() host.Host {
 	return n.host
@@ -6105,4 +789,488 @@ func (n *Node) GetDHT() *DHTNode {
 	return n.dhtNode
 }
 
-// node/node.go
+// truncate — обрезает строку для лога.
+func truncate(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return s[:n]
+}
+
+// sendToRecipient — адресная отправка.
+func (n *Node) sendToRecipient(msg Message, data []byte, isFileChunk bool) bool {
+	targetID, err := peer.Decode(msg.Recipient)
+	if err != nil {
+		log.Printf("[REPLICA] invalid Recipient %q: %v", msg.Recipient, err)
+		return false
+	}
+
+	isService := n.isServiceType(msg.Type)
+	acquire := func() func() {
+		if isService {
+			n.serviceSem <- struct{}{}
+			return func() { <-n.serviceSem }
+		}
+		if !isFileChunk {
+			n.sendSem <- struct{}{}
+			return func() { <-n.sendSem }
+		}
+		return func() {}
+	}
+
+	if n.isPeerDead(msg.Recipient) {
+		release := acquire()
+		defer release()
+		return n.fallbackSend(msg.Recipient, data, isFileChunk)
+	}
+
+	inPeers := false
+	for _, p := range n.host.Network().Peers() {
+		if p == targetID {
+			inPeers = true
+			break
+		}
+	}
+	if inPeers {
+		if isFileChunk {
+			n.sendWithFallback(targetID, data, msg.Recipient, isFileChunk)
+		} else {
+			go func() {
+				release := acquire()
+				defer release()
+				n.sendWithFallback(targetID, data, msg.Recipient, isFileChunk)
+			}()
+		}
+		return true
+	}
+
+	release := acquire()
+	defer release()
+	return n.fallbackSend(msg.Recipient, data, isFileChunk)
+}
+
+// tryDirectSend — синхронная попытка прямого stream с коротким timeout.
+func (n *Node) tryDirectSend(targetID peer.ID, data []byte, timeout time.Duration) bool {
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	s, err := n.host.NewStream(ctx, targetID, protocolID)
+	if err != nil {
+		return false
+	}
+	defer s.Close()
+	if _, err := fmt.Fprintf(s, "%s%s\n", REPLICA_PREFIX, string(data)); err != nil {
+		return false
+	}
+	return true
+}
+
+// sendWithFallback — синхронная (вызывается из горутины).
+func (n *Node) sendWithFallback(targetID peer.ID, data []byte, recipient string, isFileChunk bool) {
+	if n.tryDirectSend(targetID, data, 3*time.Second) {
+		return
+	}
+	log.Printf("[REPLICA] direct send to %s failed (phantom circuit?), fallback", targetID)
+	n.fallbackSend(recipient, data, isFileChunk)
+}
+
+// fallbackSend — синхронная. Логика fallback:
+//   - relay → announcedPeers;
+//   - клиент → bootstrap.
+func (n *Node) fallbackSend(recipient string, data []byte, isFileChunk bool) bool {
+	if n.isRelay {
+		if addrs, ok := n.lookupPeer(recipient); ok && len(addrs) > 0 {
+			go func(pid string, addrList []string, payload []byte, isFileChunk bool) {
+				for _, a := range addrList {
+					pi, err := peer.AddrInfoFromString(a)
+					if err != nil {
+						continue
+					}
+					if pi.ID.String() != pid {
+						continue
+					}
+					ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+					if err := n.host.Connect(ctx, *pi); err != nil {
+						cancel()
+						continue
+					}
+					cancel()
+					n.sendReplicaToPeer(pi.ID, payload, isFileChunk)
+					return
+				}
+			}(recipient, addrs, data, isFileChunk)
+			return true
+		}
+		log.Printf("[STATUS] relay: recipient not found in announcedPeers: %s", recipient)
+		return false
+	}
+
+	bootstrapPeers := n.loadBootstrapPeers()
+	for _, addr := range bootstrapPeers {
+		pi, err := peer.AddrInfoFromString(addr)
+		if err != nil {
+			continue
+		}
+		if n.host.ID() == pi.ID {
+			continue
+		}
+		if isFileChunk {
+			n.sendReplicaToPeer(pi.ID, data, isFileChunk)
+		} else {
+			go func(pid peer.ID) {
+				n.sendSem <- struct{}{}
+				defer func() { <-n.sendSem }()
+				n.sendReplicaToPeer(pid, data, isFileChunk)
+			}(pi.ID)
+		}
+		return true
+	}
+
+	log.Printf("[STATUS] recipient not found: %s", recipient)
+	return false
+}
+
+// sendReplicaToPeer — отправка данных пиру.
+func (n *Node) sendReplicaToPeer(targetID peer.ID, data []byte, isFileChunk bool) {
+	if !isFileChunk {
+		myID := ""
+		if n.host != nil {
+			myID = n.host.ID().String()
+		}
+		var msgPreview string
+		if len(data) > 200 {
+			msgPreview = string(data[:200])
+		} else {
+			msgPreview = string(data)
+		}
+		log.Printf("[REPLICA] sendReplicaToPeer target=%s me=%s data=%s", targetID, myID, msgPreview)
+		randomDelay(10, 30)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	s, err := n.host.NewStream(ctx, targetID, protocolID)
+	if err != nil {
+		if !isFileChunk {
+			log.Printf("[REPLICA] NewStream to %s failed: %v", targetID, err)
+		}
+		return
+	}
+	defer s.Close()
+	s.Write([]byte(REPLICA_PREFIX))
+	s.Write(data)
+	s.Write([]byte("\n"))
+}
+
+// sendServiceViaBootstrap — отправка сервисного сообщения через bootstrap (relay).
+func (n *Node) sendServiceViaBootstrap(msg Message) error {
+	if n.host == nil {
+		return fmt.Errorf("node not started")
+	}
+	if msg.Recipient == "" {
+		return fmt.Errorf("recipient is required")
+	}
+
+	data, err := json.Marshal(msg)
+	if err != nil {
+		return fmt.Errorf("marshal failed: %w", err)
+	}
+
+	bootstrapPeers := n.loadBootstrapPeers()
+	if len(bootstrapPeers) == 0 {
+		return fmt.Errorf("no bootstrap peer available")
+	}
+
+	myID := n.host.ID()
+	var lastErr error
+	for _, addr := range bootstrapPeers {
+		pi, err := peer.AddrInfoFromString(addr)
+		if err != nil {
+			lastErr = fmt.Errorf("invalid bootstrap addr %q: %w", addr, err)
+			continue
+		}
+		if pi.ID == myID {
+			continue
+		}
+
+		n.serviceSem <- struct{}{}
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		s, err := n.host.NewStream(ctx, pi.ID, protocolID)
+		if err != nil {
+			cancel()
+			<-n.serviceSem
+			lastErr = fmt.Errorf("NewStream to %s failed: %w", pi.ID, err)
+			continue
+		}
+		_, err = fmt.Fprintf(s, "%s%s\n", REPLICA_PREFIX, string(data))
+		s.Close()
+		cancel()
+		<-n.serviceSem
+		if err != nil {
+			lastErr = fmt.Errorf("write to %s failed: %w", pi.ID, err)
+			continue
+		}
+		return nil
+	}
+
+	if lastErr == nil {
+		lastErr = fmt.Errorf("no reachable bootstrap peer")
+	}
+	return lastErr
+}
+
+// findMyMessageByID — находит моё сообщение по ID в памяти.
+func (n *Node) findMyMessageByID(id string) (Message, bool) {
+	if id == "" {
+		return Message{}, false
+	}
+	return n.memory.GetByID(id)
+}
+
+// loadPendingQueue — загружает очередь из файла.
+func (n *Node) loadPendingQueue() {
+	if n.pendingFile == "" {
+		return
+	}
+	data, err := os.ReadFile(n.pendingFile)
+	if err != nil {
+		return
+	}
+	var queue []Message
+	if err := json.Unmarshal(data, &queue); err != nil {
+		log.Printf("[QUEUE] load failed: %v", err)
+		return
+	}
+	n.pendingMu.Lock()
+	n.pendingMessages = queue
+	n.pendingMu.Unlock()
+	log.Printf("[QUEUE] loaded %d pending messages", len(queue))
+}
+
+// savePendingQueue — сохраняет очередь в файл.
+func (n *Node) savePendingQueue() {
+	if n.pendingFile == "" {
+		return
+	}
+	n.pendingMu.Lock()
+	queue := make([]Message, len(n.pendingMessages))
+	copy(queue, n.pendingMessages)
+	n.pendingMu.Unlock()
+
+	data, err := json.Marshal(queue)
+	if err != nil {
+		log.Printf("[QUEUE] marshal failed: %v", err)
+		return
+	}
+	if err := os.WriteFile(n.pendingFile, data, 0600); err != nil {
+		log.Printf("[QUEUE] save failed: %v", err)
+	}
+}
+
+// enqueuePending — добавляет сообщение в очередь.
+func (n *Node) enqueuePending(msg Message) {
+	if isChunkedMediaType(msg.MediaType) && msg.ChunkTotal > 0 {
+		msg.Text = ""
+		msg.PlainText = ""
+	}
+	n.pendingMu.Lock()
+	n.pendingMessages = append(n.pendingMessages, msg)
+	count := len(n.pendingMessages)
+	n.pendingMu.Unlock()
+	log.Printf("[QUEUE] enqueued %s (total: %d)", msg.ID, count)
+	n.scheduleSavePendingQueue()
+}
+
+// scheduleSavePendingQueue — отложенная запись очереди (throttle 5 сек).
+func (n *Node) scheduleSavePendingQueue() {
+	n.pendingMu.Lock()
+	if n.savePendingScheduled {
+		n.pendingMu.Unlock()
+		return
+	}
+	n.savePendingScheduled = true
+	n.pendingMu.Unlock()
+
+	go func() {
+		time.Sleep(5 * time.Second)
+		n.pendingMu.Lock()
+		n.savePendingScheduled = false
+		n.pendingMu.Unlock()
+		n.savePendingQueue()
+	}()
+}
+
+// hasPending — есть ли что-то в очереди.
+func (n *Node) hasPending() bool {
+	n.pendingMu.Lock()
+	defer n.pendingMu.Unlock()
+	return len(n.pendingMessages) > 0
+}
+
+// flushPending — переотправляет всё из очереди.
+func (n *Node) flushPending() {
+	n.pendingMu.Lock()
+	queue := make([]Message, len(n.pendingMessages))
+	copy(queue, n.pendingMessages)
+	n.pendingMu.Unlock()
+
+	if len(queue) == 0 {
+		return
+	}
+
+	log.Printf("[QUEUE] flushing %d pending messages", len(queue))
+	for _, msg := range queue {
+		n.tryReplicate(msg)
+	}
+	log.Printf("[QUEUE] flushed, remaining: %d", len(queue))
+}
+
+// removePendingByRef — удаляет сообщение из очереди по ID.
+func (n *Node) removePendingByRef(ref string) {
+	if ref == "" {
+		return
+	}
+	n.pendingMu.Lock()
+	before := len(n.pendingMessages)
+	var remaining []Message
+	for _, m := range n.pendingMessages {
+		if m.ID != ref {
+			remaining = append(remaining, m)
+		}
+	}
+	n.pendingMessages = remaining
+	after := len(n.pendingMessages)
+	n.pendingMu.Unlock()
+	if before != after {
+		log.Printf("[QUEUE] removed %s from pending (delivered)", ref)
+		n.savePendingQueue()
+	}
+}
+
+// tryReplicate — попытка отправить одно сообщение (для flushPending).
+func (n *Node) tryReplicate(msg Message) bool {
+	if n.host == nil {
+		return false
+	}
+	if isChunkedMediaType(msg.MediaType) && msg.ChunkTotal > 0 &&
+		msg.Text == "" && msg.PlainText == "" && msg.MediaID != "" {
+		if err := n.fillFileChunkFromSent(&msg); err != nil {
+			log.Printf("[QUEUE] fillFileChunkFromSent %s[%d] failed: %v",
+				msg.MediaID, msg.ChunkIndex, err)
+			return false
+		}
+	}
+	msg.ReplicatedFrom = msg.Sender
+	msg.IsOwn = false
+	data, err := json.Marshal(msg)
+	if err != nil {
+		return false
+	}
+
+	if msg.Recipient != "" {
+		isFileChunk := isChunkedMediaType(msg.MediaType) && msg.ChunkTotal > 0
+		return n.sendToRecipient(msg, data, isFileChunk)
+	}
+
+	peers := n.host.Network().Peers()
+	var alive []peer.ID
+	for _, p := range peers {
+		if p.String() == msg.Sender {
+			continue
+		}
+		alive = append(alive, p)
+	}
+	if len(alive) == 0 {
+		return false
+	}
+	replicaCount := 2
+	if len(alive) < replicaCount {
+		replicaCount = len(alive)
+	}
+	sent := false
+	for i := 0; i < replicaCount; i++ {
+		peerID := alive[i]
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		s, err := n.host.NewStream(ctx, peerID, protocolID)
+		cancel()
+		if err != nil {
+			continue
+		}
+		fmt.Fprintf(s, "%s%s\n", REPLICA_PREFIX, string(data))
+		s.Close()
+		sent = true
+	}
+	return sent
+}
+
+// loadState — загружает состояние из файла.
+func (n *Node) loadState() error {
+	data, err := n.loadStateData()
+	if err != nil {
+		return err
+	}
+	var state struct {
+		Messages      []Message                `json:"messages"`
+		Layers        [][]float64              `json:"layers"`
+		MsgCount      int                      `json:"msgCount"`
+		PreHash       string                   `json:"preHash"`
+		AntiHash      string                   `json:"antiHash"`
+		RoutingTable  []string                 `json:"routingTable"`
+		MessageStatus map[string]MessageStatus `json:"messageStatus"`
+	}
+	if err := json.Unmarshal(data, &state); err != nil {
+		return err
+	}
+	if len(state.MessageStatus) > 0 {
+		for i := range state.Messages {
+			if status, ok := state.MessageStatus[state.Messages[i].ID]; ok {
+				state.Messages[i].Status = status
+			}
+		}
+		log.Printf("[STATUS] migrated %d statuses to Message.Status", len(state.MessageStatus))
+	}
+	for i := range state.Messages {
+		state.Messages[i].Time = migrateTime(state.Messages[i].Time)
+	}
+	for _, msg := range state.Messages {
+		n.memory.Add(msg)
+	}
+	n.layers = state.Layers
+	n.msgCount = state.MsgCount
+	n.preHash = state.PreHash
+	n.antiHash = state.AntiHash
+	n.layersDirty = true
+
+	if len(state.RoutingTable) > 0 {
+		if n.dhtNode != nil {
+			data, _ := json.Marshal(state.RoutingTable)
+			n.dhtNode.LoadRoutingTable(data)
+		}
+	}
+	return nil
+}
+
+// handleReplicaData — обработка данных RESTORE.
+func (n *Node) handleReplicaData(data string) {
+	for _, line := range strings.Split(data, "\n") {
+		if strings.HasPrefix(line, REPLICA_PREFIX) {
+			payload := strings.TrimPrefix(line, REPLICA_PREFIX)
+			var replicaMsg Message
+			if err := json.Unmarshal([]byte(payload), &replicaMsg); err == nil {
+				if replicaMsg.Version < 2 {
+					if plaintext, ok := n.deobfuscate(replicaMsg.Text); ok {
+						replicaMsg.Text = plaintext
+					}
+				}
+				replicaMsg.ReplicatedAt = time.Now()
+				replicaMsg.IsOwn = false
+				replicaMsg.SenderName = n.nameForPeer(replicaMsg.Sender)
+				if n.memory.Add(replicaMsg) {
+					go n.replicateMessage(replicaMsg)
+					if n.messageHook != nil {
+						data, _ := json.Marshal(replicaMsg)
+						n.messageHook(string(data))
+					}
+				}
+			}
+		}
+	}
+}
