@@ -1134,6 +1134,51 @@ class LibP2PService {
     }
   }
 
+  /// Генерирует BIP39 seed-фразу (12 или 24 слова).
+  /// Чистая функция, узел не трогает. Возвращает {"status":"ok","phrase":"..."}.
+  static Future<String> generateSeedPhrase(int words) async {
+    try {
+      final response = await _channel.invokeMethod<String>('generateSeedPhrase', {
+        'words': words,
+      });
+      final decoded = _safeDecode(response, fallback: '{"error":"empty_response"}');
+      if (decoded.containsKey('error')) {
+        return '';
+      }
+      return decoded['phrase'] as String? ?? '';
+    } on PlatformException {
+      return '';
+    }
+  }
+
+  /// Сохраняет seed-фразу до Start (узел ещё не запущен).
+  /// Start применит её до InitP2P. Возвращает {"status":"ok"} или {"error":"..."}.
+  static Future<Map<String, dynamic>> setSeedPhraseBeforeStart(String phrase) async {
+    try {
+      final response = await _channel.invokeMethod<String>('setSeedPhraseBeforeStart', {
+        'phrase': phrase,
+      });
+      return _safeDecode(response);
+    } on PlatformException catch (e) {
+      return {'error': e.message ?? 'platform_error', 'operation': 'set_seed_phrase_before_start'};
+    }
+  }
+
+  /// Возвращает seed-фразу (только для показа пользователю).
+  /// Пусто, если seed не задан.
+  static Future<String> getSeedPhrase() async {
+    try {
+      final response = await _channel.invokeMethod<String>('getSeedPhrase');
+      final decoded = _safeDecode(response, fallback: '{"phrase":""}');
+      if (decoded.containsKey('error')) {
+        return '';
+      }
+      return decoded['phrase'] as String? ?? '';
+    } on PlatformException {
+      return '';
+    }
+  }
+
   static bool get isStarted => _started;
   static bool get isDHTStarted => _dhtStarted;
 }

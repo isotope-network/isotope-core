@@ -553,6 +553,33 @@ class MainActivity : FlutterActivity() {
                             runOnUiThread { result.success(response) }
                         }.start()
                     }
+                    "generateSeedPhrase" -> {
+                        val words = call.argument<Int>("words") ?: 12
+                        Thread {
+                            val response = Mobile.generateSeedPhrase(words.toLong())
+                            runOnUiThread { result.success(response) }
+                        }.start()
+                    }
+                    "setSeedPhraseBeforeStart" -> {
+                        val phrase = call.argument<String>("phrase") ?: ""
+                        Thread {
+                            val response = Mobile.setSeedPhraseBeforeStart(phrase)
+                            runOnUiThread { result.success(response) }
+                        }.start()
+                    }
+                    "setSeedPhrase" -> {
+                        val phrase = call.argument<String>("phrase") ?: ""
+                        Thread {
+                            val response = Mobile.setSeedPhrase(phrase)
+                            runOnUiThread { result.success(response) }
+                        }.start()
+                    }
+                    "getSeedPhrase" -> {
+                        Thread {
+                            val response = Mobile.getSeedPhrase()
+                            runOnUiThread { result.success(response) }
+                        }.start()
+                    }
                     "updateForegroundNotification" -> {
                         val title = call.argument<String>("title") ?: "ISOTOPE"
                         val text = call.argument<String>("text") ?: "Сеть активна"
