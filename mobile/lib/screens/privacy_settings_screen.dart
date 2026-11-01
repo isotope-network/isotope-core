@@ -23,6 +23,7 @@ class _PrivacySettingsScreenState extends State<PrivacySettingsScreen> {
   bool _sphinxEnabled = false;
   bool _mixingEnabled = false;
   bool _maskingEnabled = false;
+  String _seedPhrase = '';
   bool _loading = true;
 
   @override
@@ -39,6 +40,7 @@ class _PrivacySettingsScreenState extends State<PrivacySettingsScreen> {
       final sphinxEnabled = await LibP2PService.getSphinxEnabled();
       final mixingEnabled = await LibP2PService.getMixingEnabled();
       final maskingEnabled = await LibP2PService.getMaskingEnabled();
+      final seedPhrase = await LibP2PService.getSeedPhrase();
       if (mounted) {
         setState(() {
           _myReadEnabled = readEnabled;
@@ -49,6 +51,7 @@ class _PrivacySettingsScreenState extends State<PrivacySettingsScreen> {
           _sphinxEnabled = sphinxEnabled;
           _mixingEnabled = mixingEnabled;
           _maskingEnabled = maskingEnabled;
+          _seedPhrase = seedPhrase;
           _loading = false;
         });
       }
@@ -225,6 +228,198 @@ class _PrivacySettingsScreenState extends State<PrivacySettingsScreen> {
     }
   }
 
+  Future<void> _showSeedDialog() async {
+    final hasSeed = _seedPhrase.isNotEmpty;
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Seed-фраза'),
+        content: Text(
+          hasSeed
+              ? 'Seed-фраза задана. PeerID восстановим при перезапуске.\n\n'
+                  'Восстановить из другой фразы? PeerID изменится, контакты — заново.'
+              : 'Seed-фраза не задана. Сейчас используется случайный PeerID (RSA).\n\n'
+                  'Создать seed-фразу — PeerID станет восстановимым. '
+                  'После перезапуска PeerID изменится, контакты — заново.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(),
+            child: const Text('Отмена'),
+          ),
+          if (!hasSeed)
+            TextButton(
+              onPressed: () {
+                Navigator.of(ctx).pop();
+                _createSeed();
+              },
+              child: const Text('Создать'),
+            ),
+          if (hasSeed)
+            TextButton(
+              onPressed: () {
+                Navigator.of(ctx).pop();
+                _showSeed();
+              },
+              child: const Text('Показать'),
+            ),
+          TextButton(
+            onPressed: () {
+              Navigator.of(ctx).pop();
+              _restoreSeed();
+            },
+            child: const Text('Восстановить'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _createSeed() async {
+    final phrase = await LibP2PService.generateSeedPhrase(12);
+    if (phrase.isEmpty) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Не удалось создать фразу')),
+        );
+      }
+      return;
+    }
+    if (!mounted) return;
+    await showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Запишите фразу'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'Потеряешь фразу — потеряешь PeerID и контакты. '
+              'Никому не показывайте.',
+              style: TextStyle(color: Colors.red, fontWeight: FontWeight.bold),
+            ),
+            const SizedBox(height: 16),
+            SelectableText(
+              phrase,
+              style: const TextStyle(fontSize: 16, fontFamily: 'monospace'),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(),
+            child: const Text('Отмена'),
+          ),
+          FilledButton(
+            onPressed: () async {
+              Navigator.of(ctx).pop();
+              final result = await LibP2PService.setSeedPhraseBeforeStart(phrase);
+              if (!mounted) return;
+              if (result.containsKey('error')) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(content: Text('Ошибка: ${result['error']}')),
+                );
+                return;
+              }
+              setState(() => _seedPhrase = phrase);
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(content: Text('Перезапустите приложение, чтобы применить')),
+              );
+            },
+            child: const Text('Я записал'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _showSeed() async {
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Ваша seed-фраза'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'Никому не показывайте. Кто знает фразу — тот получает ваш PeerID.',
+              style: TextStyle(color: Colors.red),
+            ),
+            const SizedBox(height: 16),
+            SelectableText(
+              _seedPhrase,
+              style: const TextStyle(fontSize: 16, fontFamily: 'monospace'),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(),
+            child: const Text('Закрыть'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _restoreSeed() async {
+    final controller = TextEditingController();
+    final phrase = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Восстановить из фразы'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'Введите 12 или 24 слова через пробел. '
+              'PeerID изменится, контакты — заново.',
+              style: TextStyle(color: Colors.red),
+            ),
+            const SizedBox(height: 16),
+            TextField(
+              controller: controller,
+              maxLines: 4,
+              decoration: const InputDecoration(
+                hintText: 'word1 word2 word3 ...',
+                border: OutlineInputBorder(),
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(),
+            child: const Text('Отмена'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(ctx).pop(controller.text.trim()),
+            child: const Text('Восстановить'),
+          ),
+        ],
+      ),
+    );
+    controller.dispose();
+    if (phrase == null || phrase.isEmpty) return;
+
+    final result = await LibP2PService.setSeedPhraseBeforeStart(phrase);
+    if (!mounted) return;
+    if (result.containsKey('error')) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Ошибка: ${result['error']}')),
+      );
+      return;
+    }
+    setState(() => _seedPhrase = phrase);
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Перезапустите приложение, чтобы применить')),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -326,6 +521,38 @@ class _PrivacySettingsScreenState extends State<PrivacySettingsScreen> {
                   ),
                   value: _maskingEnabled,
                   onChanged: _setMaskingEnabled,
+                ),
+                const Divider(),
+                const Padding(
+                  padding: EdgeInsets.fromLTRB(16, 16, 16, 8),
+                  child: Text(
+                    'Seed-фраза',
+                    style: TextStyle(fontWeight: FontWeight.bold),
+                  ),
+                ),
+                const Padding(
+                  padding: EdgeInsets.symmetric(horizontal: 16),
+                  child: Text(
+                    'Восстановление PeerID. Если потеряете устройство — '
+                    'введёте фразу на новом, PeerID вернётся. Контакты — заново (QR).',
+                    style: TextStyle(fontSize: 12, color: Colors.grey),
+                  ),
+                ),
+                ListTile(
+                  leading: Icon(
+                    _seedPhrase.isEmpty ? Icons.key_off : Icons.key,
+                    color: _seedPhrase.isEmpty ? Colors.grey : Colors.green,
+                  ),
+                  title: Text(
+                    _seedPhrase.isEmpty ? 'Seed-фраза не задана' : 'Seed-фраза задана',
+                  ),
+                  subtitle: Text(
+                    _seedPhrase.isEmpty
+                        ? 'Создать или восстановить'
+                        : 'Показать, восстановить из другой',
+                  ),
+                  trailing: const Icon(Icons.chevron_right),
+                  onTap: _showSeedDialog,
                 ),
               ],
             ),
