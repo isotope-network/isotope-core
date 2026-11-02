@@ -18,5 +18,250 @@
   "no": "Нет",
   "ok": "ОК",
   "error": "Ошибка",
-  "retry": "Повторить"
+  "retry": "Повторить",
+
+  "onboardingWelcomeTitle": "Добро пожаловать в ISOTOPE",
+  "onboardingWelcomeBody": "Общайтесь без цензуры и слежки.\nСообщения защищены. Никто не видит,\nкто вы и что вы пишете.",
+  "onboardingCodeReadyTitle": "Ваш код готов",
+  "onboardingCodeReadyBody": "Мы создали для вас уникальный код.\nОн нужен, чтобы друзья могли добавить\nвас в контакты.",
+  "onboardingAddContactTitle": "Добавьте первый контакт",
+  "onboardingAddContactBody": "Отсканируйте QR друга или покажите\nсвой — чтобы начать общение.",
+  "scan": "Сканировать",
+  "showMyQR": "Показать мой QR",
+
+  "privacyShowReadReceipts": "Показывать статус прочтения",
+  "privacyShowReadReceiptsSub": "Когда включено — вы видите, прочитал ли собеседник ваше сообщение, и он видит ваш статус. Когда выключено — оба скрыты.",
+  "privacyShowNotificationContent": "Показывать содержимое уведомлений",
+  "privacyShowNotificationContentSub": "Когда включено — в уведомлении отображается имя контакта и начало сообщения. Когда выключено — только «Новое сообщение».",
+  "privacyNetworkNotification": "Уведомление «Сеть активна»",
+  "privacyNetworkNotificationSub": "Что показывать в постоянном уведомлении, пока приложение в фоне.",
+  "privacyShowCount": "Показывать количество",
+  "privacyShowCountSub": "«3 непрочитанных»",
+  "privacyShowNames": "Показывать имена контактов",
+  "privacyShowNamesSub": "«Иван (2), Пётр (1)»",
+  "privacyShowFileProgress": "Показывать прогресс файлов",
+  "privacyShowFileProgressSub": "«📎 file.pdf 45%» + прогресс-бар",
+  "privacyAnonymity": "Анонимность",
+  "privacySphinx": "Sphinx-маршрутизация",
+  "privacySphinxSub": "Сообщения идут через 2 relay + получатель. Relay не видит, кто с кем. Получатель видит отправителя. Требует 2+ доверенных контакта. Файлы — через Sphinx только при включённом Mixing.",
+  "privacyMixing": "Mixing",
+  "privacyMixingOn": "Скрывает тайминги. Текст: +13–15 сек. Файлы: ~2.7 мин на 1 МБ. Тип сообщения виден relay. Полное скрытие — v2.0.4.",
+  "privacyMixingOff": "Доступно только при включённом Sphinx.",
+  "privacyMasking": "Маскировка",
+  "privacyMaskingSub": "Dummy-трафик: пустой пакет каждые 60 сек. Размер 64 КБ — всегда (Sphinx). Трафик ×1.4. Тип, объём, паттерн скрыты.",
+  "privacySeedSection": "Seed-фраза",
+  "privacySeedSectionSub": "Восстановление PeerID. Если потеряете устройство — введёте фразу на новом, PeerID вернётся. Контакты — заново (QR).",
+  "privacySeedNotSet": "Seed-фраза не задана",
+  "privacySeedSet": "Seed-фраза задана",
+  "privacySeedCreateOrRestore": "Создать или восстановить",
+  "privacySeedShowRestoreOther": "Показать, восстановить из другой",
+
+  "seedDialogTitle": "Seed-фраза",
+  "seedDialogHasSeed": "Seed-фраза задана. PeerID восстановим при перезапуске.\n\nВосстановить из другой фразы? PeerID изменится, контакты — заново.",
+  "seedDialogNoSeed": "Seed-фраза не задана. Сейчас используется случайный PeerID (RSA).\n\nСоздать seed-фразу — PeerID станет восстановимым. После перезапуска PeerID изменится, контакты — заново.",
+  "seedCreate": "Создать",
+  "seedShow": "Показать",
+  "seedRestore": "Восстановить",
+  "seedWriteDownTitle": "Запишите фразу",
+  "seedWriteDownWarning": "Потеряешь фразу — потеряешь PeerID и контакты. Никому не показывайте.",
+  "seedIWroteIt": "Я записал",
+  "seedSaved": "Фраза сохранена. Перезапустите приложение, чтобы применить",
+  "seedSaveFailed": "Не удалось сохранить в Keystore. Запишите фразу вручную и перезапустите",
+  "seedCreateFailed": "Не удалось создать фразу",
+  "seedYourPhraseTitle": "Ваша seed-фраза",
+  "seedYourPhraseWarning": "Никому не показывайте. Кто знает фразу — тот получает ваш PeerID.",
+  "seedRestoreTitle": "Восстановить из фразы",
+  "seedRestoreWarning": "Введите 12 или 24 слова через пробел. PeerID изменится, контакты — заново.",
+  "restartToApply": "Перезапустите приложение, чтобы применить",
+
+  "settingsTitle": "Настройки",
+  "settingsPersonal": "Личные",
+  "settingsProfile": "Профиль",
+  "settingsProfileSub": "Ваше имя",
+  "privacySubtitle": "Статусы, уведомления, анонимность, seed-фраза",
+  "settingsMessages": "Сообщения",
+  "settingsMessagesSub": "Задержка, время удаления",
+  "settingsSystem": "Системные",
+  "settingsConnection": "Подключение",
+  "settingsConnectionSub": "Адрес подключения",
+  "settingsManualCode": "Ввести код контакта",
+  "settingsManualCodeSub": "Для продвинутых",
+
+  "addContactTooltip": "Добавить контакт",
+  "settingsTooltip": "Настройки",
+  "journalTooltip": "Журнал",
+  "yourAddress": "📍 Ваш адрес: {addr}",
+  "@yourAddress": {
+    "placeholders": {
+      "addr": {"type": "String"}
+    }
+  },
+  "contactsCount": "Контактов: {count}",
+  "@contactsCount": {
+    "placeholders": {
+      "count": {"type": "int"}
+    }
+  },
+  "noContactsYet": "Пока никого нет",
+  "noContactsHint": "Добавьте первый контакт —\nи сможете общаться без цензуры и слежки.",
+  "addContact": "Добавить контакт",
+  "contactsLabel": "Контакты:",
+  "journalLabel": "Журнал:",
+
+  "addContactTitle": "Добавить контакт",
+  "addContactScanTitle": "Сканировать QR-код",
+  "addContactScanSub": "Друг показывает код, вы сканируете",
+  "addContactShowQRTitle": "Показать мой QR-код",
+  "addContactShowQRSub": "Друг сканирует ваш код",
+  "addContactNearbyTitle": "Найти рядом",
+  "addContactNearbySub": "Поиск контактов в той же сети",
+  "myQRTitle": "Мой QR (контакт)",
+  "myQRShow": "Покажите этот QR другу",
+  "myQRCode": "Ваш код для добавления",
+  "copy": "Копировать",
+  "copied": "Код скопирован",
+  "qrNotReady": "Код ещё не готов, подождите",
+  "qrOwnCode": "Это ваш собственный код",
+  "qrNotRecognized": "Не удалось распознать код",
+  "qrContactVerified": "Контакт проверен",
+  "qrContactNotVerified": "Контакт не проверен",
+  "connectionTitle": "Подключение",
+  "connectionAddressLabel": "Адрес подключения",
+  "connectionAddressHint": "/ip4/.../tcp/9001/ws/p2p/Qm...",
+  "connectionLeaveEmpty": "Оставьте пустым, если не нужен.",
+  "manualCodeTitle": "Ввести код контакта",
+  "manualCodeLabel": "Код контакта",
+  "manualCodeHint": "Qm... или /ip4/.../p2p/Qm...",
+  "manualCodeHintSub": "Попросите друга показать код.",
+  "connect": "Подключиться",
+  "contactActionsOpenChat": "Открыть чат",
+  "contactActionsRename": "Переименовать",
+  "contactActionsDelete": "Удалить",
+  "renameContactTitle": "Переименовать контакт",
+  "renameContactHint": "Имя контакта",
+  "deleteContactTitle": "Удалить «{name}»?",
+  "@deleteContactTitle": {
+    "placeholders": {
+      "name": {"type": "String"}
+    }
+  },
+  "deleteContactBody": "Контакт и вся переписка будут удалены.\nЕсли {name} напишет снова — вы не увидите его сообщения.\nЧтобы вернуть — попросите новый QR.",
+  "@deleteContactBody": {
+    "placeholders": {
+      "name": {"type": "String"}
+    }
+  },
+  "displayNameTitle": "Как вас представить?",
+  "displayNameHint": "Например: Иван, коллега по работе",
+  "displayNameSub": "Например: Иван, коллега по работе,\nПётр, мы договаривались на ремонт",
+  "send": "Отправить",
+  "batteryTitle": "Фоновая работа",
+  "batteryBody": "ISOTOPE — это P2P-сеть. Чтобы сообщения приходили, когда приложение свёрнуто, разрешите работу в фоне.\n\nЕсли системное окно не открылось — зайдите в:\nНастройки → Батарея → Запуск приложений → ISOTOPE\nи включите «Автозапуск» + «Работа в фоне».\n\nИли нажмите «Настройки приложения» ниже.",
+  "batteryLater": "Позже",
+  "batteryAllow": "Разрешить",
+  "batteryAppSettings": "Настройки приложения",
+
+  "displayNameDialogTitle": "Как вас представить?",
+  "displayNameDialogHint": "Например: Иван, коллега по работе",
+  "displayNameDialogSub": "Например: Иван, коллега по работе,\nПётр, мы договаривались на ремонт",
+  "sendAction": "Отправить",
+  "nearbyPermission": "Разрешите Bluetooth и геолокацию, чтобы искать рядом",
+  "nearbySearching": "Поиск контактов рядом...",
+  "nearbyNotFound": "Нет контактов",
+  "networkSearching": "Поиск контактов через сеть...",
+  "networkFound": "Контактов: {count}",
+  "@networkFound": {
+    "placeholders": {
+      "count": {"type": "int"}
+    }
+  },
+  "searchFailed": "Ошибка поиска: {error}",
+  "@searchFailed": {
+    "placeholders": {
+      "error": {"type": "String"}
+    }
+  },
+  "connectFailed": "Ошибка подключения: {error}",
+  "@connectFailed": {
+    "placeholders": {
+      "error": {"type": "String"}
+    }
+  },
+  "addressNotFound": "Адрес не найден",
+  "contactSearching": "Поиск контакта...",
+  "contactFoundShort": "Подключено к контакту {id}",
+  "@contactFoundShort": {
+    "placeholders": {
+      "id": {"type": "String"}
+    }
+  },
+  "contactConnected": "Подключено к контакту",
+  "contactGeneric": "Контакт",
+  "contactIsotope": "Контакт ISOTOPE",
+  "contactNotVerifiedShort": "Не проверен",
+  "contactUnavailable": "Недоступен",
+  "previewVoice": "🎤 Голосовое сообщение",
+  "previewPhoto": "📷 Фото",
+  "previewFile": "Файл",
+  "previewDraft": "Черновик: «{text}»",
+  "@previewDraft": {
+    "placeholders": {
+      "text": {"type": "String"}
+    }
+  },
+  "requestSentWaiting": "Запрос отправлен. Ожидание...",
+  "requestNotConfirmed": "Не подтверждён. Отправить запрос?",
+  "contactError": "Ошибка",
+
+  "scanQrTitle": "Сканировать QR",
+  "torchOff": "Выключить фонарик",
+  "torchOn": "Включить фонарик",
+  "scanQrHint": "Наведите камеру на QR-код",
+  "processing": "Обработка...",
+  "fromFile": "Из файла",
+  "qrNotFoundInImage": "QR-код не найден в изображении",
+
+  "profileTitle": "Профиль",
+  "profileYourName": "Ваше имя",
+  "profileNameHint": "Например: Иван",
+  "profileNameSub": "Это представление по умолчанию.\nИспользуется в QR и запросах.\nМожно не задавать. Тогда контакты увидят только ваш код.",
+  "profileNameSaved": "Имя сохранено",
+
+  "messagesTitle": "Сообщения",
+  "messagesDelaySection": "ЗАДЕРЖКА ОТПРАВКИ",
+  "messagesDelaySub": "Даёт возможность передумать. Сообщение отправляется через выбранное время.",
+  "messagesDelayLabel": "Задержка отправки:",
+  "messagesDelayNone": "Без задержки",
+  "messagesDelaySeconds": "{n} секунд",
+  "@messagesDelaySeconds": {
+    "placeholders": {
+      "n": {"type": "int"}
+    }
+  },
+  "messagesTtlSection": "ВРЕМЯ УДАЛЕНИЯ СООБЩЕНИЙ",
+  "messagesTtlSub": "Через какое время сообщения удаляются у вас и у собеседника.",
+  "messagesTtlNever": "Не удаляются",
+  "messagesTtlAfter": "Удалять через:",
+  "messagesTtl10s": "10 секунд",
+  "messagesTtl30s": "30 секунд",
+  "messagesTtl1m": "1 минута",
+  "messagesTtl5m": "5 минут",
+  "messagesTtl15m": "15 минут",
+  "messagesTtl30m": "30 минут",
+  "messagesTtl1h": "1 час",
+  "messagesTtl4h": "4 часа",
+  "messagesTtl24h": "24 часа",
+  "messagesModeSection": "РЕЖИМ УДАЛЕНИЯ",
+  "messagesModeAfterRead": "После прочтения",
+  "messagesModeHard": "Жёсткий",
+  "messagesModeAfterReadSub": "После прочтения — сообщение удаляется через выбранное время после того, как собеседник его прочитал.\n\nЕсли прочтение неизвестно (собеседник не делится статусом) — автоматически используется жёсткий режим.\n\nЕсли сообщение не прочитано в течение 48 часов — оно удаляется принудительно.",
+  "messagesModeHardSub": "Жёсткий — сообщение удаляется через выбранное время после отправки, независимо от прочтения.",
+  "messagesSecureWarning": "⚠ При выборе от 10 секунд до 1 минуты скриншоты чата с такими сообщениями временно запрещены — до их удаления.",
+
+  "logTitle": "Журнал ISOTOPE",
+  "logSave": "Сохранить",
+  "logClear": "Очистить",
+  "logRefresh": "Обновить",
+  "logCleared": "Журнал очищен",
+  "logEmpty": "Журнал пуст"
 }

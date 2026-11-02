@@ -2,6 +2,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../providers/locale_provider.dart';
+import '../l10n/app_localizations.dart';
 import 'privacy_settings_screen.dart';
 import 'messages_settings_screen.dart';
 import 'profile_screen.dart';
@@ -26,16 +27,16 @@ class SettingsScreen extends StatelessWidget {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Настройки'),
+        title: Text(AppLocalizations.of(context).settingsTitle),
       ),
       body: ListView(
         children: [
           // ==== ЛИЧНЫЕ ====
-          const _SectionHeader('Личные'),
+          _SectionHeader(AppLocalizations.of(context).settingsPersonal),
           ListTile(
             leading: const Icon(Icons.person_outline),
-            title: const Text('Профиль'),
-            subtitle: const Text('Ваше имя'),
+            title: Text(AppLocalizations.of(context).settingsProfile),
+            subtitle: Text(AppLocalizations.of(context).settingsProfileSub),
             trailing: const Icon(Icons.chevron_right),
             onTap: () {
               Navigator.push(
@@ -46,8 +47,8 @@ class SettingsScreen extends StatelessWidget {
           ),
           ListTile(
             leading: const Icon(Icons.lock_outline),
-            title: const Text('Приватность'),
-            subtitle: const Text('Статусы, уведомления, анонимность, seed-фраза'),
+            title: Text(AppLocalizations.of(context).privacy),
+            subtitle: Text(AppLocalizations.of(context).privacySubtitle),
             trailing: const Icon(Icons.chevron_right),
             onTap: () {
               Navigator.push(
@@ -58,8 +59,8 @@ class SettingsScreen extends StatelessWidget {
           ),
           ListTile(
             leading: const Icon(Icons.message_outlined),
-            title: const Text('Сообщения'),
-            subtitle: const Text('Задержка, время удаления'),
+            title: Text(AppLocalizations.of(context).settingsMessages),
+            subtitle: Text(AppLocalizations.of(context).settingsMessagesSub),
             trailing: const Icon(Icons.chevron_right),
             onTap: () {
               Navigator.push(
@@ -72,25 +73,25 @@ class SettingsScreen extends StatelessWidget {
           const Divider(height: 1),
 
           // ==== СИСТЕМНЫЕ ====
-          const _SectionHeader('Системные'),
+          _SectionHeader(AppLocalizations.of(context).settingsSystem),
           ListTile(
             leading: const Icon(Icons.language),
-            title: const Text('Язык'),
+            title: Text(AppLocalizations.of(context).language),
             subtitle: Text(_currentLanguageName(context)),
             trailing: const Icon(Icons.chevron_right),
             onTap: () => _showLanguageDialog(context),
           ),
           ListTile(
             leading: const Icon(Icons.link),
-            title: const Text('Подключение'),
-            subtitle: const Text('Адрес подключения'),
+            title: Text(AppLocalizations.of(context).settingsConnection),
+            subtitle: Text(AppLocalizations.of(context).settingsConnectionSub),
             enabled: onConnection != null,
             onTap: onConnection,
           ),
           ListTile(
             leading: const Icon(Icons.input),
-            title: const Text('Ввести код контакта'),
-            subtitle: const Text('Для продвинутых'),
+            title: Text(AppLocalizations.of(context).settingsManualCode),
+            subtitle: Text(AppLocalizations.of(context).settingsManualCodeSub),
             enabled: onManualCode != null,
             onTap: onManualCode,
           ),
@@ -126,19 +127,19 @@ class SettingsScreen extends StatelessWidget {
             provider.setLocale(v);
             Navigator.of(ctx).pop();
           },
-          child: const Column(
+          child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
               RadioListTile<String>(
-                title: Text('Системный'),
+                title: Text(AppLocalizations.of(context).languageSystem),
                 value: '',
               ),
               RadioListTile<String>(
-                title: Text('English'),
+                title: Text(AppLocalizations.of(context).languageEnglish),
                 value: 'en',
               ),
               RadioListTile<String>(
-                title: Text('Русский'),
+                title: Text(AppLocalizations.of(context).languageRussian),
                 value: 'ru',
               ),
             ],

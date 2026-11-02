@@ -1,5 +1,6 @@
 // mobile/lib/screens/profile_screen.dart
 import 'package:flutter/material.dart';
+import '../l10n/app_localizations.dart';
 import '../services/libp2p_service.dart';
 import '../services/log_service.dart';
 
@@ -48,14 +49,14 @@ class _ProfileScreenState extends State<ProfileScreen> {
         LogService.log('ProfileSettings: save failed: ${result['error']}');
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('Ошибка: ${result['error']}')),
+            SnackBar(content: Text('${AppLocalizations.of(context).error}: ${result['error']}')),
           );
         }
       } else {
         LogService.log('ProfileSettings: my_display_name="$name"');
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Имя сохранено')),
+            SnackBar(content: Text(AppLocalizations.of(context).profileNameSaved)),
           );
         }
       }
@@ -63,7 +64,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
       LogService.log('ProfileSettings: save exception: $e');
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Ошибка: $e')),
+          SnackBar(content: Text('${AppLocalizations.of(context).error}: $e')),
         );
       }
     } finally {
@@ -81,33 +82,31 @@ class _ProfileScreenState extends State<ProfileScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Профиль'),
+        title: Text(AppLocalizations.of(context).profileTitle),
       ),
       body: _loading
           ? const Center(child: CircularProgressIndicator())
           : ListView(
               padding: const EdgeInsets.all(16),
               children: [
-                const Text(
-                  'Ваше имя',
-                  style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold),
+                Text(
+                  AppLocalizations.of(context).profileYourName,
+                  style: const TextStyle(fontSize: 14, fontWeight: FontWeight.bold),
                 ),
                 const SizedBox(height: 8),
                 TextField(
                   controller: _controller,
                   maxLength: 100,
                   enabled: !_saving,
-                  decoration: const InputDecoration(
-                    hintText: 'Например: Иван',
-                    border: OutlineInputBorder(),
+                  decoration: InputDecoration(
+                    hintText: AppLocalizations.of(context).profileNameHint,
+                    border: const OutlineInputBorder(),
                   ),
                 ),
                 const SizedBox(height: 8),
-                const Text(
-                  'Это представление по умолчанию.\n'
-                  'Используется в QR и запросах.\n'
-                  'Можно не задавать. Тогда контакты увидят только ваш код.',
-                  style: TextStyle(fontSize: 12, color: Colors.grey),
+                Text(
+                  AppLocalizations.of(context).profileNameSub,
+                  style: const TextStyle(fontSize: 12, color: Colors.grey),
                 ),
                 const SizedBox(height: 24),
                 FilledButton(
@@ -121,10 +120,11 @@ class _ProfileScreenState extends State<ProfileScreen> {
                             color: Colors.white,
                           ),
                         )
-                      : const Text('Сохранить'),
+                      : Text(AppLocalizations.of(context).save),
                 ),
               ],
             ),
     );
   }
 }
+// mobile/lib/screens/profile_screen.dart

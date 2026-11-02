@@ -18,5 +18,250 @@
   "no": "No",
   "ok": "OK",
   "error": "Error",
-  "retry": "Retry"
+  "retry": "Retry",
+
+  "onboardingWelcomeTitle": "Welcome to ISOTOPE",
+  "onboardingWelcomeBody": "Communicate without censorship or surveillance.\nMessages are protected. No one sees\nwho you are or what you write.",
+  "onboardingCodeReadyTitle": "Your code is ready",
+  "onboardingCodeReadyBody": "We created a unique code for you.\nIt's needed so friends can add\nyou to contacts.",
+  "onboardingAddContactTitle": "Add your first contact",
+  "onboardingAddContactBody": "Scan a friend's QR or show\nyours — to start chatting.",
+  "scan": "Scan",
+  "showMyQR": "Show my QR",
+
+  "privacyShowReadReceipts": "Show read receipts",
+  "privacyShowReadReceiptsSub": "When enabled — you see if the other person has read your message, and they see your status. When disabled — both are hidden.",
+  "privacyShowNotificationContent": "Show notification content",
+  "privacyShowNotificationContentSub": "When enabled — the notification shows the contact's name and the beginning of the message. When disabled — only \"New message\".",
+  "privacyNetworkNotification": "Network active notification",
+  "privacyNetworkNotificationSub": "What to show in the persistent notification while the app is in the background.",
+  "privacyShowCount": "Show count",
+  "privacyShowCountSub": "\"3 unread\"",
+  "privacyShowNames": "Show contact names",
+  "privacyShowNamesSub": "\"Ivan (2), Peter (1)\"",
+  "privacyShowFileProgress": "Show file progress",
+  "privacyShowFileProgressSub": "\"📎 file.pdf 45%\" + progress bar",
+  "privacyAnonymity": "Anonymity",
+  "privacySphinx": "Sphinx routing",
+  "privacySphinxSub": "Messages go through 2 relays + recipient. Relays don't see who talks to whom. The recipient sees the sender. Requires 2+ trusted contacts. Files — through Sphinx only with Mixing enabled.",
+  "privacyMixing": "Mixing",
+  "privacyMixingOn": "Hides timings. Text: +13–15 sec. Files: ~2.7 min per 1 MB. Message type visible to relays. Full hiding — v2.0.4.",
+  "privacyMixingOff": "Available only with Sphinx enabled.",
+  "privacyMasking": "Masking",
+  "privacyMaskingSub": "Dummy traffic: an empty packet every 60 sec. Size 64 KB — always (Sphinx). Traffic ×1.4. Type, volume, pattern hidden.",
+  "privacySeedSection": "Seed phrase",
+  "privacySeedSectionSub": "PeerID recovery. If you lose your device — enter the phrase on a new one, PeerID returns. Contacts — re-add (QR).",
+  "privacySeedNotSet": "Seed phrase not set",
+  "privacySeedSet": "Seed phrase is set",
+  "privacySeedCreateOrRestore": "Create or restore",
+  "privacySeedShowRestoreOther": "Show, restore from another",
+
+  "seedDialogTitle": "Seed phrase",
+  "seedDialogHasSeed": "Seed phrase is set. PeerID will be restored on restart.\n\nRestore from another phrase? PeerID will change, contacts — re-add.",
+  "seedDialogNoSeed": "Seed phrase is not set. A random PeerID (RSA) is used now.\n\nCreate a seed phrase — PeerID becomes recoverable. After restart PeerID will change, contacts — re-add.",
+  "seedCreate": "Create",
+  "seedShow": "Show",
+  "seedRestore": "Restore",
+  "seedWriteDownTitle": "Write down the phrase",
+  "seedWriteDownWarning": "Lose the phrase — lose PeerID and contacts. Don't show to anyone.",
+  "seedIWroteIt": "I wrote it down",
+  "seedSaved": "Phrase saved. Restart the app to apply",
+  "seedSaveFailed": "Failed to save to Keystore. Write down the phrase manually and restart",
+  "seedCreateFailed": "Failed to create phrase",
+  "seedYourPhraseTitle": "Your seed phrase",
+  "seedYourPhraseWarning": "Don't show to anyone. Whoever knows the phrase gets your PeerID.",
+  "seedRestoreTitle": "Restore from phrase",
+  "seedRestoreWarning": "Enter 12 or 24 words separated by spaces. PeerID will change, contacts — re-add.",
+  "restartToApply": "Restart the app to apply",
+
+  "settingsTitle": "Settings",
+  "settingsPersonal": "Personal",
+  "settingsProfile": "Profile",
+  "settingsProfileSub": "Your name",
+  "privacySubtitle": "Statuses, notifications, anonymity, seed phrase",
+  "settingsMessages": "Messages",
+  "settingsMessagesSub": "Delay, auto-delete time",
+  "settingsSystem": "System",
+  "settingsConnection": "Connection",
+  "settingsConnectionSub": "Bootstrap address",
+  "settingsManualCode": "Enter contact code",
+  "settingsManualCodeSub": "For advanced users",
+
+  "addContactTooltip": "Add contact",
+  "settingsTooltip": "Settings",
+  "journalTooltip": "Journal",
+  "yourAddress": "📍 Your address: {addr}",
+  "@yourAddress": {
+    "placeholders": {
+      "addr": {"type": "String"}
+    }
+  },
+  "contactsCount": "Contacts: {count}",
+  "@contactsCount": {
+    "placeholders": {
+      "count": {"type": "int"}
+    }
+  },
+  "noContactsYet": "No contacts yet",
+  "noContactsHint": "Add your first contact —\nand you can communicate without censorship or surveillance.",
+  "addContact": "Add contact",
+  "contactsLabel": "Contacts:",
+  "journalLabel": "Journal:",
+
+  "addContactTitle": "Add contact",
+  "addContactScanTitle": "Scan QR code",
+  "addContactScanSub": "A friend shows the code, you scan it",
+  "addContactShowQRTitle": "Show my QR code",
+  "addContactShowQRSub": "A friend scans your code",
+  "addContactNearbyTitle": "Find nearby",
+  "addContactNearbySub": "Search for contacts on the same network",
+  "myQRTitle": "My QR (contact)",
+  "myQRShow": "Show this QR to a friend",
+  "myQRCode": "Your code for adding",
+  "copy": "Copy",
+  "copied": "Code copied",
+  "qrNotReady": "Code is not ready yet, please wait",
+  "qrOwnCode": "This is your own code",
+  "qrNotRecognized": "Could not recognize the code",
+  "qrContactVerified": "Contact verified",
+  "qrContactNotVerified": "Contact not verified",
+  "connectionTitle": "Connection",
+  "connectionAddressLabel": "Connection address",
+  "connectionAddressHint": "/ip4/.../tcp/9001/ws/p2p/Qm...",
+  "connectionLeaveEmpty": "Leave empty if not needed.",
+  "manualCodeTitle": "Enter contact code",
+  "manualCodeLabel": "Contact code",
+  "manualCodeHint": "Qm... or /ip4/.../p2p/Qm...",
+  "manualCodeHintSub": "Ask a friend to show the code.",
+  "connect": "Connect",
+  "contactActionsOpenChat": "Open chat",
+  "contactActionsRename": "Rename",
+  "contactActionsDelete": "Delete",
+  "renameContactTitle": "Rename contact",
+  "renameContactHint": "Contact name",
+  "deleteContactTitle": "Delete \"{name}\"?",
+  "@deleteContactTitle": {
+    "placeholders": {
+      "name": {"type": "String"}
+    }
+  },
+  "deleteContactBody": "The contact and all chat history will be deleted.\nIf {name} writes again — you won't see their messages.\nTo restore — ask for a new QR.",
+  "@deleteContactBody": {
+    "placeholders": {
+      "name": {"type": "String"}
+    }
+  },
+  "displayNameTitle": "How should we introduce you?",
+  "displayNameHint": "For example: Ivan, work colleague",
+  "displayNameSub": "For example: Ivan, work colleague,\nPeter, we agreed on the repair",
+  "send": "Send",
+  "batteryTitle": "Background work",
+  "batteryBody": "ISOTOPE is a P2P network. To receive messages when the app is minimized, allow background work.\n\nIf the system window didn't open — go to:\nSettings → Battery → App launch → ISOTOPE\nand enable \"Auto-launch\" + \"Background work\".\n\nOr tap \"App settings\" below.",
+  "batteryLater": "Later",
+  "batteryAllow": "Allow",
+  "batteryAppSettings": "App settings",
+
+  "displayNameDialogTitle": "How should we introduce you?",
+  "displayNameDialogHint": "For example: Ivan, work colleague",
+  "displayNameDialogSub": "For example: Ivan, work colleague,\nPeter, we agreed on the repair",
+  "sendAction": "Send",
+  "nearbyPermission": "Allow Bluetooth and location to search nearby",
+  "nearbySearching": "Searching for contacts nearby...",
+  "nearbyNotFound": "No contacts",
+  "networkSearching": "Searching for contacts via network...",
+  "networkFound": "Contacts: {count}",
+  "@networkFound": {
+    "placeholders": {
+      "count": {"type": "int"}
+    }
+  },
+  "searchFailed": "Search failed: {error}",
+  "@searchFailed": {
+    "placeholders": {
+      "error": {"type": "String"}
+    }
+  },
+  "connectFailed": "Connection failed: {error}",
+  "@connectFailed": {
+    "placeholders": {
+      "error": {"type": "String"}
+    }
+  },
+  "addressNotFound": "Address not found",
+  "contactSearching": "Searching for contact...",
+  "contactFoundShort": "Connected to contact {id}",
+  "@contactFoundShort": {
+    "placeholders": {
+      "id": {"type": "String"}
+    }
+  },
+  "contactConnected": "Connected to contact",
+  "contactGeneric": "Contact",
+  "contactIsotope": "ISOTOPE contact",
+  "contactNotVerifiedShort": "Not verified",
+  "contactUnavailable": "Unavailable",
+  "previewVoice": "🎤 Voice message",
+  "previewPhoto": "📷 Photo",
+  "previewFile": "File",
+  "previewDraft": "Draft: \"{text}\"",
+  "@previewDraft": {
+    "placeholders": {
+      "text": {"type": "String"}
+    }
+  },
+  "requestSentWaiting": "Request sent. Waiting...",
+  "requestNotConfirmed": "Not confirmed. Send request?",
+  "contactError": "Error",
+
+  "scanQrTitle": "Scan QR",
+  "torchOff": "Turn off flashlight",
+  "torchOn": "Turn on flashlight",
+  "scanQrHint": "Point the camera at the QR code",
+  "processing": "Processing...",
+  "fromFile": "From file",
+  "qrNotFoundInImage": "QR code not found in the image",
+
+  "profileTitle": "Profile",
+  "profileYourName": "Your name",
+  "profileNameHint": "For example: Ivan",
+  "profileNameSub": "This is the default representation.\nUsed in QR and requests.\nCan be left empty. Then contacts will see only your code.",
+  "profileNameSaved": "Name saved",
+
+  "messagesTitle": "Messages",
+  "messagesDelaySection": "SEND DELAY",
+  "messagesDelaySub": "Gives a chance to change your mind. The message is sent after the selected time.",
+  "messagesDelayLabel": "Send delay:",
+  "messagesDelayNone": "No delay",
+  "messagesDelaySeconds": "{n} sec",
+  "@messagesDelaySeconds": {
+    "placeholders": {
+      "n": {"type": "int"}
+    }
+  },
+  "messagesTtlSection": "MESSAGE AUTO-DELETE TIME",
+  "messagesTtlSub": "After what time messages are deleted for you and the recipient.",
+  "messagesTtlNever": "Never",
+  "messagesTtlAfter": "Delete after:",
+  "messagesTtl10s": "10 seconds",
+  "messagesTtl30s": "30 seconds",
+  "messagesTtl1m": "1 minute",
+  "messagesTtl5m": "5 minutes",
+  "messagesTtl15m": "15 minutes",
+  "messagesTtl30m": "30 minutes",
+  "messagesTtl1h": "1 hour",
+  "messagesTtl4h": "4 hours",
+  "messagesTtl24h": "24 hours",
+  "messagesModeSection": "DELETE MODE",
+  "messagesModeAfterRead": "After reading",
+  "messagesModeHard": "Hard",
+  "messagesModeAfterReadSub": "After reading — the message is deleted after the selected time after the recipient reads it.\n\nIf read status is unknown (the recipient doesn't share status) — hard mode is used automatically.\n\nIf the message is not read within 48 hours — it is deleted forcibly.",
+  "messagesModeHardSub": "Hard — the message is deleted after the selected time after sending, regardless of reading.",
+  "messagesSecureWarning": "⚠ When selecting from 10 seconds to 1 minute, screenshots of chats with such messages are temporarily disabled — until they are deleted.",
+
+  "logTitle": "ISOTOPE Journal",
+  "logSave": "Save",
+  "logClear": "Clear",
+  "logRefresh": "Refresh",
+  "logCleared": "Journal cleared",
+  "logEmpty": "Journal is empty"
 }

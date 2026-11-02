@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 import '../providers/chat_provider.dart';
 import '../services/libp2p_service.dart';
 import '../services/log_service.dart';
+import '../l10n/app_localizations.dart';
 
 /// Экран «Приватность».
 /// Пока один тумблер: «Показывать статус прочтения».
@@ -230,22 +231,18 @@ class _PrivacySettingsScreenState extends State<PrivacySettingsScreen> {
 
   Future<void> _showSeedDialog() async {
     final hasSeed = _seedPhrase.isNotEmpty;
+    final l10n = AppLocalizations.of(context);
     await showDialog<void>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text('Seed-фраза'),
+        title: Text(l10n.seedDialogTitle),
         content: Text(
-          hasSeed
-              ? 'Seed-фраза задана. PeerID восстановим при перезапуске.\n\n'
-                  'Восстановить из другой фразы? PeerID изменится, контакты — заново.'
-              : 'Seed-фраза не задана. Сейчас используется случайный PeerID (RSA).\n\n'
-                  'Создать seed-фразу — PeerID станет восстановимым. '
-                  'После перезапуска PeerID изменится, контакты — заново.',
+          hasSeed ? l10n.seedDialogHasSeed : l10n.seedDialogNoSeed,
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.of(ctx).pop(),
-            child: const Text('Отмена'),
+            child: Text(l10n.cancel),
           ),
           if (!hasSeed)
             TextButton(
@@ -253,7 +250,7 @@ class _PrivacySettingsScreenState extends State<PrivacySettingsScreen> {
                 Navigator.of(ctx).pop();
                 _createSeed();
               },
-              child: const Text('Создать'),
+              child: Text(l10n.seedCreate),
             ),
           if (hasSeed)
             TextButton(
@@ -261,14 +258,14 @@ class _PrivacySettingsScreenState extends State<PrivacySettingsScreen> {
                 Navigator.of(ctx).pop();
                 _showSeed();
               },
-              child: const Text('Показать'),
+              child: Text(l10n.seedShow),
             ),
           TextButton(
             onPressed: () {
               Navigator.of(ctx).pop();
               _restoreSeed();
             },
-            child: const Text('Восстановить'),
+            child: Text(l10n.seedRestore),
           ),
         ],
       ),
@@ -276,11 +273,12 @@ class _PrivacySettingsScreenState extends State<PrivacySettingsScreen> {
   }
 
   Future<void> _createSeed() async {
+    final l10n = AppLocalizations.of(context);
     final phrase = await LibP2PService.generateSeedPhrase(12);
     if (phrase.isEmpty) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Не удалось создать фразу')),
+          SnackBar(content: Text(l10n.seedCreateFailed)),
         );
       }
       return;
@@ -290,15 +288,14 @@ class _PrivacySettingsScreenState extends State<PrivacySettingsScreen> {
       context: context,
       barrierDismissible: false,
       builder: (ctx) => AlertDialog(
-        title: const Text('Запишите фразу'),
+        title: Text(l10n.seedWriteDownTitle),
         content: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text(
-              'Потеряешь фразу — потеряешь PeerID и контакты. '
-              'Никому не показывайте.',
-              style: TextStyle(color: Colors.red, fontWeight: FontWeight.bold),
+            Text(
+              l10n.seedWriteDownWarning,
+              style: const TextStyle(color: Colors.red, fontWeight: FontWeight.bold),
             ),
             const SizedBox(height: 16),
             SelectableText(
@@ -310,7 +307,7 @@ class _PrivacySettingsScreenState extends State<PrivacySettingsScreen> {
         actions: [
           TextButton(
             onPressed: () => Navigator.of(ctx).pop(),
-            child: const Text('Отмена'),
+            child: Text(l10n.cancel),
           ),
           FilledButton(
             onPressed: () async {
@@ -319,7 +316,7 @@ class _PrivacySettingsScreenState extends State<PrivacySettingsScreen> {
               if (!mounted) return;
               if (result.containsKey('error')) {
                 ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(content: Text('Ошибка: ${result['error']}')),
+                  SnackBar(content: Text('${l10n.error}: ${result['error']}')),
                 );
                 return;
               }
@@ -328,15 +325,11 @@ class _PrivacySettingsScreenState extends State<PrivacySettingsScreen> {
               setState(() => _seedPhrase = phrase);
               ScaffoldMessenger.of(context).showSnackBar(
                 SnackBar(
-                  content: Text(
-                    savedToKeystore
-                        ? 'Фраза сохранена. Перезапустите приложение, чтобы применить'
-                        : 'Не удалось сохранить в Keystore. Запишите фразу вручную и перезапустите',
-                  ),
+                  content: Text(savedToKeystore ? l10n.seedSaved : l10n.seedSaveFailed),
                 ),
               );
             },
-            child: const Text('Я записал'),
+            child: Text(l10n.seedIWroteIt),
           ),
         ],
       ),
@@ -344,17 +337,18 @@ class _PrivacySettingsScreenState extends State<PrivacySettingsScreen> {
   }
 
   Future<void> _showSeed() async {
+    final l10n = AppLocalizations.of(context);
     await showDialog<void>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text('Ваша seed-фраза'),
+        title: Text(l10n.seedYourPhraseTitle),
         content: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text(
-              'Никому не показывайте. Кто знает фразу — тот получает ваш PeerID.',
-              style: TextStyle(color: Colors.red),
+            Text(
+              l10n.seedYourPhraseWarning,
+              style: const TextStyle(color: Colors.red),
             ),
             const SizedBox(height: 16),
             SelectableText(
@@ -366,7 +360,7 @@ class _PrivacySettingsScreenState extends State<PrivacySettingsScreen> {
         actions: [
           TextButton(
             onPressed: () => Navigator.of(ctx).pop(),
-            child: const Text('Закрыть'),
+            child: Text(l10n.close),
           ),
         ],
       ),
@@ -374,19 +368,19 @@ class _PrivacySettingsScreenState extends State<PrivacySettingsScreen> {
   }
 
   Future<void> _restoreSeed() async {
+    final l10n = AppLocalizations.of(context);
     var localPhrase = '';
     final phrase = await showDialog<String>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text('Восстановить из фразы'),
+        title: Text(l10n.seedRestoreTitle),
         content: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text(
-              'Введите 12 или 24 слова через пробел. '
-              'PeerID изменится, контакты — заново.',
-              style: TextStyle(color: Colors.red),
+            Text(
+              l10n.seedRestoreWarning,
+              style: const TextStyle(color: Colors.red),
             ),
             const SizedBox(height: 16),
             TextField(
@@ -402,11 +396,11 @@ class _PrivacySettingsScreenState extends State<PrivacySettingsScreen> {
         actions: [
           TextButton(
             onPressed: () => Navigator.of(ctx).pop(),
-            child: const Text('Отмена'),
+            child: Text(l10n.cancel),
           ),
           FilledButton(
             onPressed: () => Navigator.of(ctx).pop(localPhrase.trim()),
-            child: const Text('Восстановить'),
+            child: Text(l10n.seedRestore),
           ),
         ],
       ),
@@ -417,7 +411,7 @@ class _PrivacySettingsScreenState extends State<PrivacySettingsScreen> {
     if (!mounted) return;
     if (result.containsKey('error')) {
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Ошибка: ${result['error']}')),
+        SnackBar(content: Text('${l10n.error}: ${result['error']}')),
       );
       return;
     }
@@ -426,11 +420,7 @@ class _PrivacySettingsScreenState extends State<PrivacySettingsScreen> {
     setState(() => _seedPhrase = phrase);
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        content: Text(
-          savedToKeystore
-              ? 'Фраза сохранена. Перезапустите приложение, чтобы применить'
-              : 'Не удалось сохранить в Keystore. Запишите фразу вручную и перезапустите',
-        ),
+        content: Text(savedToKeystore ? l10n.seedSaved : l10n.seedSaveFailed),
       ),
     );
   }
@@ -439,118 +429,100 @@ class _PrivacySettingsScreenState extends State<PrivacySettingsScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Приватность'),
+        title: Text(AppLocalizations.of(context).privacy),
       ),
       body: _loading
           ? const Center(child: CircularProgressIndicator())
           : ListView(
               children: [
                 SwitchListTile(
-                  title: const Text('Показывать статус прочтения'),
-                  subtitle: const Text(
-                    'Когда включено — вы видите, прочитал ли собеседник ваше сообщение, '
-                    'и он видит ваш статус. Когда выключено — оба скрыты.',
-                  ),
+                  title: Text(AppLocalizations.of(context).privacyShowReadReceipts),
+                  subtitle: Text(AppLocalizations.of(context).privacyShowReadReceiptsSub),
                   value: _myReadEnabled,
                   onChanged: _setEnabled,
                 ),
                 SwitchListTile(
-                  title: const Text('Показывать содержимое уведомлений'),
-                  subtitle: const Text(
-                    'Когда включено — в уведомлении отображается имя контакта и начало сообщения. '
-                    'Когда выключено — только «Новое сообщение».',
-                  ),
+                  title: Text(AppLocalizations.of(context).privacyShowNotificationContent),
+                  subtitle: Text(AppLocalizations.of(context).privacyShowNotificationContentSub),
                   value: _showNotificationContent,
                   onChanged: _setShowContent,
                 ),
                 const Divider(),
-                const Padding(
-                  padding: EdgeInsets.fromLTRB(16, 16, 16, 8),
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
                   child: Text(
-                    'Уведомление «Сеть активна»',
-                    style: TextStyle(fontWeight: FontWeight.bold),
+                    AppLocalizations.of(context).privacyNetworkNotification,
+                    style: const TextStyle(fontWeight: FontWeight.bold),
                   ),
                 ),
-                const Padding(
-                  padding: EdgeInsets.symmetric(horizontal: 16),
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 16),
                   child: Text(
-                    'Что показывать в постоянном уведомлении, пока приложение в фоне.',
-                    style: TextStyle(fontSize: 12, color: Colors.grey),
+                    AppLocalizations.of(context).privacyNetworkNotificationSub,
+                    style: const TextStyle(fontSize: 12, color: Colors.grey),
                   ),
                 ),
                 SwitchListTile(
-                  title: const Text('Показывать количество'),
-                  subtitle: const Text('«3 непрочитанных»'),
+                  title: Text(AppLocalizations.of(context).privacyShowCount),
+                  subtitle: Text(AppLocalizations.of(context).privacyShowCountSub),
                   value: _notifCount,
                   onChanged: (v) => _setNotifSetting('count', v),
                 ),
                 SwitchListTile(
-                  title: const Text('Показывать имена контактов'),
-                  subtitle: const Text('«Иван (2), Пётр (1)»'),
+                  title: Text(AppLocalizations.of(context).privacyShowNames),
+                  subtitle: Text(AppLocalizations.of(context).privacyShowNamesSub),
                   value: _notifNames,
                   onChanged: (v) => _setNotifSetting('names', v),
                 ),
                 SwitchListTile(
-                  title: const Text('Показывать прогресс файлов'),
-                  subtitle: const Text('«📎 file.pdf 45%» + прогресс-бар'),
+                  title: Text(AppLocalizations.of(context).privacyShowFileProgress),
+                  subtitle: Text(AppLocalizations.of(context).privacyShowFileProgressSub),
                   value: _notifProgress,
                   onChanged: (v) => _setNotifSetting('progress', v),
                 ),
                 const Divider(),
-                const Padding(
-                  padding: EdgeInsets.fromLTRB(16, 16, 16, 8),
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
                   child: Text(
-                    'Анонимность',
-                    style: TextStyle(fontWeight: FontWeight.bold),
+                    AppLocalizations.of(context).privacyAnonymity,
+                    style: const TextStyle(fontWeight: FontWeight.bold),
                   ),
                 ),
                 SwitchListTile(
-                  title: const Text('Sphinx-маршрутизация'),
-                  subtitle: const Text(
-                    'Сообщения идут через 2 relay + получатель. '
-                    'Relay не видит, кто с кем. Получатель видит отправителя. '
-                    'Требует 2+ доверенных контакта. '
-                    'Файлы — через Sphinx только при включённом Mixing.',
-                  ),
+                  title: Text(AppLocalizations.of(context).privacySphinx),
+                  subtitle: Text(AppLocalizations.of(context).privacySphinxSub),
                   value: _sphinxEnabled,
                   onChanged: _setSphinxEnabled,
                 ),
                 SwitchListTile(
-                  title: const Text('Mixing'),
+                  title: Text(AppLocalizations.of(context).privacyMixing),
                   subtitle: Text(
                     _sphinxEnabled
-                        ? 'Скрывает тайминги. Текст: +13–15 сек. '
-                          'Файлы: ~2.7 мин на 1 МБ. '
-                          'Тип сообщения виден relay. Полное скрытие — v2.0.4.'
-                        : 'Доступно только при включённом Sphinx.',
+                        ? AppLocalizations.of(context).privacyMixingOn
+                        : AppLocalizations.of(context).privacyMixingOff,
                   ),
                   value: _mixingEnabled,
                   onChanged: _sphinxEnabled ? _setMixingEnabled : null,
                 ),
                 SwitchListTile(
-                  title: const Text('Маскировка'),
-                  subtitle: const Text(
-                    'Dummy-трафик: пустой пакет каждые 60 сек. '
-                    'Размер 64 КБ — всегда (Sphinx). Трафик ×1.4. '
-                    'Тип, объём, паттерн скрыты.',
-                  ),
+                  title: Text(AppLocalizations.of(context).privacyMasking),
+                  subtitle: Text(AppLocalizations.of(context).privacyMaskingSub),
                   value: _maskingEnabled,
                   onChanged: _setMaskingEnabled,
                 ),
                 const Divider(),
-                const Padding(
-                  padding: EdgeInsets.fromLTRB(16, 16, 16, 8),
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
                   child: Text(
-                    'Seed-фраза',
-                    style: TextStyle(fontWeight: FontWeight.bold),
+                    AppLocalizations.of(context).privacySeedSection,
+                    style: const TextStyle(fontWeight: FontWeight.bold),
                   ),
                 ),
-                const Padding(
-                  padding: EdgeInsets.symmetric(horizontal: 16),
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 16),
                   child: Text(
-                    'Восстановление PeerID. Если потеряете устройство — '
-                    'введёте фразу на новом, PeerID вернётся. Контакты — заново (QR).',
-                    style: TextStyle(fontSize: 12, color: Colors.grey),
+                    AppLocalizations.of(context).privacySeedSectionSub,
+                    style: const TextStyle(fontSize: 12, color: Colors.grey),
                   ),
                 ),
                 ListTile(
@@ -559,12 +531,14 @@ class _PrivacySettingsScreenState extends State<PrivacySettingsScreen> {
                     color: _seedPhrase.isEmpty ? Colors.grey : Colors.green,
                   ),
                   title: Text(
-                    _seedPhrase.isEmpty ? 'Seed-фраза не задана' : 'Seed-фраза задана',
+                    _seedPhrase.isEmpty
+                        ? AppLocalizations.of(context).privacySeedNotSet
+                        : AppLocalizations.of(context).privacySeedSet,
                   ),
                   subtitle: Text(
                     _seedPhrase.isEmpty
-                        ? 'Создать или восстановить'
-                        : 'Показать, восстановить из другой',
+                        ? AppLocalizations.of(context).privacySeedCreateOrRestore
+                        : AppLocalizations.of(context).privacySeedShowRestoreOther,
                   ),
                   trailing: const Icon(Icons.chevron_right),
                   onTap: _showSeedDialog,

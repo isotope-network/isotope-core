@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import '../l10n/app_localizations.dart';
 import '../services/log_service.dart';
 
 class LogScreen extends StatelessWidget {
@@ -11,7 +12,7 @@ class LogScreen extends StatelessWidget {
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Журнал ISOTOPE'),
+        title: Text(AppLocalizations.of(context).logTitle),
         actions: [
           IconButton(
             icon: const Icon(Icons.save),
@@ -28,7 +29,7 @@ class LogScreen extends StatelessWidget {
                 );
               }
             },
-            tooltip: 'Сохранить',
+            tooltip: AppLocalizations.of(context).logSave,
           ),
           IconButton(
             icon: const Icon(Icons.delete_outline),
@@ -37,11 +38,11 @@ class LogScreen extends StatelessWidget {
               await LogService.clear();
               if (context.mounted) {
                 ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('Журнал очищен')),
+                  SnackBar(content: Text(AppLocalizations.of(context).logCleared)),
                 );
               }
             },
-            tooltip: 'Очистить',
+            tooltip: AppLocalizations.of(context).logClear,
           ),
           IconButton(
             icon: const Icon(Icons.refresh),
@@ -51,12 +52,12 @@ class LogScreen extends StatelessWidget {
                 (context as Element).markNeedsBuild();
               }
             },
-            tooltip: 'Обновить',
+            tooltip: AppLocalizations.of(context).logRefresh,
           ),
         ],
       ),
       body: logs.isEmpty
-          ? const Center(child: Text('Журнал пуст'))
+          ? Center(child: Text(AppLocalizations.of(context).logEmpty))
           : SingleChildScrollView(
               child: SelectableText(
                 logs.reversed.join('\n'),

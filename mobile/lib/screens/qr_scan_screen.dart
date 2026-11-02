@@ -2,6 +2,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
+import '../l10n/app_localizations.dart';
 
 class QRScanScreen extends StatefulWidget {
   const QRScanScreen({super.key});
@@ -77,7 +78,7 @@ class _QRScanScreenState extends State<QRScanScreen> {
         } else {
           if (mounted) {
             ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(content: Text('QR-код не найден в изображении')),
+              SnackBar(content: Text(AppLocalizations.of(context).qrNotFoundInImage)),
             );
           }
         }
@@ -101,12 +102,14 @@ class _QRScanScreenState extends State<QRScanScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Сканировать QR'),
+        title: Text(AppLocalizations.of(context).scanQrTitle),
         actions: [
           IconButton(
             icon: Icon(_torchOn ? Icons.flash_on : Icons.flash_off),
             onPressed: _toggleTorch,
-            tooltip: _torchOn ? 'Выключить фонарик' : 'Включить фонарик',
+            tooltip: _torchOn
+                ? AppLocalizations.of(context).torchOff
+                : AppLocalizations.of(context).torchOn,
           ),
         ],
       ),
@@ -123,21 +126,21 @@ class _QRScanScreenState extends State<QRScanScreen> {
           ),
 
           // Подсказка
-          const Positioned(
+          Positioned(
             top: 24,
             left: 0,
             right: 0,
             child: Center(
               child: DecoratedBox(
-                decoration: BoxDecoration(
+                decoration: const BoxDecoration(
                   color: Colors.black54,
                   borderRadius: BorderRadius.all(Radius.circular(8)),
                 ),
                 child: Padding(
-                  padding: EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
                   child: Text(
-                    'Наведите камеру на QR-код',
-                    style: TextStyle(color: Colors.white, fontSize: 13),
+                    AppLocalizations.of(context).scanQrHint,
+                    style: const TextStyle(color: Colors.white, fontSize: 13),
                   ),
                 ),
               ),
@@ -160,7 +163,9 @@ class _QRScanScreenState extends State<QRScanScreen> {
                       )
                     : const Icon(Icons.image_outlined),
                 label: Text(
-                  _processingFile ? 'Обработка...' : 'Из файла',
+                  _processingFile
+                      ? AppLocalizations.of(context).processing
+                      : AppLocalizations.of(context).fromFile,
                   style: const TextStyle(fontSize: 15),
                 ),
                 style: ElevatedButton.styleFrom(

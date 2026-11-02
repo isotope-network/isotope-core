@@ -2,6 +2,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../providers/chat_provider.dart';
+import '../l10n/app_localizations.dart';
 import '../services/libp2p_service.dart';
 import '../services/log_service.dart';
 
@@ -17,24 +18,38 @@ class MessagesSettingsScreen extends StatefulWidget {
 class _MessagesSettingsScreenState extends State<MessagesSettingsScreen> {
   static const List<int> _delayOptions = [0, 3, 5, 10];
 
-  /// Периоды TTL. Ключ — значение для Go, метка — для UI.
-  static const List<Map<String, String>> _ttlPeriods = [
-    {'value': '10s', 'label': '10 секунд'},
-    {'value': '30s', 'label': '30 секунд'},
-    {'value': '1m', 'label': '1 минута'},
-    {'value': '5m', 'label': '5 минут'},
-    {'value': '15m', 'label': '15 минут'},
-    {'value': '30m', 'label': '30 минут'},
-    {'value': '1h', 'label': '1 час'},
-    {'value': '4h', 'label': '4 часа'},
-    {'value': '24h', 'label': '24 часа'},
+  /// Периоды TTL. Только значения для Go. Метки — через _periodLabel.
+  static const List<String> _ttlPeriodValues = [
+    '10s', '30s', '1m', '5m', '15m', '30m', '1h', '4h', '24h',
   ];
 
-  /// Режимы удаления.
-  static const List<Map<String, String>> _ttlModes = [
-    {'value': 'after_read', 'label': 'После прочтения'},
-    {'value': 'hard', 'label': 'Жёсткий'},
-  ];
+  /// Режимы удаления. Только значения для Go. Метки — через _modeLabel.
+  static const List<String> _ttlModeValues = ['after_read', 'hard'];
+
+  String _periodLabel(BuildContext context, String value) {
+    final l = AppLocalizations.of(context);
+    switch (value) {
+      case '10s': return l.messagesTtl10s;
+      case '30s': return l.messagesTtl30s;
+      case '1m': return l.messagesTtl1m;
+      case '5m': return l.messagesTtl5m;
+      case '15m': return l.messagesTtl15m;
+      case '30m': return l.messagesTtl30m;
+      case '1h': return l.messagesTtl1h;
+      case '4h': return l.messagesTtl4h;
+      case '24h': return l.messagesTtl24h;
+      default: return value;
+    }
+  }
+
+  String _modeLabel(BuildContext context, String value) {
+    final l = AppLocalizations.of(context);
+    switch (value) {
+      case 'after_read': return l.messagesModeAfterRead;
+      case 'hard': return l.messagesModeHard;
+      default: return value;
+    }
+  }
 
   String _ttlPeriod = 'never';
   String _ttlMode = '';
@@ -166,18 +181,19 @@ class _MessagesSettingsScreenState extends State<MessagesSettingsScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Сообщения'),
+        title: Text(AppLocalizations.of(context).messagesTitle),
       ),
       body: Consumer<ChatProvider>(
         builder: (_, provider, __) {
+          final l = AppLocalizations.of(context);
           return ListView(
             children: [
               // === ЗАДЕРЖКА ОТПРАВКИ ===
-              const Padding(
-                padding: EdgeInsets.fromLTRB(16, 16, 16, 8),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
                 child: Text(
-                  'ЗАДЕРЖКА ОТПРАВКИ',
-                  style: TextStyle(
+                  l.messagesDelaySection,
+                  style: const TextStyle(
                     fontSize: 12,
                     fontWeight: FontWeight.bold,
                     color: Colors.grey,
@@ -185,15 +201,15 @@ class _MessagesSettingsScreenState extends State<MessagesSettingsScreen> {
                   ),
                 ),
               ),
-              const Padding(
-                padding: EdgeInsets.symmetric(horizontal: 16),
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16),
                 child: Text(
-                  'Даёт возможность передумать. Сообщение отправляется через выбранное время.',
-                  style: TextStyle(fontSize: 13, color: Colors.grey),
+                  l.messagesDelaySub,
+                  style: const TextStyle(fontSize: 13, color: Colors.grey),
                 ),
               ),
               ListTile(
-                title: const Text('Задержка отправки:'),
+                title: Text(l.messagesDelayLabel),
                 trailing: DropdownButton<int>(
                   value: _delayOptions.contains(provider.sendDelay)
                       ? provider.sendDelay
@@ -205,7 +221,7 @@ class _MessagesSettingsScreenState extends State<MessagesSettingsScreen> {
                       .map((sec) => DropdownMenuItem<int>(
                             value: sec,
                             child: Text(
-                              sec == 0 ? 'Без задержки' : '$sec секунд',
+                              sec == 0 ? l.messagesDelayNone : l.messagesDelaySeconds(sec),
                             ),
                           ))
                       .toList(),
@@ -215,11 +231,11 @@ class _MessagesSettingsScreenState extends State<MessagesSettingsScreen> {
               const Divider(),
 
               // === ВРЕМЯ УДАЛЕНИЯ ===
-              const Padding(
-                padding: EdgeInsets.fromLTRB(16, 16, 16, 8),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
                 child: Text(
-                  'ВРЕМЯ УДАЛЕНИЯ СООБЩЕНИЙ',
-                  style: TextStyle(
+                  l.messagesTtlSection,
+                  style: const TextStyle(
                     fontSize: 12,
                     fontWeight: FontWeight.bold,
                     color: Colors.grey,
@@ -227,11 +243,11 @@ class _MessagesSettingsScreenState extends State<MessagesSettingsScreen> {
                   ),
                 ),
               ),
-              const Padding(
-                padding: EdgeInsets.symmetric(horizontal: 16),
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16),
                 child: Text(
-                  'Через какое время сообщения удаляются у вас и у собеседника.',
-                  style: TextStyle(fontSize: 13, color: Colors.grey),
+                  l.messagesTtlSub,
+                  style: const TextStyle(fontSize: 13, color: Colors.grey),
                 ),
               ),
 
@@ -242,7 +258,7 @@ class _MessagesSettingsScreenState extends State<MessagesSettingsScreen> {
                 )
               else ...[
                 RadioListTile<bool>(
-                  title: const Text('Не удаляются'),
+                  title: Text(l.messagesTtlNever),
                   value: true,
                   // ignore: deprecated_member_use
                   groupValue: _isForever,
@@ -254,7 +270,7 @@ class _MessagesSettingsScreenState extends State<MessagesSettingsScreen> {
                 RadioListTile<bool>(
                   title: Row(
                     children: [
-                      const Text('Удалять через:'),
+                      Text(l.messagesTtlAfter),
                       const SizedBox(width: 12),
                       Expanded(
                         child: DropdownButton<String>(
@@ -265,9 +281,8 @@ class _MessagesSettingsScreenState extends State<MessagesSettingsScreen> {
                               : (v) {
                                   if (v != null) _setPeriod(v);
                                 },
-                          items: _ttlPeriods
-                              .map((p) {
-                                final value = p['value'] ?? '';
+                          items: _ttlPeriodValues
+                              .map((value) {
                                 // 10s / 30s / 1m — периоды с запретом скриншотов.
                                 final isSecure = value == '10s' ||
                                     value == '30s' ||
@@ -275,7 +290,7 @@ class _MessagesSettingsScreenState extends State<MessagesSettingsScreen> {
                                 return DropdownMenuItem<String>(
                                   value: value,
                                   child: Text(
-                                    p['label'] ?? '',
+                                    _periodLabel(context, value),
                                     style: isSecure
                                         ? const TextStyle(color: Colors.orange)
                                         : null,
@@ -297,11 +312,11 @@ class _MessagesSettingsScreenState extends State<MessagesSettingsScreen> {
                 ),
 
                 if (!_isForever) ...[
-                  const Padding(
-                    padding: EdgeInsets.fromLTRB(16, 16, 16, 8),
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
                     child: Text(
-                      'РЕЖИМ УДАЛЕНИЯ',
-                      style: TextStyle(
+                      l.messagesModeSection,
+                      style: const TextStyle(
                         fontSize: 12,
                         fontWeight: FontWeight.bold,
                         color: Colors.grey,
@@ -309,12 +324,10 @@ class _MessagesSettingsScreenState extends State<MessagesSettingsScreen> {
                       ),
                     ),
                   ),
-                  ..._ttlModes.map((m) {
-                    final value = m['value']!;
-                    final label = m['label']!;
+                  ..._ttlModeValues.map((value) {
                     final selected = _ttlMode == value;
                     return RadioListTile<String>(
-                      title: Text(label),
+                      title: Text(_modeLabel(context, value)),
                       value: value,
                       // ignore: deprecated_member_use
                       groupValue: _ttlMode.isEmpty ? 'after_read' : _ttlMode,
@@ -326,29 +339,27 @@ class _MessagesSettingsScreenState extends State<MessagesSettingsScreen> {
                     );
                   }),
 
-                  const Padding(
-                    padding: EdgeInsets.fromLTRB(16, 8, 16, 8),
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
                     child: Text(
-                      'После прочтения — сообщение удаляется через выбранное время после того, как собеседник его прочитал.\n\n'
-                      'Если прочтение неизвестно (собеседник не делится статусом) — автоматически используется жёсткий режим.\n\n'
-                      'Если сообщение не прочитано в течение 48 часов — оно удаляется принудительно.',
-                      style: TextStyle(fontSize: 13, color: Colors.grey),
+                      l.messagesModeAfterReadSub,
+                      style: const TextStyle(fontSize: 13, color: Colors.grey),
                     ),
                   ),
-                  const Padding(
-                    padding: EdgeInsets.fromLTRB(16, 8, 16, 8),
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
                     child: Text(
-                      'Жёсткий — сообщение удаляется через выбранное время после отправки, независимо от прочтения.',
-                      style: TextStyle(fontSize: 13, color: Colors.grey),
+                      l.messagesModeHardSub,
+                      style: const TextStyle(fontSize: 13, color: Colors.grey),
                     ),
                   ),
 
                   if (_showSecureWarning)
-                    const Padding(
-                      padding: EdgeInsets.fromLTRB(16, 8, 16, 16),
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
                       child: Text(
-                        '⚠ При выборе от 10 секунд до 1 минуты скриншоты чата с такими сообщениями временно запрещены — до их удаления.',
-                        style: TextStyle(
+                        l.messagesSecureWarning,
+                        style: const TextStyle(
                           fontSize: 13,
                           color: Colors.orange,
                           fontWeight: FontWeight.w500,

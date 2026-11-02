@@ -1,6 +1,7 @@
 // mobile/lib/screens/onboarding_screen.dart
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import '../l10n/app_localizations.dart';
 import 'connect_screen.dart';
 
 /// Ключ флага «onboarding пройден». Должен совпадать с main.dart.
@@ -105,7 +106,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
                     style: FilledButton.styleFrom(
                       padding: const EdgeInsets.symmetric(vertical: 16),
                     ),
-                    child: const Text('Далее'),
+                    child: Text(AppLocalizations.of(context).next),
                   ),
                 ),
               )
@@ -145,16 +146,14 @@ class _Page1 extends StatelessWidget {
             ),
           ),
           const SizedBox(height: 32),
-          const Text(
-            'Добро пожаловать в ISOTOPE',
+          Text(
+            AppLocalizations.of(context).onboardingWelcomeTitle,
             textAlign: TextAlign.center,
-            style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
+            style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
           ),
           const SizedBox(height: 16),
           Text(
-            'Общайтесь без цензуры и слежки.\n'
-            'Сообщения защищены. Никто не видит,\n'
-            'кто вы и что вы пишете.',
+            AppLocalizations.of(context).onboardingWelcomeBody,
             textAlign: TextAlign.center,
             style: TextStyle(fontSize: 15, color: Colors.grey.shade700, height: 1.5),
           ),
@@ -190,16 +189,14 @@ class _Page2 extends StatelessWidget {
             ),
           ),
           const SizedBox(height: 32),
-          const Text(
-            'Ваш код готов',
+          Text(
+            AppLocalizations.of(context).onboardingCodeReadyTitle,
             textAlign: TextAlign.center,
-            style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
+            style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
           ),
           const SizedBox(height: 16),
           Text(
-            'Мы создали для вас уникальный код.\n'
-            'Он нужен, чтобы друзья могли добавить\n'
-            'вас в контакты.',
+            AppLocalizations.of(context).onboardingCodeReadyBody,
             textAlign: TextAlign.center,
             style: TextStyle(fontSize: 15, color: Colors.grey.shade700, height: 1.5),
           ),
@@ -245,15 +242,14 @@ class _Page3 extends StatelessWidget {
             ),
           ),
           const SizedBox(height: 32),
-          const Text(
-            'Добавьте первый контакт',
+          Text(
+            AppLocalizations.of(context).onboardingAddContactTitle,
             textAlign: TextAlign.center,
-            style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
+            style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
           ),
           const SizedBox(height: 16),
           Text(
-            'Отсканируйте QR друга или покажите\n'
-            'свой — чтобы начать общение.',
+            AppLocalizations.of(context).onboardingAddContactBody,
             textAlign: TextAlign.center,
             style: TextStyle(fontSize: 15, color: Colors.grey.shade700, height: 1.5),
           ),
@@ -263,7 +259,7 @@ class _Page3 extends StatelessWidget {
             child: FilledButton.icon(
               onPressed: onScan,
               icon: const Icon(Icons.qr_code_scanner),
-              label: const Text('Сканировать'),
+              label: Text(AppLocalizations.of(context).scan),
               style: FilledButton.styleFrom(
                 padding: const EdgeInsets.symmetric(vertical: 14),
               ),
@@ -275,7 +271,7 @@ class _Page3 extends StatelessWidget {
             child: OutlinedButton.icon(
               onPressed: onShowQR,
               icon: const Icon(Icons.qr_code),
-              label: const Text('Показать мой QR'),
+              label: Text(AppLocalizations.of(context).showMyQR),
               style: OutlinedButton.styleFrom(
                 padding: const EdgeInsets.symmetric(vertical: 14),
               ),
@@ -285,7 +281,7 @@ class _Page3 extends StatelessWidget {
           TextButton(
             onPressed: onSkip,
             child: Text(
-              'Пропустить',
+              AppLocalizations.of(context).skip,
               style: TextStyle(color: Colors.grey.shade600),
             ),
           ),

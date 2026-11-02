@@ -17,6 +17,7 @@ import '../services/identity_service.dart';
 import '../services/network_service.dart';
 import '../services/permission_service.dart';
 import '../providers/chat_provider.dart';
+import '../l10n/app_localizations.dart';
 import '../utils/time_format.dart';
 import '../widgets/requests_section.dart';
 import 'chat_screen.dart';
@@ -388,33 +389,27 @@ class _ConnectScreenState extends State<ConnectScreen> {
 
       if (!mounted) return;
 
+      final l10n = AppLocalizations.of(context);
       await showDialog(
         context: context,
         barrierDismissible: false,
         builder: (ctx) => AlertDialog(
-          title: const Text('Фоновая работа'),
-          content: const Text(
-            'ISOTOPE — это P2P-сеть. Чтобы сообщения приходили, когда приложение свёрнуто, '
-            'разрешите работу в фоне.\n\n'
-            'Если системное окно не открылось — зайдите в:\n'
-            'Настройки → Батарея → Запуск приложений → ISOTOPE\n'
-            'и включите «Автозапуск» + «Работа в фоне».\n\n'
-            'Или нажмите «Настройки приложения» ниже.',
-          ),
+          title: Text(l10n.batteryTitle),
+          content: Text(l10n.batteryBody),
           actions: [
             TextButton(
               onPressed: () async {
                 await prefs.setBool('battery_opt_asked', true);
                 if (ctx.mounted) Navigator.pop(ctx);
               },
-              child: const Text('Позже'),
+              child: Text(l10n.batteryLater),
             ),
             TextButton(
               onPressed: () async {
                 if (ctx.mounted) Navigator.pop(ctx);
                 await LibP2PService.requestIgnoreBatteryOptimizations();
               },
-              child: const Text('Разрешить'),
+              child: Text(l10n.batteryAllow),
             ),
             TextButton(
               onPressed: () async {
@@ -422,7 +417,7 @@ class _ConnectScreenState extends State<ConnectScreen> {
                 if (ctx.mounted) Navigator.pop(ctx);
                 await PermissionService.openAppSettings();
               },
-              child: const Text('Настройки приложения'),
+              child: Text(l10n.batteryAppSettings),
             ),
           ],
         ),
@@ -545,7 +540,7 @@ class _ConnectScreenState extends State<ConnectScreen> {
     _sendAnnounce();
 
     setState(() {
-      _status = 'Телефон-узел: $newIp:8081';
+      _status = null;
       _error = null;
     });
   }
@@ -559,7 +554,6 @@ class _ConnectScreenState extends State<ConnectScreen> {
       if (mounted) {
         setState(() {
           _localIp = ip;
-          if (ip != null) _status = 'Телефон-узел: $ip:8081';
         });
       }
       await Future.delayed(const Duration(seconds: 5));
@@ -658,9 +652,9 @@ class _ConnectScreenState extends State<ConnectScreen> {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: const Text('Разрешите Bluetooth и геолокацию, чтобы искать рядом'),
+            content: Text(AppLocalizations.of(context).nearbyPermission),
             action: SnackBarAction(
-              label: 'Настройки',
+              label: AppLocalizations.of(context).settingsTooltip,
               onPressed: () => PermissionService.openAppSettings(),
             ),
           ),
@@ -673,7 +667,7 @@ class _ConnectScreenState extends State<ConnectScreen> {
     setState(() {
       _scanning = true;
       _discoveredNodes.clear();
-      _status = 'Поиск контактов рядом...';
+      _status = AppLocalizations.of(context).nearbySearching;
     });
 
     p2p.stopNsdDiscovery();
@@ -688,13 +682,15 @@ class _ConnectScreenState extends State<ConnectScreen> {
       if (mounted) {
         setState(() {
           _scanning = false;
-          _status = _discoveredNodes.isEmpty ? 'Нет контактов' : 'Контактов: ${_discoveredNodes.length}';
+          _status = _discoveredNodes.isEmpty
+              ? AppLocalizations.of(context).nearbyNotFound
+              : AppLocalizations.of(context).networkFound(_discoveredNodes.length);
         });
       }
     });
   }
 
-  Future<void> _connectToNode(NodeInfo node) async {
+Future<void> _connectToNode(NodeInfo node) async {
     final p2p = context.read<P2PService>();
     setState(() => _connecting = true);
 
@@ -759,7 +755,7 @@ class _ConnectScreenState extends State<ConnectScreen> {
     );
   }
 
-  /// Долгий тап на контакте — bottom sheet: Открыть чат, Переименовать, Удалить.
+/// Долгий тап на контакте — bottom sheet: Открыть чат, Переименовать, Удалить.
   Future<void> _showContactActions(NodeInfo node) async {
     try {
     final peerID = node.peerID;
@@ -783,17 +779,17 @@ class _ConnectScreenState extends State<ConnectScreen> {
             const Divider(height: 1),
             ListTile(
               leading: const Icon(Icons.chat_bubble_outline),
-              title: const Text('Открыть чат'),
+              title: Text(AppLocalizations.of(context).contactActionsOpenChat),
               onTap: () => Navigator.pop(ctx, 'chat'),
             ),
             ListTile(
               leading: const Icon(Icons.edit_outlined),
-              title: const Text('Переименовать'),
+              title: Text(AppLocalizations.of(context).contactActionsRename),
               onTap: () => Navigator.pop(ctx, 'rename'),
             ),
             ListTile(
               leading: const Icon(Icons.delete_outline, color: Colors.red),
-              title: const Text('Удалить', style: TextStyle(color: Colors.red)),
+              title: Text(AppLocalizations.of(context).contactActionsDelete, style: const TextStyle(color: Colors.red)),
               onTap: () => Navigator.pop(ctx, 'delete'),
             ),
             const SizedBox(height: 8),
@@ -832,28 +828,29 @@ class _ConnectScreenState extends State<ConnectScreen> {
       extentOffset: current.length,
     );
 
+    final l10n = AppLocalizations.of(context);
     final newName = await showDialog<String>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text('Переименовать контакт'),
+        title: Text(l10n.renameContactTitle),
         content: TextField(
           controller: controller,
           autofocus: true,
           maxLength: 100,
-          decoration: const InputDecoration(
-            hintText: 'Имя контакта',
+          decoration: InputDecoration(
+            hintText: l10n.renameContactHint,
           ),
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx, null),
-            child: const Text('Отмена'),
+            child: Text(l10n.cancel),
           ),
           TextButton(
             onPressed: () {
               Navigator.pop(ctx, controller.text.trim());
             },
-            child: const Text('Сохранить'),
+            child: Text(l10n.save),
           ),
         ],
       ),
@@ -888,23 +885,20 @@ class _ConnectScreenState extends State<ConnectScreen> {
     if (peerID.isEmpty) return;
 
     final displayName = _displayName(node);
+    final l10n = AppLocalizations.of(context);
     final ok = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: Text('Удалить «$displayName»?'),
-        content: Text(
-          'Контакт и вся переписка будут удалены.\n'
-          'Если $displayName напишет снова — вы не увидите его сообщения.\n'
-          'Чтобы вернуть — попросите новый QR.',
-        ),
+        title: Text(l10n.deleteContactTitle(displayName)),
+        content: Text(l10n.deleteContactBody(displayName)),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('Отмена'),
+            child: Text(l10n.cancel),
           ),
           TextButton(
             onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('Удалить', style: TextStyle(color: Colors.red)),
+            child: Text(l10n.contactActionsDelete, style: const TextStyle(color: Colors.red)),
           ),
         ],
       ),
@@ -968,33 +962,34 @@ class _ConnectScreenState extends State<ConnectScreen> {
     showDialog(
       context: context,
       builder: (ctx) {
+        final l10n = AppLocalizations.of(context);
         return AlertDialog(
-          title: const Text('Подключение'),
+          title: Text(l10n.connectionTitle),
           content: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
               TextField(
                 controller: _bootstrapController,
-                decoration: const InputDecoration(
-                  hintText: '/ip4/.../tcp/9001/ws/p2p/Qm...',
-                  labelText: 'Адрес подключения',
+                decoration: InputDecoration(
+                  hintText: l10n.connectionAddressHint,
+                  labelText: l10n.connectionAddressLabel,
                 ),
                 maxLines: 3,
                 minLines: 1,
               ),
               const SizedBox(height: 8),
-              const Text('Оставьте пустым, если не нужен.', style: TextStyle(fontSize: 12, color: Colors.grey)),
+              Text(l10n.connectionLeaveEmpty, style: const TextStyle(fontSize: 12, color: Colors.grey)),
             ],
           ),
           actions: [
-            TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Отмена')),
+            TextButton(onPressed: () => Navigator.pop(ctx), child: Text(l10n.cancel)),
             TextButton(
               onPressed: () {
                 _saveBootstrapPeers(_bootstrapController.text);
                 Navigator.pop(ctx);
                 if (mounted) setState(() {});
               },
-              child: const Text('Сохранить'),
+              child: Text(l10n.save),
             ),
           ],
         );
@@ -1007,29 +1002,30 @@ class _ConnectScreenState extends State<ConnectScreen> {
     showDialog(
       context: context,
       builder: (ctx) {
+        final l10n = AppLocalizations.of(context);
         return AlertDialog(
-          title: const Text('Ввести код контакта'),
+          title: Text(l10n.manualCodeTitle),
           content: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
               TextField(
                 controller: _multiaddrController,
-                decoration: const InputDecoration(
-                  hintText: 'Qm... или /ip4/.../p2p/Qm...',
-                  labelText: 'Код контакта',
+                decoration: InputDecoration(
+                  hintText: l10n.manualCodeHint,
+                  labelText: l10n.manualCodeLabel,
                 ),
                 maxLines: 3,
                 minLines: 1,
               ),
               const SizedBox(height: 8),
-              const Text(
-                'Попросите друга показать код.',
-                style: TextStyle(fontSize: 12, color: Colors.grey),
+              Text(
+                l10n.manualCodeHintSub,
+                style: const TextStyle(fontSize: 12, color: Colors.grey),
               ),
             ],
           ),
           actions: [
-            TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Отмена')),
+            TextButton(onPressed: () => Navigator.pop(ctx), child: Text(l10n.cancel)),
             TextButton(
               onPressed: () {
                 final addr = _multiaddrController.text.trim();
@@ -1042,7 +1038,7 @@ class _ConnectScreenState extends State<ConnectScreen> {
                   }
                 }
               },
-              child: const Text('Подключиться'),
+              child: Text(l10n.connect),
             ),
           ],
         );
@@ -1069,7 +1065,7 @@ class _ConnectScreenState extends State<ConnectScreen> {
         if (_myPeerId.isEmpty) {
           if (mounted) {
             ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(content: Text('Код ещё не готов, подождите')),
+              SnackBar(content: Text(AppLocalizations.of(context).qrNotReady)),
             );
           }
           return;
@@ -1079,11 +1075,12 @@ class _ConnectScreenState extends State<ConnectScreen> {
       }
 
       if (!mounted) return;
+      final l10n = AppLocalizations.of(context);
       showDialog(
         context: context,
         builder: (ctx) {
           return AlertDialog(
-            title: const Text('Мой QR (контакт)'),
+            title: Text(l10n.myQRTitle),
             content: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
@@ -1102,14 +1099,14 @@ class _ConnectScreenState extends State<ConnectScreen> {
                   ),
                 ),
                 const SizedBox(height: 12),
-                const Text(
-                  'Покажите этот QR другу',
-                  style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold),
+                Text(
+                  l10n.myQRShow,
+                  style: const TextStyle(fontSize: 13, fontWeight: FontWeight.bold),
                 ),
                 const SizedBox(height: 6),
-                const Text(
-                  'Ваш код для добавления',
-                  style: TextStyle(fontSize: 11, color: Colors.grey),
+                Text(
+                  l10n.myQRCode,
+                  style: const TextStyle(fontSize: 11, color: Colors.grey),
                 ),
               ],
             ),
@@ -1119,12 +1116,12 @@ class _ConnectScreenState extends State<ConnectScreen> {
                   Clipboard.setData(ClipboardData(text: qrData));
                   Navigator.pop(ctx);
                   ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text('Код скопирован')),
+                    SnackBar(content: Text(l10n.copied)),
                   );
                 },
-                child: const Text('Копировать'),
+                child: Text(l10n.copy),
               ),
-              TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Закрыть')),
+              TextButton(onPressed: () => Navigator.pop(ctx), child: Text(l10n.close)),
             ],
           );
         },
@@ -1212,7 +1209,7 @@ class _ConnectScreenState extends State<ConnectScreen> {
       if (peerId.isEmpty) {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Не удалось распознать код')),
+            SnackBar(content: Text(AppLocalizations.of(context).qrNotRecognized)),
           );
         }
         return;
@@ -1231,7 +1228,7 @@ class _ConnectScreenState extends State<ConnectScreen> {
       if (myPeerIdNow.isNotEmpty && peerId == myPeerIdNow) {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Это ваш собственный код')),
+            SnackBar(content: Text(AppLocalizations.of(context).qrOwnCode)),
           );
         }
         return;
@@ -1268,8 +1265,8 @@ class _ConnectScreenState extends State<ConnectScreen> {
             ScaffoldMessenger.of(context).showSnackBar(
               SnackBar(
                 content: Text(contactVerified
-                    ? 'Контакт проверен'
-                    : 'Контакт не проверен'),
+                    ? AppLocalizations.of(context).qrContactVerified
+                    : AppLocalizations.of(context).qrContactNotVerified),
               ),
             );
           }
@@ -1377,6 +1374,7 @@ class _ConnectScreenState extends State<ConnectScreen> {
 
   /// Добавить контакт — bottom sheet. Три опции.
   void _showAddContactDialog() {
+    final l10n = AppLocalizations.of(context);
     showModalBottomSheet(
       context: context,
       builder: (ctx) {
@@ -1384,17 +1382,17 @@ class _ConnectScreenState extends State<ConnectScreen> {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              const Padding(
-                padding: EdgeInsets.all(16),
+              Padding(
+                padding: const EdgeInsets.all(16),
                 child: Text(
-                  'Добавить контакт',
-                  style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18),
+                  l10n.addContactTitle,
+                  style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 18),
                 ),
               ),
               ListTile(
                 leading: const Icon(Icons.qr_code_scanner),
-                title: const Text('Сканировать QR-код'),
-                subtitle: const Text('Друг показывает код, вы сканируете'),
+                title: Text(l10n.addContactScanTitle),
+                subtitle: Text(l10n.addContactScanSub),
                 onTap: () {
                   Navigator.pop(ctx);
                   _scanQR();
@@ -1402,8 +1400,8 @@ class _ConnectScreenState extends State<ConnectScreen> {
               ),
               ListTile(
                 leading: const Icon(Icons.qr_code),
-                title: const Text('Показать мой QR-код'),
-                subtitle: const Text('Друг сканирует ваш код'),
+                title: Text(l10n.addContactShowQRTitle),
+                subtitle: Text(l10n.addContactShowQRSub),
                 onTap: () {
                   Navigator.pop(ctx);
                   _showMyQR();
@@ -1411,8 +1409,8 @@ class _ConnectScreenState extends State<ConnectScreen> {
               ),
               ListTile(
                 leading: const Icon(Icons.wifi_find),
-                title: const Text('Найти рядом'),
-                subtitle: const Text('Поиск контактов в той же сети'),
+                title: Text(l10n.addContactNearbyTitle),
+                subtitle: Text(l10n.addContactNearbySub),
                 onTap: () {
                   Navigator.pop(ctx);
                   _scanNearby();
@@ -1446,7 +1444,7 @@ class _ConnectScreenState extends State<ConnectScreen> {
       if (name.isEmpty) return peerID;
       return name;
     } catch (_) {
-      return 'Контакт';
+      return AppLocalizations.of(context).contactGeneric;
     }
   }
 
@@ -1469,27 +1467,28 @@ class _ConnectScreenState extends State<ConnectScreen> {
 
   String _lastMessagePreview(NodeInfo node, ChatProvider chatProvider) {
     try {
+      final l10n = AppLocalizations.of(context);
       final peerID = node.peerID;
-      if (peerID.isEmpty) return 'Контакт ISOTOPE';
+      if (peerID.isEmpty) return l10n.contactIsotope;
       final last = chatProvider.getLastMessageForPeer(peerID);
       if (last == null) {
         switch (node.status) {
           case NodeStatus.unknown:
-            return 'Не проверен';
+            return l10n.contactNotVerifiedShort;
           case NodeStatus.alive:
-            return 'Контакт ISOTOPE';
+            return l10n.contactIsotope;
           case NodeStatus.dead:
-            return 'Недоступен';
+            return l10n.contactUnavailable;
         }
       }
       if (last.isVoice) {
-        return '🎤 Голосовое сообщение';
+        return l10n.previewVoice;
       }
       if (last.isPhoto) {
-        return '📷 Фото';
+        return l10n.previewPhoto;
       }
       if (last.isFile) {
-        final name = last.fileName.isNotEmpty ? last.fileName : 'Файл';
+        final name = last.fileName.isNotEmpty ? last.fileName : l10n.previewFile;
         final short = name.length > 30 ? '${name.substring(0, 30)}...' : name;
         final icon = _fileTypeIcon(last.fileName, last.mediaType);
         return '$icon $short';
@@ -1498,7 +1497,7 @@ class _ConnectScreenState extends State<ConnectScreen> {
       final text = raw.length > 40 ? '${raw.substring(0, 40)}...' : raw;
       return text;
     } catch (_) {
-      return 'Ошибка';
+      return AppLocalizations.of(context).contactError;
     }
   }
 
@@ -1583,6 +1582,7 @@ class _ConnectScreenState extends State<ConnectScreen> {
   /// Возвращает текст подзаголовка.
   /// Приоритет: черновик → «Отправить запрос?» / «Ожидание» → последнее сообщение.
   String? _contactStatusSubtitle(NodeInfo node, ChatProvider chatProvider) {
+    final l10n = AppLocalizations.of(context);
     final peerID = node.peerID;
     if (peerID.isEmpty) return _lastMessagePreview(node, chatProvider);
 
@@ -1590,7 +1590,7 @@ class _ConnectScreenState extends State<ConnectScreen> {
     if (chatProvider.hasDraftFor(peerID)) {
       final draft = chatProvider.draftFor(peerID);
       final short = draft.length > 30 ? '${draft.substring(0, 30)}...' : draft;
-      return 'Черновик: «$short»';
+      return l10n.previewDraft(short);
     }
 
     final verified = _verifiedContacts[peerID] ?? false;
@@ -1598,9 +1598,9 @@ class _ConnectScreenState extends State<ConnectScreen> {
 
     if (verified && !confirmed) {
       if (_requestSent.contains(peerID)) {
-        return 'Запрос отправлен. Ожидание...';
+        return l10n.requestSentWaiting;
       }
-      return 'Не подтверждён. Отправить запрос?';
+      return l10n.requestNotConfirmed;
     }
 
     return _lastMessagePreview(node, chatProvider);
@@ -1670,10 +1670,11 @@ class _ConnectScreenState extends State<ConnectScreen> {
       extentOffset: preset.length,
     );
 
+    final l10n = AppLocalizations.of(context);
     return showDialog<String>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text('Как вас представить?'),
+        title: Text(l10n.displayNameDialogTitle),
         content: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -1682,35 +1683,35 @@ class _ConnectScreenState extends State<ConnectScreen> {
               controller: controller,
               autofocus: true,
               maxLength: 100,
-              decoration: const InputDecoration(
-                hintText: 'Например: Иван, коллега по работе',
+              decoration: InputDecoration(
+                hintText: l10n.displayNameDialogHint,
               ),
             ),
             const SizedBox(height: 8),
-            const Text(
-              'Например: Иван, коллега по работе,\n'
-              'Пётр, мы договаривались на ремонт',
-              style: TextStyle(fontSize: 11, color: Colors.grey),
+            Text(
+              l10n.displayNameDialogSub,
+              style: const TextStyle(fontSize: 11, color: Colors.grey),
             ),
           ],
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx, null),
-            child: const Text('Отмена'),
+            child: Text(l10n.cancel),
           ),
           TextButton(
             onPressed: () {
               final text = controller.text.trim();
               Navigator.pop(ctx, text.isEmpty ? preset : text);
             },
-            child: const Text('Отправить'),
+            child: Text(l10n.sendAction),
           ),
         ],
       ),
     );
   }
-  @override
+
+@override
   void dispose() {
     final chatProvider = context.read<ChatProvider>();
     if (_chatListener != null) {
@@ -1733,17 +1734,17 @@ class _ConnectScreenState extends State<ConnectScreen> {
           IconButton(
             icon: const Icon(Icons.person_add),
             onPressed: _showAddContactDialog,
-            tooltip: 'Добавить контакт',
+            tooltip: AppLocalizations.of(context).addContactTooltip,
           ),
           IconButton(
             icon: const Icon(Icons.settings),
             onPressed: _showSettingsDialog,
-            tooltip: 'Настройки',
+            tooltip: AppLocalizations.of(context).settingsTooltip,
           ),
           IconButton(
             icon: const Icon(Icons.article_outlined),
             onPressed: _openLogs,
-            tooltip: 'Журнал',
+            tooltip: AppLocalizations.of(context).journalTooltip,
           ),
         ],
       ),
@@ -1756,7 +1757,11 @@ class _ConnectScreenState extends State<ConnectScreen> {
               Container(
                 padding: const EdgeInsets.all(12),
                 decoration: BoxDecoration(color: Colors.green.shade50, borderRadius: BorderRadius.circular(8)),
-                child: Text('📍 Ваш адрес: $_localIp:8081', style: const TextStyle(fontWeight: FontWeight.bold), textAlign: TextAlign.center),
+                child: Text(
+                  AppLocalizations.of(context).yourAddress('$_localIp:8081'),
+                  style: const TextStyle(fontWeight: FontWeight.bold),
+                  textAlign: TextAlign.center,
+                ),
               ),
             if (_status != null)
               Container(
@@ -1787,10 +1792,10 @@ class _ConnectScreenState extends State<ConnectScreen> {
                 _reloadRequests();
               },
             ),
-            const Text('Контакты:', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+            Text(AppLocalizations.of(context).contactsLabel, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
             const SizedBox(height: 8),
             Expanded(
-              flex: 2,
+              flex: 4,
               child: Consumer<ChatProvider>(
                 builder: (_, chatProvider, __) {
                   if (_discoveredNodes.isEmpty) {
@@ -1802,14 +1807,13 @@ class _ConnectScreenState extends State<ConnectScreen> {
                           children: [
                             Icon(Icons.group_outlined, size: 64, color: Colors.grey.shade400),
                             const SizedBox(height: 16),
-                            const Text(
-                              'Пока никого нет',
-                              style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                            Text(
+                              AppLocalizations.of(context).noContactsYet,
+                              style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
                             ),
                             const SizedBox(height: 8),
                             Text(
-                              'Добавьте первый контакт —\n'
-                              'и сможете общаться без цензуры и слежки.',
+                              AppLocalizations.of(context).noContactsHint,
                               style: TextStyle(fontSize: 13, color: Colors.grey.shade700),
                               textAlign: TextAlign.center,
                             ),
@@ -1817,7 +1821,7 @@ class _ConnectScreenState extends State<ConnectScreen> {
                             FilledButton.icon(
                               onPressed: _showAddContactDialog,
                               icon: const Icon(Icons.person_add),
-                              label: const Text('Добавить контакт'),
+                              label: Text(AppLocalizations.of(context).addContact),
                             ),
                           ],
                         ),
@@ -1940,21 +1944,6 @@ class _ConnectScreenState extends State<ConnectScreen> {
               ),
             ),
             const SizedBox(height: 8),
-            const Text('Журнал:', style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold)),
-            const SizedBox(height: 4),
-            Expanded(
-              flex: 2,
-              child: Container(
-                padding: const EdgeInsets.all(8),
-                decoration: BoxDecoration(color: Colors.black87, borderRadius: BorderRadius.circular(8)),
-                child: ListView.builder(
-                  itemCount: _logs.length,
-                  itemBuilder: (context, index) {
-                    return Text(_logs[index], style: const TextStyle(color: Colors.greenAccent, fontSize: 11));
-                  },
-                ),
-              ),
-            ),
           ],
         ),
       ),
