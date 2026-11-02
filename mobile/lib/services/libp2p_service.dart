@@ -1179,6 +1179,36 @@ class LibP2PService {
     }
   }
 
+  /// Сохраняет seed-фразу в Android Keystore (AES/GCM, hardware-backed).
+  /// Seed на диск в plaintext не пишется — только зашифрованный blob.
+  static Future<bool> saveSeedToKeystore(String seed) async {
+    if (seed.isEmpty) return false;
+    try {
+      final response = await _channel.invokeMethod<String>('saveSeedToKeystore', {
+        'seed': seed,
+      });
+      final decoded = _safeDecode(response);
+      return !decoded.containsKey('error');
+    } on PlatformException {
+      return false;
+    }
+  }
+
+  /// Загружает seed-фразу из Android Keystore.
+  /// Пусто, если seed не сохранён или Keystore недоступен.
+  static Future<String> loadSeedFromKeystore() async {
+    try {
+      final response = await _channel.invokeMethod<String>('loadSeedFromKeystore');
+      final decoded = _safeDecode(response, fallback: '{"status":"not_found"}');
+      if (decoded.containsKey('error')) return '';
+      final status = decoded['status'] as String? ?? '';
+      if (status != 'ok') return '';
+      return decoded['seed'] as String? ?? '';
+    } on PlatformException {
+      return '';
+    }
+  }
+
   static bool get isStarted => _started;
   static bool get isDHTStarted => _dhtStarted;
 }

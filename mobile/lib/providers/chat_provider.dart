@@ -786,6 +786,24 @@ class ChatProvider extends ChangeNotifier {
           : prefs.getString('bootstrap_peers') ?? '';
       LogService.log('libp2p: bootstrapPeers=${savedBootstrap.isNotEmpty ? savedBootstrap : "нет"}');
 
+      // Keystore (v2.0.6): загрузить seed ДО Start. Если есть — применить.
+      // Без этого InitP2P пойдёт с RSA — seed не применится.
+      try {
+        final keystoreSeed = await LibP2PService.loadSeedFromKeystore();
+        if (keystoreSeed.isNotEmpty) {
+          final seedResult = await LibP2PService.setSeedPhraseBeforeStart(keystoreSeed);
+          if (!seedResult.containsKey('error')) {
+            LogService.log('libp2p: seed from Keystore applied before start');
+          } else {
+            LogService.log('libp2p: seed from Keystore failed: ${seedResult['error']}');
+          }
+        } else {
+          LogService.log('libp2p: no seed in Keystore (RSA path)');
+        }
+      } catch (e) {
+        LogService.log('libp2p: loadSeedFromKeystore failed: $e');
+      }
+
       final result = await LibP2PService.start(
         ethHash: ethHash,
         bootstrapPeers: savedBootstrap,

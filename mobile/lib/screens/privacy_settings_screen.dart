@@ -323,9 +323,17 @@ class _PrivacySettingsScreenState extends State<PrivacySettingsScreen> {
                 );
                 return;
               }
+              final savedToKeystore = await LibP2PService.saveSeedToKeystore(phrase);
+              if (!mounted) return;
               setState(() => _seedPhrase = phrase);
               ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text('Перезапустите приложение, чтобы применить')),
+                SnackBar(
+                  content: Text(
+                    savedToKeystore
+                        ? 'Фраза сохранена. Перезапустите приложение, чтобы применить'
+                        : 'Не удалось сохранить в Keystore. Запишите фразу вручную и перезапустите',
+                  ),
+                ),
               );
             },
             child: const Text('Я записал'),
@@ -413,9 +421,17 @@ class _PrivacySettingsScreenState extends State<PrivacySettingsScreen> {
       );
       return;
     }
+    final savedToKeystore = await LibP2PService.saveSeedToKeystore(phrase);
+    if (!mounted) return;
     setState(() => _seedPhrase = phrase);
     ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Перезапустите приложение, чтобы применить')),
+      SnackBar(
+        content: Text(
+          savedToKeystore
+              ? 'Фраза сохранена. Перезапустите приложение, чтобы применить'
+              : 'Не удалось сохранить в Keystore. Запишите фразу вручную и перезапустите',
+        ),
+      ),
     );
   }
 

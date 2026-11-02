@@ -40,6 +40,17 @@ import java.util.Locale
 // Импорты для gomobile
 import mobile.Mobile
 
+// Импорты для Android Keystore (seed, v2.0.6)
+import android.security.keystore.KeyGenParameterSpec
+import android.security.keystore.KeyProperties
+import android.util.Base64
+import java.security.KeyStore
+import javax.crypto.Cipher
+import javax.crypto.KeyGenerator
+import javax.crypto.SecretKey
+import javax.crypto.spec.GCMParameterSpec
+import javax.crypto.spec.IvParameterSpec
+
 class MainActivity : FlutterActivity() {
     private val METHOD_CHANNEL = "isotope/nsd"
     private val EVENT_CHANNEL = "isotope/nsd/events"
@@ -580,6 +591,27 @@ class MainActivity : FlutterActivity() {
                             runOnUiThread { result.success(response) }
                         }.start()
                     }
+                    "saveSeedToKeystore" -> {
+                        val seed = call.argument<String>("seed") ?: ""
+                        if (seed.isEmpty()) {
+                            result.error("SEED_EMPTY", "seed is required", null)
+                        } else {
+                            val ok = saveSeedToKeystore(seed)
+                            if (ok) {
+                                result.success("{\"status\":\"ok\"}")
+                            } else {
+                                result.error("KEYSTORE_SAVE_FAILED", "encrypt/save failed", null)
+                            }
+                        }
+                    }
+                    "loadSeedFromKeystore" -> {
+                        val seed = loadSeedFromKeystore()
+                        if (seed != null) {
+                            result.success("{\"status\":\"ok\",\"seed\":\"$seed\"}")
+                        } else {
+                            result.success("{\"status\":\"not_found\"}")
+                        }
+                    }
                     "updateForegroundNotification" -> {
                         val title = call.argument<String>("title") ?: "ISOTOPE"
                         val text = call.argument<String>("text") ?: "Сеть активна"
@@ -976,7 +1008,7 @@ class MainActivity : FlutterActivity() {
         }
     }
 
-    private fun announceService(
+private fun announceService(
         serviceName: String,
         ip: String,
         peerId: String,
@@ -1110,7 +1142,7 @@ class MainActivity : FlutterActivity() {
         }
     }
 
-    private fun stopDiscovery() {
+private fun stopDiscovery() {
         try {
             discoveryListener?.let {
                 nsdManager?.stopServiceDiscovery(it)
@@ -1205,7 +1237,7 @@ class MainActivity : FlutterActivity() {
         } catch (_: Exception) {}
     }
 
-    // ==================== GATT SERVER ====================
+// ==================== GATT SERVER ====================
 
     private fun startGattServer(result: MethodChannel.Result) {
         try {
@@ -1302,6 +1334,100 @@ class MainActivity : FlutterActivity() {
             runOnUiThread {
                 runCatching { result.error("GATT_ERROR", e.message, null) }
             }
+        }
+    }
+
+    // ==================== ANDROID KEYSTORE (seed, v2.0.6) ====================
+    // AES/GCM. Ключ — в Android Keystore (hardware-backed, alias isotope_seed_key).
+    // Blob (iv || ciphertext) — в SharedPreferences (isotope_secure, seed_blob).
+    // Seed на диск в plaintext — НЕ пишется.
+
+    private val KEYSTORE_ALIAS = "isotope_seed_key"
+    private val KEYSTORE_PREFS = "isotope_secure"
+    private val KEYSTORE_BLOB_KEY = "seed_blob"
+    private val KEYSTORE_GCM_TAG_BITS = 128
+    private val KEYSTORE_IV_SIZE = 16
+
+    private fun getOrCreateKeystoreKey(): SecretKey {
+        val ks = KeyStore.getInstance("AndroidKeyStore")
+        ks.load(null)
+        if (ks.containsAlias(KEYSTORE_ALIAS)) {
+            val entry = ks.getEntry(KEYSTORE_ALIAS, null) as? KeyStore.SecretKeyEntry
+            if (entry != null) {
+                return entry.secretKey
+            }
+        }
+        val kg = KeyGenerator.getInstance(
+            KeyProperties.KEY_ALGORITHM_AES,
+            "AndroidKeyStore"
+        )
+        kg.init(
+            KeyGenParameterSpec.Builder(
+                KEYSTORE_ALIAS,
+                KeyProperties.PURPOSE_ENCRYPT or KeyProperties.PURPOSE_DECRYPT
+            )
+                .setBlockModes(KeyProperties.BLOCK_MODE_CBC)
+                .setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE)
+                .setKeySize(256)
+                .setUserAuthenticationRequired(false)
+                .build()
+        )
+        return kg.generateKey()
+}
+
+    private fun saveSeedToKeystore(seed: String): Boolean {
+        return try {
+            val key = getOrCreateKeystoreKey()
+            val cipher = Cipher.getInstance("AES/CBC/NoPadding")
+            cipher.init(Cipher.ENCRYPT_MODE, key)
+            val iv = cipher.iv
+            val raw = seed.toByteArray(Charsets.UTF_8)
+            val blockSize = 16
+            val padLen = blockSize - (raw.size % blockSize)
+            val padded = ByteArray(raw.size + padLen)
+            System.arraycopy(raw, 0, padded, 0, raw.size)
+            val ciphertext = cipher.doFinal(padded)
+            val blob = ByteArray(iv.size + ciphertext.size)
+            System.arraycopy(iv, 0, blob, 0, iv.size)
+            System.arraycopy(ciphertext, 0, blob, iv.size, ciphertext.size)
+            val blobB64 = Base64.encodeToString(blob, Base64.NO_WRAP)
+            val prefs = getSharedPreferences(KEYSTORE_PREFS, Context.MODE_PRIVATE)
+            val committed = prefs.edit().putString(KEYSTORE_BLOB_KEY, blobB64).commit()
+            if (!committed) {
+                Log.e("MainActivity", "saveSeedToKeystore: SharedPreferences commit failed")
+                return false
+            }
+            Log.d("MainActivity", "saveSeedToKeystore: ok (${seed.length} chars)")
+            true
+        } catch (e: Exception) {
+            Log.e("MainActivity", "saveSeedToKeystore failed: ${e.message}")
+            false
+        }
+    }
+
+    private fun loadSeedFromKeystore(): String? {
+        return try {
+            val prefs = getSharedPreferences(KEYSTORE_PREFS, Context.MODE_PRIVATE)
+            val blobB64 = prefs.getString(KEYSTORE_BLOB_KEY, null) ?: return null
+            val blob = Base64.decode(blobB64, Base64.NO_WRAP)
+            if (blob.size <= KEYSTORE_IV_SIZE) return null
+            val iv = ByteArray(KEYSTORE_IV_SIZE)
+            System.arraycopy(blob, 0, iv, 0, KEYSTORE_IV_SIZE)
+            val ciphertext = ByteArray(blob.size - KEYSTORE_IV_SIZE)
+            System.arraycopy(blob, KEYSTORE_IV_SIZE, ciphertext, 0, ciphertext.size)
+            val key = getOrCreateKeystoreKey()
+            val cipher = Cipher.getInstance("AES/CBC/NoPadding")
+            val spec = IvParameterSpec(iv)
+            cipher.init(Cipher.DECRYPT_MODE, key, spec)
+            val plain = cipher.doFinal(ciphertext)
+            var end = plain.size
+            while (end > 0 && plain[end - 1] == 0.toByte()) {
+                end--
+            }
+            String(plain, 0, end, Charsets.UTF_8)
+        } catch (e: Exception) {
+            Log.e("MainActivity", "loadSeedFromKeystore failed: ${e.message}")
+            null
         }
     }
 }
