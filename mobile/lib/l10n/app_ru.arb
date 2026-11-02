@@ -1,0 +1,22 @@
+{
+  "@@locale": "ru",
+  "appTitle": "ISOTOPE",
+  "next": "Далее",
+  "cancel": "Отмена",
+  "save": "Сохранить",
+  "close": "Закрыть",
+  "continueLabel": "Продолжить",
+  "settings": "Настройки",
+  "privacy": "Приватность",
+  "language": "Язык",
+  "languageEnglish": "Английский",
+  "languageRussian": "Русский",
+  "languageSystem": "Системный",
+  "skip": "Пропустить",
+  "back": "Назад",
+  "yes": "Да",
+  "no": "Нет",
+  "ok": "ОК",
+  "error": "Ошибка",
+  "retry": "Повторить"
+}

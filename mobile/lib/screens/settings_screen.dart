@@ -1,5 +1,7 @@
 // mobile/lib/screens/settings_screen.dart
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+import '../providers/locale_provider.dart';
 import 'privacy_settings_screen.dart';
 import 'messages_settings_screen.dart';
 import 'profile_screen.dart';
@@ -45,7 +47,7 @@ class SettingsScreen extends StatelessWidget {
           ListTile(
             leading: const Icon(Icons.lock_outline),
             title: const Text('Приватность'),
-            subtitle: const Text('Кто видит ваши статусы'),
+            subtitle: const Text('Статусы, уведомления, анонимность, seed-фраза'),
             trailing: const Icon(Icons.chevron_right),
             onTap: () {
               Navigator.push(
@@ -72,6 +74,13 @@ class SettingsScreen extends StatelessWidget {
           // ==== СИСТЕМНЫЕ ====
           const _SectionHeader('Системные'),
           ListTile(
+            leading: const Icon(Icons.language),
+            title: const Text('Язык'),
+            subtitle: Text(_currentLanguageName(context)),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () => _showLanguageDialog(context),
+          ),
+          ListTile(
             leading: const Icon(Icons.link),
             title: const Text('Подключение'),
             subtitle: const Text('Адрес подключения'),
@@ -88,6 +97,53 @@ class SettingsScreen extends StatelessWidget {
 
           const SizedBox(height: 16),
         ],
+      ),
+    );
+  }
+
+  String _currentLanguageName(BuildContext context) {
+    final provider = context.watch<LocaleProvider>();
+    switch (provider.code) {
+      case 'en':
+        return 'English';
+      case 'ru':
+        return 'Русский';
+      default:
+        return 'Системный';
+    }
+  }
+
+  void _showLanguageDialog(BuildContext context) {
+    final provider = context.read<LocaleProvider>();
+    showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Язык'),
+        content: RadioGroup<String>(
+          groupValue: provider.code,
+          onChanged: (v) {
+            if (v == null) return;
+            provider.setLocale(v);
+            Navigator.of(ctx).pop();
+          },
+          child: const Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              RadioListTile<String>(
+                title: Text('Системный'),
+                value: '',
+              ),
+              RadioListTile<String>(
+                title: Text('English'),
+                value: 'en',
+              ),
+              RadioListTile<String>(
+                title: Text('Русский'),
+                value: 'ru',
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }

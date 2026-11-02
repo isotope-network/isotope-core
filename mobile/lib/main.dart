@@ -1,9 +1,12 @@
 // mobile/lib/main.dart
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'providers/chat_provider.dart';
+import 'providers/locale_provider.dart';
+import 'l10n/app_localizations.dart';
 import 'services/p2p_service.dart';
 import 'services/log_service.dart';
 import 'services/media_storage.dart';
@@ -44,21 +47,34 @@ class IsoApp extends StatelessWidget {
     return MultiProvider(
       providers: [
         ChangeNotifierProvider(create: (_) => ChatProvider()),
+        ChangeNotifierProvider(create: (_) => LocaleProvider()..load()),
         Provider<P2PService>(create: (_) => P2PService()),
       ],
-      child: MaterialApp(
-        title: 'ИСО',
-        debugShowCheckedModeBanner: false,
-        theme: ThemeData(
-          useMaterial3: true,
-          colorSchemeSeed: Colors.green,
-          appBarTheme: const AppBarTheme(
-            backgroundColor: Colors.green,
-            foregroundColor: Colors.white,
-            elevation: 1,
-          ),
-        ),
-        home: const _RootRouter(),
+      child: Consumer<LocaleProvider>(
+        builder: (context, localeProvider, _) {
+          return MaterialApp(
+            onGenerateTitle: (ctx) => AppLocalizations.of(ctx).appTitle,
+            debugShowCheckedModeBanner: false,
+            locale: localeProvider.locale,
+            localizationsDelegates: const [
+              AppLocalizations.delegate,
+              GlobalMaterialLocalizations.delegate,
+              GlobalWidgetsLocalizations.delegate,
+              GlobalCupertinoLocalizations.delegate,
+            ],
+            supportedLocales: AppLocalizations.supportedLocales,
+            theme: ThemeData(
+              useMaterial3: true,
+              colorSchemeSeed: Colors.green,
+              appBarTheme: const AppBarTheme(
+                backgroundColor: Colors.green,
+                foregroundColor: Colors.white,
+                elevation: 1,
+              ),
+            ),
+            home: const _RootRouter(),
+          );
+        },
       ),
     );
   }
