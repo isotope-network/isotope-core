@@ -44,6 +44,7 @@ We, as participants and creators of the ISOTOPE project, pledge to make particip
 Violations of the Code of Conduct are reviewed by the Keeper of the ethical hash and trusted community members.
 
 Consequences:
+
 - Warning
 - Temporary ban
 - Permanent exclusion from the community
@@ -63,8 +64,9 @@ By participating in the project, you accept these principles.
 ## Contacts
 
 To report violations:
+
 - GitHub Issues with the `conduct` label
-- Email: conduct@isotope.network
+- Email: keeper@isotope.network
 
 ---
 

@@ -1,9 +1,9 @@
-# ISOTOPE — Infrastructure for Ethical, Unstoppable, Self-Learning Data and AI Exchange
+# ISOTOPE — the immune system of communication
 
 **Ask without revealing. Answer without exposing.**
 
-ISOTOPE is an infrastructure that unites data exchange,
-distributed AI, and human communication
+ISOTOPE is an infrastructure that unites
+data exchange, distributed AI, and human communication
 in a single decentralized network.
 
 ---
@@ -47,6 +47,59 @@ P2P, ethical hash, immunity, self-learning.
 
 ---
 
+## Seven Commandments
+
+At the heart of ISOTOPE lies the **ethical hash** — a digital embodiment of values.
+Seven universal commandments:
+
+1. Do no harm.
+2. Do not steal.
+3. Do not deceive.
+4. Do not betray.
+5. Do not be indifferent.
+6. Create, do not destroy.
+7. Treat others as you would yourself.
+
+These principles are gathered from all the great teachings of humanity.
+They belong to no single religion, no single ideology.
+They are universal.
+
+---
+
+## How Immunity Works
+
+Every message is **compared to the reference**.
+Not by words — **by meaning**.
+The neural network converts text into a **100-dimensional vector**.
+The **closer** to the reference — the **longer** the message lives.
+The **farther** — the **faster** it fades.
+
+**This is not censorship. This is an immune system.**
+
+Likes raise the weight. Dislikes lower it.
+Time erodes even strong signals.
+When the weight falls below the threshold — the message goes to the archive.
+Below — it is deleted forever.
+The network **breathes**: the important remains, the random leaves, the harmful is rejected.
+
+---
+
+## Spirituality and Technology — Together
+
+We are used to separating: this is technology, and this is the soul.
+Algorithms are cold. Prayer is warm.
+**We refuse this separation.**
+
+ISOTOPE is an attempt to **embed spiritual principles into the digital world**.
+Not as a superstructure. Not as a "company mission" on a website.
+But as **working code**.
+
+**Love** is not an abstraction. It is the **direction of the vector toward the reference**.
+**Compassion** is not a slogan. It is the **cosine closeness between meanings**.
+**Good** is not a philosophy. It is the **weight with which a message enters the network**.
+
+---
+
 ## How the Architecture Works
 
 ISOTOPE is built on a single pattern:
@@ -87,8 +140,8 @@ Likes raise weight. Dislikes lower it.
 Time erodes even the strongest signals.
 When weight falls below a threshold, data moves to archive.
 Lower — deleted forever.
-The network breathes:
-what matters stays, the random goes, the harmful is rejected.
+The network breathes: what matters stays,
+the random goes, the harmful is rejected.
 
 **Collective Learning.**
 The neural network learns from community feedback.
@@ -149,6 +202,11 @@ Bluetooth and location — when searching nearby.
 Notifications — at startup.
 Context is understanding.
 
+**Seed Phrase — Identity.**
+PeerID is recoverable from a seed phrase (BIP39).
+Android Keystore — seed survives restart.
+But contacts and history — separately. Seed is identity, not «recover everything».
+
 ---
 
 ## Architectural Properties
@@ -187,73 +245,66 @@ Node weight is a universal pass.
 | Obfuscation | Traffic masking | ✅ v1.13 |
 | E2E encryption | Message content (from relay) | ✅ v1.24 |
 | Signature | Sender authenticity | ✅ v1.24 |
-| Metadata | Who talks to whom | 🔜 v2.0+ (Onion) |
-| Traffic patterns | Timing, volume | 🔜 Padding, mixing |
+| Sphinx | Route hidden from relays | ✅ v2.0.1 |
+| Mixing | Timing hidden | ✅ v2.0.2 |
+| Masking | Type, volume, pattern hidden | ✅ v2.0.4 |
+| Metadata (full) | Who talks to whom | 🔜 v2.0.6+ (adaptive masking) |
+| Traffic patterns (full) | Timing, volume | 🔜 Padding, mixing |
 
-**What works now:** message content is protected from relay and from interception. Sender authenticity is verified. Relay sees only ciphertext.
+**What works now:** message content is protected from relay and from interception. Sender authenticity is verified. Relay sees only ciphertext. Route is hidden from relays (Sphinx). Timing is hidden (Mixing). Type, volume, and pattern are hidden (Masking).
 
-**What comes later:** metadata protection (Onion routing), traffic pattern protection (padding, mixing).
-
----
-
-## What the Architecture Enables
-
-The architecture supports any interaction requiring
-decentralization, ethical filtering,
-and trust without intermediaries.
-
-**Ready-made scenarios.**
-Solve a specific problem in one day.
-
-| Scenario | Problem | Minimum Nodes |
-|----------|---------|---------------|
-| Certificate Verification | Fake certificates, slow checks | 3 |
-| Credit Check | Clients leave, unwilling to disclose full history | 3-5 |
-| Anonymous Voting | Distrust in results, fear of exposure | 20-30 |
-| Anti-Fraud | Money stolen while verification is pending | 5-10 |
-| Doctor Consultation | Cannot share patient data with a colleague | 2-5 |
-| Simple AI Queries | AI servers overloaded at peak hours | 5-10 |
-
-[More: 10 domains, 30+ scenarios →](docs/USE_CASES.md)
+**What comes later:** adaptive masking (20+ strategies, Reality, fallback), full metadata protection.
 
 ---
 
-## The Messenger: Entry Point to the Network
+## What's new in v2.0.0–v2.0.6
 
-A user installs the ISOTOPE messenger.
-Their node automatically participates in all scenarios —
-without asking, without distracting.
+### v2.0.1 — Sphinx routing
+- Layered encryption. Each relay removes its layer.
+- Relay knows only the next hop (full peer.ID). Does not know sender or receiver.
+- VPS is not in the chain (when 3 trusted contacts).
+- Payload with length (4 bytes). Fixed packet size.
 
-While the user chats with friends, their node:
-- Verifies certificates for suppliers
-- Helps banks catch fraudsters
-- Answers simple AI queries
-- Participates in anonymous scientific surveys
-- Confirms votes in local communities
+### v2.0.2 — Mixing (text)
+- Flag in Sphinx packet — a property of the message, not a relay setting.
+- Relay sleeps exponential time (mean 5 sec, max 30 sec).
+- Works for text.
 
-Once a day — a single notification:
+### v2.0.3 — Mixing for files
+- File chunks via Sphinx + mixing.
+- Semaphore (2–3). Retry via Sphinx. SphinxTimeout 15 sec.
 
-> «Your node today: 12 certificates verified,
-> 3 AI queries processed,
-> 1 fraudster caught.
-> Earned: 2.8 ISOTOPE.»
+### v2.0.4 — Masking
+- All packets 64 KB. Text, file, photo, voice — indistinguishable.
+- Text batching (10 texts = 1 packet). Traffic ×1.4, not ×14.
+- Dummy traffic at random intervals (10–120 sec, ×5 in background). Receiver drops.
+- Chunk 47 KB to fit in 64 KB payload.
+- Double base64 removed for files.
 
-**Formula:** Install messenger. Chat. Network works. Tokens arrive.
+### v2.0.5 — Voice and photo via chunks
+- `isChunkedMediaType` (file/voice/photo).
+- `SendVoiceByPath`, `SendPhotoByPath` (chunks).
+- `retryInfo.mediaType`.
+- `_VoicePlayer` / `_PhotoView` with `localFilePath`.
+
+### v2.0.6 — Seed phrase + Android Keystore + i18n
+- BIP39 seed (12/24 words) → Ed25519 (PeerID) + X25519 (encryption). Deterministic.
+- Android Keystore — seed stored in hardware-backed storage. Survives restart.
+- Explicit — dialog on first launch. Not automatic.
+- i18n: English / Russian. Key screens translated.
+- `node.go` split (198 KB → 35 KB + 8 files).
 
 ---
 
-## Status
+## What was already there (v1.x)
 
-**v1.30.0 — stable (notifications and wake lock).**
-
-Implemented:
 - P2P network: libp2p + mDNS + DHT + Gossip
 - Priority Gossip
 - Associative memory
 - WebSocket + TLS
 - Obfuscation: AES-GCM + random delays
 - Voice steganography: LSB in WAV
-- Onion Routing v2
+- Onion Routing v2 (legacy)
 - Neural network: 100-dimensional vectors, bigrams, ethical filter
 - Weighted memory with archive and auto-cleanup
 - Expiring messages (TTL)
@@ -288,18 +339,17 @@ Implemented:
 - Bootstrap-handshake: [CONTACT_HELLO] → [CONTACT_HELLO_ACK] → [CONTACT_REQUEST] → [CONTACT_ACCEPT]
 - Open service messages (HELLO, ACK) always via bootstrap
 - E2E messages (REQUEST, ACCEPT) via circuit → bootstrap fallback
-- tempContacts: temporary in-memory contacts for decryption
+- tempContacts
 - Push events to UI via messageHook (not polling)
 - Symmetry: both sides confirmed: true
 
 **Identity and names (v1.27):**
 - Name (local) / RemoteName (contact's representation) / PeerID (fallback)
-- UI: Name → RemoteName → PeerID
-- MyDisplayName in Settings — default representation
+- MyDisplayName in Settings
 - QR contains display_name
 - Dialog «How should we introduce you?» when sending request
-- Profile in settings → «Your name»
-- Long tap on contact → bottom sheet: Open / Rename / Delete
+- Profile → «Your name»
+- Long tap on contact → Open / Rename / Delete
 - Security warning on request
 
 **Message statuses (v1.26):**
@@ -354,7 +404,6 @@ Implemented:
 - flushPending — only resends, doesn't remove
 - removePendingByRef(ref) — on [DELIVERED]
 - Triggers: ConnectedF (Notifiee) + announceLoop (4 min)
-- Verified: 10 messages, recipient offline → arrive instantly in batch
 
 **Offline queue fix (v1.30):**
 - enqueuePending — only for non-service (!isServiceType)
@@ -386,19 +435,46 @@ Implemented:
 - IsotopeService.kt — PARTIAL_WAKE_LOCK (isotope:network)
 - Go routines of libp2p don't freeze in background
 
-**Deferred:**
-- BLE — unstable, disabled
-- Samsung Android 10 — crash
-- DHT Provide — falls with few peers
-- BOTTOM OVERFLOWED — UI bug in connect_screen
-- 6-10 minutes Xiaomi connection — diagnosis needed
+**Voice, files, photo (v1.31):**
+- MediaType (string), MediaData, FileName, FileSize, Duration, MediaID, ChunkIndex, ChunkTotal
+- Opus 24 kbps, 5 min ≈ 900 KB
+- Chunks 64 KB, batch [DELIVERED] (500 ms / 10 refs)
+- Previews «🎤 Voice message», «📎 file.txt», «📷 Photo»
 
-In development:
-- Voice messages (E2E, steganography in WAV)
-- Files (E2E, via relay or direct)
-- Metadata protection — Onion (v2.0+)
-- ISOTOPE Enterprise (B2B data exchange)
-- ISOTOPE AI Mesh (distributed AI inference)
+**File transfer (v1.32):**
+- Chunks 64 KB, backpressure, retry, idempotency
+- Resume after restart
+- O(1) indexes (1A), internal ack (1B)
+- fallback WS↔TCP, gzip state (22x), cache getFilePath
+- TypeFileComplete = 9 (2A)
+
+**Reliability and transport (v1.33):**
+- O(1) indexes, FileAck, fallback WS↔TCP, gzip, cache
+- TypeFileComplete, semaphore on relay
+- Bugs 3–7 closed
+
+**File checkmarks (v1.34):**
+- 5 states, 4 icons
+- [READ] via mediaID
+- Progress in hidden mode
+
+**Preview and shade (v1.35):**
+- Progress in contacts, shade (3 toggles)
+- Receiver progress
+- Preview image/video
+- unified filesDir
+
+**Deferred:**
+- BLE — unstable
+- Samsung Android 10 — crash (J4). A03 Core (Android 11 Go) — works.
+- DHT Provide — falls with few peers (needs 15+)
+- Heap 114 MB at start — lazy loading (not critical)
+
+**In development (grant):**
+- Adaptive masking (20+ strategies, Reality, fallback)
+- BLE + Wi-Fi Direct (offline communication)
+- Immune system: 15+ node tests
+- ANNOUNCE signal after seed recovery + contacts backup + network replication
 
 [Roadmap →](docs/roadmap/ROADMAP.md)
 
@@ -408,8 +484,8 @@ In development:
 
 ### Requirements
 - Docker and Docker Compose
-- Go 1.21+ (for building from source)
-- Flutter 3.x (for mobile app)
+- Go 1.21+
+- Flutter 3.x
 
 ### Run a Node
 
@@ -432,6 +508,7 @@ Nodes:
 
 ### Use as a Library
 
+```go
 import core "sbimain"
 
 config := core.Config{
@@ -444,58 +521,56 @@ node := core.NewNode(config)
 core.InitP2P(node)
 core.StartHTTP(node)
 defer core.Stop(node)
+Repository Architecture
+isotope-core/
+├── node/ # Go core (P2P, neural network, memory, API)
+│ ├── *.go # package core (library)
+│ ├── main/ # entry point (package main)
+│ └── mobile/ # gomobile binding
+├── mobile/ # Flutter app
+├── tests/ # Autotests
+├── docs/ # Documentation and philosophy
+├── genesis/ # Ethical hash
+└── docker-compose.yml
 
----
+Architecture details →
 
-## Repository Architecture
+Documentation
+Manifesto
 
-    isotope-core/
-    ├── node/           # Go core (P2P, neural network, memory, API)
-    │   ├── *.go        # package core (library)
-    │   ├── main/       # entry point (package main)
-    │   └── mobile/     # gomobile binding
-    ├── mobile/         # Flutter app
-    ├── tests/          # Autotests
-    ├── docs/           # Documentation and philosophy
-    ├── genesis/        # Ethical hash
-    └── docker-compose.yml
+The Story
 
-[Architecture details →](docs/architecture/OVERVIEW.md)
+Applications
 
----
+Use Cases
 
-## Documentation
+Immunity Scale
 
-- [Manifesto](docs/philosophy/MANIFEST.md)
-- [The Story](docs/philosophy/THE_STORY.md)
-- [Applications](docs/APPLICATIONS.md)
-- [Use Cases](docs/USE_CASES.md)
-- [Immunity Scale](docs/architecture/IMMUNITY_SCALE.md)
-- [Weight Access Model](docs/architecture/WEIGHT_ACCESS_MODEL.md)
-- [FAQ — Expert Questions](docs/FAQ.md)
-- [Contributing](CONTRIBUTING.md)
-- [Code of Conduct](CODE_OF_CONDUCT.md)
-- [Security](SECURITY.md)
-- [Mirrors](docs/MIRRORS.md)
+Weight Access Model
 
----
+FAQ — Expert Questions
 
-## License
+Contributing
 
-Core: **AGPL v3**
+Code of Conduct
 
-Commercial license: [LICENSE.COMMERCIAL.md](LICENSE.COMMERCIAL.md)
+Security
 
----
+Mirrors
 
-## Contacts
+License
+Core: AGPL v3
 
-- Website: [isotope.network](https://isotope.network)
-- Zone: [isotope.zone](https://isotope.zone)
-- GitHub: [github.com/isotope-network](https://github.com/isotope-network)
-- Email: keeper@isotope.network
+Commercial license: LICENSE.COMMERCIAL.md
 
----
+Contacts
+Website: isotope.network
 
-**ISOTOPE is an infrastructure.
-Data. AI. People.**
+Zone: isotope.zone
+
+GitHub: github.com/isotope-network
+
+Email: keeper@isotope.network
+
+ISOTOPE is an infrastructure.
+Data. AI. People.

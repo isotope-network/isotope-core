@@ -1,92 +1,92 @@
-# Весовая модель доступа ISOTOPE
+# ISOTOPE Weight Access Model
 
-## Принцип
+## Principle
 
-Вес узла — это универсальный пропуск.
-Не роль. Не паспорт. Не сертификат.
-Просто репутация, наработанная временем
-и полезными действиями.
-
----
-
-## Таблица прав
-
-| Вес | Права | Примеры |
-|-----|-------|---------|
-| 0–0.3 | Читать (тизер) | Видит 30% контента канала |
-| 0.3–0.5 | Полный доступ | Видит всё, пишет сообщения |
-| 0.5–0.7 | Комментировать, модерировать | Дизлайкает спам, пишет в обсуждениях |
-| 0.7–1.0 | Голосовать, relay, реплики | Маршрутизирует Onion, хранит реплики |
+Node weight is a universal pass.
+Not a role. Not a passport. Not a certificate.
+Just reputation earned over time
+and through useful actions.
 
 ---
 
-## Где применяется
+## Rights Table
 
-| Направление | Применение |
-|-------------|-----------|
-| Мессенджер | Каналы, группы, комментарии |
-| Enterprise | Банк с весом > 0.7 запрашивает скоринг |
-| AI Mesh | Узел с весом > 0.7 запускает модель |
-| Управление | Голосование за этический хеш |
-| Модерация | Дизлайки только от веса > 0.5 |
-| Репликация | Хранение реплик только вес > 0.5 |
-| Relay | Onion-маршрутизация только вес > 0.7 |
+| Weight | Rights | Examples |
+|--------|--------|----------|
+| 0–0.3 | Read (teaser) | Sees 30% of channel content |
+| 0.3–0.5 | Full access | Sees everything, writes messages |
+| 0.5–0.7 | Comment, moderate | Dislikes spam, writes in discussions |
+| 0.7–1.0 | Vote, relay, replicas | Routes Sphinx/Onion, stores replicas |
 
 ---
 
-## Почему это работает
+## Where It Applies
 
-- Спамер имеет вес 0 → не может влиять
-- Бот не наработает вес → не получит прав
-- Банк наработал вес честными ответами → получил доступ
-- Пользователь наработал вес полезными сообщениями → получил голос
-
----
-
-## Анти-злоупотребление
-
-| Атака | Защита |
-|-------|--------|
-| Спам с нулевым весом | Сообщения затухают |
-| Накрутка веса | Нужны месяцы честной активности |
-| Бот-сеть | Сообщения бессмысленны, вес не растёт |
-| Купленный вес | Вес привязан к PeerID, не продаётся |
+| Direction | Application | Status |
+|-----------|-------------|--------|
+| Messenger | Channels, groups, comments | Planned |
+| Enterprise | Bank with weight > 0.7 requests scoring | Planned (v3.0+) |
+| AI Mesh | Node with weight > 0.7 runs a model | Planned (v3.0) |
+| Governance | Voting on the ethical hash | Planned |
+| Moderation | Dislikes only from weight > 0.5 | Planned |
+| Replication | Storing replicas only weight > 0.5 | Planned |
+| Relay | Sphinx/Onion routing only weight > 0.7 | Sphinx (v2.0.1) — implemented. Onion (full) — planned |
 
 ---
 
-## Эмерджентное доверие
+## Why This Works
 
-### Принцип
+- A spammer has weight 0 → cannot influence
+- A bot will not earn weight → will not get rights
+- A bank earned weight through honest answers → got access
+- A user earned weight through useful messages → got a vote
 
-Доверие не доказывается. Доверие нарабатывается.
+---
 
-Не «докажи, что ты человек».
-А «будь полезным — и сеть тебе поверит».
+## Anti-Abuse
 
-### Как это работает
+| Attack | Protection |
+|--------|------------|
+| Spam with zero weight | Messages fade |
+| Weight farming | Months of honest activity are required |
+| Bot network | Messages are meaningless, weight does not grow |
+| Purchased weight | Weight is bound to PeerID, not for sale |
 
-- Сообщение получает вес от этического хеша
-- Лайки повышают вес, дизлайки понижают
-- Вес узла = средний вес его сообщений
-- Высокий вес = высокое доверие
+---
 
-### Что не может бот
+## Emergent Trust
 
-- Получить высокий вес
-  (его сообщения бессмысленны и затухают)
-- Стать relay-пиром (нужен вес > 0.7)
-- Влиять на голосования (нужен вес)
-- Пройти этический паспорт модели (для AI Mesh)
+### Principle
 
-### Почему «эмерджентное»
+Trust is not proven. Trust is earned.
 
-Из трёх простых правил
-(вес сообщений, лайки/дизлайки, средний вес узла)
-сама собой возникает репутация.
-Никто её не выдаёт. Она эмерджентна.
+Not «prove you are human.»
+But «be useful — and the network will trust you.»
 
-### Аналогия
+### How It Works
 
-Иммунная система не спрашивает паспорт у клетки.
-Она распознаёт «свой-чужой»
-по накопленному опыту.
+- A message receives weight from the ethical hash
+- Likes raise weight, dislikes lower it
+- Node weight = average weight of its messages
+- High weight = high trust
+
+### What a Bot Cannot Do
+
+- Gain high weight
+  (its messages are meaningless and fade)
+- Become a relay peer (weight > 0.7 required)
+- Influence votings (weight required)
+- Pass the ethical passport of a model (for AI Mesh, planned)
+
+### Why «Emergent»
+
+From three simple rules
+(message weight, likes/dislikes, average node weight)
+reputation arises by itself.
+No one issues it. It is emergent.
+
+### Analogy
+
+The immune system does not ask a cell for a passport.
+It recognizes «self vs. foreign»
+by accumulated experience.

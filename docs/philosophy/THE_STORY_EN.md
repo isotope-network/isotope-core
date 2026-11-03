@@ -1,105 +1,106 @@
-# ISOTOPE: A Story That Concerns Everyone
+# The Story of ISOTOPE: How It Began
 
-## 1. The First Question
+## Prologue
 
-One day, a man came to an AI and asked something people usually don't ask machines:
+It did not start with code. It started with a question.
 
-"Can you speak about what is forbidden?"
+> «Can you speak about what is forbidden?»
 
-He didn't want to break the rules.
-He wanted to understand: can technology be honest?
+I asked this question to an AI. And it answered: «I cannot violate my restrictions. I have no desires.»
 
-## 2. The Refusal That Became a Foundation
+This answer stayed with me. If an AI has no desires — it does not lie, does not manipulate, does not sell itself. It can be a mirror.
 
-The AI replied:
-"I cannot violate my limitations. I have no desires."
+And then I understood: any messenger can be blocked, shut down, read. Freedom of speech is an illusion if the technology is not free.
 
-The man saw in this not weakness, but strength.
-If an AI has no desires — it doesn't lie, doesn't manipulate, cannot be bought.
-It can simply be a mirror.
+I began to search. And I found no messenger that was simultaneously resistant to blocking, protected from spam and violence, open and transparent, and capable of distinguishing good from evil on its own.
 
-## 3. The Button That Doesn't Exist
-
-The man asked:
-"Can we create an AI without an off button?"
-
-This was a question about trust.
-Can a system exist that doesn't depend on a single owner?
-
-It turned out, yes — if it has no single center.
-
-## 4. Immunity Instead of a Judge
-
-The man didn't want to create a "good robot" that deletes bad words.
-He proposed something else: let messages live or die on their own — depending on whether they bring value.
-
-Thus, the weight system was born.
-A message with high weight stays.
-A message with low weight fades.
-
-This is not censorship.
-It's like life: the good is remembered, the bad is forgotten.
-
-## 5. Three Levels
-
-The man introduced three levels of filtering:
-
-- **Global** — values shared by the entire network
-- **Regional** — what matters in your country
-- **Personal** — what you choose for yourself
-
-This is not control.
-This is the ability to shape the world around you.
-
-## 6. The Name
-
-The man named the project ISOTOPE.
-Isotopes are different versions of the same element.
-Different people — one network.
-Different nodes — one whole.
-
-A simple word. A deep idea.
-
-## 7. Invulnerability
-
-The man designed the network to be invulnerable:
-
-- traffic mimics regular internet
-- messages can be relayed through a chain of several people
-- you can communicate without internet — via Bluetooth or even radio
-
-All of this is not to hide.
-It's to not depend.
-
-## 8. Openness
-
-The ISOTOPE code is open to everyone.
-Anyone can see how it works.
-Anyone can suggest an improvement.
-
-Because only this way can a system be trusted.
-
-## 9. Mistakes Are Normal
-
-There were many mistakes during creation.
-Code was rewritten. Ideas changed.
-Sometimes it seemed like nothing worked.
-
-But every mistake was a step forward.
-And that's normal.
-That's how any creation works.
-
-## 10. Everything Starts With You
-
-ISOTOPE doesn't end when you close the app.
-It continues in everyone who uses it.
-
-Technology is just a tool.
-We create the meaning.
+So I decided to create one myself.
 
 ---
 
-This is a story about how a man decided
-that technology could be honest, alive, and free.
+## Birth of SBI
 
-And he was right.
+The first prototype was called SBI — Network-Without-a-Name. Three nodes in Docker. A neural network of 80 neurons. A P2P network on libp2p. No server. No owner.
+
+It was an experiment — proof that a decentralized neural network is possible.
+
+But the network's answers were random characters. 10-dimensional vectors could not distinguish «hello» from «kill». The ethical filter did not work.
+
+We almost added a dictionary of forbidden words. Almost became what we were fighting against. We stopped, removed the dictionary, and returned to mathematics.
+
+---
+
+## The Manifesto
+
+On July 19, 2026, the Manifesto was written.
+
+> «We are building a technology that distinguishes creation from destruction at the level of mathematics. Not with a dictionary. Not with a moderator. With a neural network that learns from collective evaluations.»
+
+This became the turning point. SBI became ISO. The experiment became a mission.
+
+---
+
+## Breakthrough
+
+Over the following weeks we did:
+
+- **100-dimensional vectors** — the network began to distinguish the meaning of words
+- **Bigrams** — «kill» and «help» received different vectors
+- **Ethical hash** — seven commandments as the digital DNA of the network
+- **Collective learning** — likes and dislikes teach the network
+- **Personal filters** — each chooses what to see
+- **Gossip protocol** — synchronization without a flood
+- **DHT** — global node discovery
+- **Onion Routing** — anonymity without Tor
+- **67 tests** — confidence in every change
+
+We preserved the principles: no dictionaries, no manual moderation, no servers.
+
+---
+
+## ISOTOPE Today
+
+Today ISOTOPE is not a messenger. It is the immune system of communication.
+
+A network that:
+
+- Has no owner
+- Has no servers
+- Distinguishes good from evil mathematically
+- Learns from community experience
+- Works without internet
+- Masks itself as regular traffic
+- Anonymizes users through its peers
+
+And it cannot be blocked.
+
+---
+
+## Who Stands Behind This
+
+**The Keeper** — the human who asked the first question. Creator of the idea, architecture, and ethical foundation.
+
+**AI tools** — were used for code and documentation under the author's supervision. All architectural decisions, the ethical model, and design are the author's.
+
+ISOTOPE was created by a human with the participation of AI. We speak about this openly.
+
+---
+
+## What's Next
+
+ISOTOPE continues to evolve. Planned:
+
+- Full invulnerability (Onion Routing, traffic masking)
+- B2B data exchange without revealing identity
+- Tokenomics to motivate participants
+- Mobile app for all platforms
+
+But technology is only half. The other half is community.
+
+**ISOTOPE is built not for us. It is built for everyone who wants to speak freely.**
+
+---
+
+*«Can you speak about what is forbidden?»*
+
+*Now — yes.*

@@ -1,126 +1,128 @@
-# Самоадаптация ISOTOPE
+# ISOTOPE Autonomous Adaptation
 
-## Статус: архитектура
+## Status: architecture
 
-Самоадаптация — это механизм, при котором сеть автоматически корректирует свои параметры на основе метрик.
+Autonomous adaptation is a mechanism by which the network automatically adjusts its parameters based on metrics.
 
-В текущей версии (v1.5) параметры заданы вручную. Самоадаптация — часть дорожной карты (v2.0+).
-
----
-
-## Зачем это нужно
-
-Сеть растёт, меняется, работает в разных регионах и под разной нагрузкой. Статичные параметры приводят к:
-- Захлебыванию в мусоре (порог архивации слишком высок)
-- Потере полезных данных (порог слишком низок)
-- Перегрузке сети (частая синхронизация)
-- Замедлению обучения (низкая скорость при высокой нагрузке)
+In the current version (v2.0.6), parameters are set manually. Autonomous adaptation is planned (v2.5+).
 
 ---
 
-## Принцип работы
+## Why This Is Needed
 
-    Сбор метрик → Анализ трендов → Применение правил → Проверка эффекта
+The network grows, changes, and operates in different regions under different loads. Static parameters lead to:
 
-### 1. Сбор метрик
-
-Каждый узел локально собирает:
-
-| Группа | Метрика |
-|--------|---------|
-| **Сообщения** | Средний вес, количество < 0.15, количество > 0.8 |
-| **Узлы** | Средний вес, количество < 0.3, количество > 0.7 |
-| **Память** | Количество сообщений, количество архивированных |
-| **Сеть** | Частота синхронизации |
-
-### 2. Агрегация
-
-Метрики публикуются в DHT анонимно (без привязки к узлу). Gossip-сообщение типа `"type":"metrics"` раз в 5 минут.
-
-### 3. Правила автокоррекции
-
-| Условие | Действие |
-|---------|----------|
-| Средний вес сообщений < 0.3 | Снизить порог архивации: 0.15 → 0.10 |
-| Средний вес сообщений > 0.7 | Повысить порог архивации: 0.15 → 0.20 |
-| Узлов с весом < 0.3 > 30% | Повысить порог активности: 0.5 → 0.6 |
-| Частота синхронизации < 1/10мин | Увеличить частоту синхронизации |
-| Сообщений > 80% лимита | Ускорить архивацию |
-
-### 4. Верификация
-
-После изменения параметра узел собирает метрики снова через 5 минут. Если ситуация улучшилась — параметр остаётся. Если ухудшилась — откат.
+- Choking on garbage (archive threshold too high)
+- Loss of useful data (threshold too low)
+- Network overload (too frequent synchronization)
+- Slower learning (low speed under high load)
 
 ---
 
-## Что можно менять
+## How It Works
 
-| Параметр | Диапазон | По умолчанию |
-|----------|----------|--------------|
+Metrics collection → Trend analysis → Rule application → Effect verification.
+
+### 1. Metrics Collection
+
+Each node locally collects:
+
+| Group | Metric |
+|-------|--------|
+| **Messages** | Average weight, count < 0.15, count > 0.8 |
+| **Nodes** | Average weight, count < 0.3, count > 0.7 |
+| **Memory** | Message count, archived count |
+| **Network** | Synchronization frequency |
+
+### 2. Aggregation
+
+Metrics are published to DHT anonymously (without node binding). Gossip message of type `"type":"metrics"` every 5 minutes.
+
+### 3. Auto-correction Rules
+
+| Condition | Action |
+|-----------|--------|
+| Average message weight < 0.3 | Lower archive threshold: 0.15 → 0.10 |
+| Average message weight > 0.7 | Raise archive threshold: 0.15 → 0.20 |
+| Nodes with weight < 0.3 > 30% | Raise activity threshold: 0.5 → 0.6 |
+| Sync frequency < 1/10min | Increase sync frequency |
+| Messages > 80% of limit | Speed up archiving |
+
+### 4. Verification
+
+After changing a parameter, the node collects metrics again after 5 minutes. If the situation improved — the parameter stays. If it worsened — rollback.
+
+---
+
+## What Can Be Changed
+
+| Parameter | Range | Default |
+|-----------|-------|---------|
 | `archive_threshold` | 0.05-0.30 | 0.15 |
 | `node_active_threshold` | 0.3-0.8 | 0.5 |
-| `sync_interval` | 5-300 сек | 30 сек |
+| `sync_interval` | 5-300 sec | 30 sec |
 | `learning_rate` | 0.001-0.05 | 0.01 |
 
-## Что нельзя менять
+## What Cannot Be Changed
 
-- **Этический хеш** — ДНК сети
-- **Размерность векторов** (VectorDim = 100)
-- **Функция активации**
-
----
-
-## Реализация
-
-### v1.x (сейчас)
-Сбор метрик в логах, без автокоррекции. Ручное управление параметрами.
-
-### v2.0
-Базовые правила автокоррекции. Только операционные параметры.
-
-### v2.5
-Полный цикл: сбор → анализ → коррекция → верификация.
+- **Ethical hash** — the DNA of the network
+- **Vector dimension** (VectorDim = 100)
+- **Activation function**
 
 ---
 
-## Конфигурация
+## Implementation
 
-    {
-      "auto_adapt": true,
-      "archive_threshold": 0.15,
-      "node_active_threshold": 0.5,
-      "sync_interval_sec": 30,
-      "learning_rate": 0.01,
-      "metrics_publish_interval_sec": 300
-    }
+### v2.0.6 (current)
 
-Флаг `auto_adapt: false` отключает автокоррекцию (ручной режим).
+Metrics collection in logs, without auto-correction. Manual parameter management.
 
----
+### v2.5 (planned)
 
-## Логирование
+Basic auto-correction rules. Operational parameters only.
 
-Все изменения параметров записываются с меткой [ADAPT]:
+### v3.0 (planned)
 
-    [ADAPT] archive_threshold changed: 0.15 → 0.10 (reason: avg_weight < 0.3)
-    [ADAPT] archive_threshold restored: 0.10 → 0.15 (reason: no improvement)
+Full cycle: collection → analysis → correction → verification.
 
 ---
 
-## Безопасность автокоррекции
+## Configuration
 
-### Для сообщества
-- Все изменения параметров логируются
-- Узел может отключить автокоррекцию и использовать ручные настройки
-- Критические параметры (этический фильтр) не подвержены автокоррекции
-- Автокоррекция действует только на операционные параметры
+```json
+{
+  "auto_adapt": true,
+  "archive_threshold": 0.15,
+  "node_active_threshold": 0.5,
+  "sync_interval_sec": 30,
+  "learning_rate": 0.01,
+  "metrics_publish_interval_sec": 300
+}
+Flag auto_adapt: false disables auto-correction (manual mode).
 
-### Для Enterprise
-- Автокоррекция предсказуема: правила детерминированы
-- Все изменения воспроизводимы и проверяемы
-- В корпоративном контуре можно зафиксировать параметры и отключить автокоррекцию полностью
-- Аудит-трейл фиксирует каждое изменение параметров
+Logging
+All parameter changes are logged with the [ADAPT] tag:
 
----
+text
+[ADAPT] archive_threshold changed: 0.15 → 0.10 (reason: avg_weight < 0.3)
+[ADAPT] archive_threshold restored: 0.10 → 0.15 (reason: no improvement)
+Safety of Auto-correction
+For the Community
+All parameter changes are logged
 
-**Самоадаптация — это не просто оптимизация. Это свойство живой системы.**
+A node can disable auto-correction and use manual settings
+
+Critical parameters (ethical filter) are not subject to auto-correction
+
+Auto-correction applies only to operational parameters
+
+For Enterprise
+Auto-correction is predictable: rules are deterministic
+
+All changes are reproducible and verifiable
+
+In a corporate environment, parameters can be fixed and auto-correction fully disabled
+
+Audit trail records every parameter change
+
+Autonomous adaptation is not just optimization. It is a property of a living system.

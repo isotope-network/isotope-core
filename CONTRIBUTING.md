@@ -13,17 +13,20 @@ Participants must follow the [Code of Conduct](CODE_OF_CONDUCT.md). In short: re
 ## How to Help
 
 ### Report a Bug
+
 - Check if the issue already exists
 - Describe: what you did, what you expected, what you got
 - Attach logs (without private data)
 - Specify version and environment
 
 ### Suggest an Improvement
+
 - Open an issue with the `enhancement` label
 - Describe: why it's needed, how it should work
 - Discuss with the community before writing code
 
 ### Write Code
+
 1. Fork the repository
 2. Create a branch: `feature/name` or `fix/name`
 3. Write code and tests
@@ -34,7 +37,7 @@ Participants must follow the [Code of Conduct](CODE_OF_CONDUCT.md). In short: re
 
 ## Code Standards
 
-- **Go:** `gofmt`, `go vet`, `golint`
+- **Go:** `gofmt`, `go vet`, `go build`, `go test`
 - **Flutter:** `flutter analyze`, `flutter test`
 - **Commits:** meaningful messages in English
 - **Tests:** required for new functionality
@@ -42,19 +45,18 @@ Participants must follow the [Code of Conduct](CODE_OF_CONDUCT.md). In short: re
 ---
 
 ## Project Structure
+isotope-core/
+├── node/ # Go core (package core)
+│ ├── *.go # Core library
+│ ├── main/ # Entry point (package main)
+│ └── mobile/ # gomobile binding
+├── mobile/ # Flutter app
+├── tests/ # Test suites
+├── docs/ # Documentation
+├── genesis/ # Ethical hash
+└── docker-compose.yml
 
-    isotope-core/
-    ├── node/           # Go core
-    │   ├── main.go     # Entry point
-    │   ├── node.go     # P2P node, processMessage
-    │   ├── memory.go   # Weighted memory
-    │   ├── layers.go   # Neural network
-    │   ├── handlers.go # HTTP + WebSocket
-    │   ├── utils.go    # Utilities, vectorization
-    │   └── state.go    # State persistence
-    ├── mobile/         # Flutter app
-    ├── tests/          # Test suites
-    └── docs/           # Documentation
+text
 
 ---
 
@@ -67,6 +69,7 @@ Current tasks are marked in the [Roadmap](docs/roadmap/ROADMAP.md) and Issues wi
 ## If GitHub Is Unavailable
 
 If GitHub is blocked:
+
 - Forks and PRs are accepted via mirrors (GitLab, Codeberg)
 - Releases are available at isotope.network and IPFS
 
@@ -78,6 +81,7 @@ If GitHub is blocked:
 
 - GitHub: [github.com/isotope-network](https://github.com/isotope-network)
 - Website: [isotope.network](https://isotope.network)
+- Email: keeper@isotope.network
 
 ---
 

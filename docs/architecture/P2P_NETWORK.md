@@ -1,106 +1,109 @@
-# P2P-сеть ISOTOPE
+# ISOTOPE P2P Network
 
-## Обзор
+## Overview
 
-P2P-сеть ISOTOPE построена на **libp2p** — модульном сетевом стеке, разработанном Protocol Labs (IPFS, Filecoin).
+The ISOTOPE P2P network is built on **libp2p** — a modular network stack developed by Protocol Labs (IPFS, Filecoin).
 
-Сеть не имеет серверов. Каждый узел равноправен.
-
----
-
-## Архитектура сети
-
-### Транспортный уровень
-
-| Транспорт | Назначение |
-|-----------|------------|
-| **TCP** | Основной транспорт |
-| **WebSocket + TLS** | Маскировка под HTTPS, обход DPI |
-| **mDNS** | Обнаружение в локальной сети |
-| **Bluetooth** | Связь без интернета (планируется) |
-| **Wi-Fi Direct** | Прямое соединение без роутера (планируется) |
-
-### Обнаружение пиров
-
-| Механизм | Область | Статус |
-|----------|---------|--------|
-| **mDNS** | Локальная сеть | Работает |
-| **DHT Kademlia** | Глобальная сеть (WAN) | Код готов, тест при деплое |
-| **Bootstrap-узлы** | Первый вход в сеть | Публичные IPFS-узлы |
-
-### Синхронизация слоёв
-
-| Механизм | Описание | Статус |
-|----------|----------|--------|
-| **Gossip-протокол** | Эпидемическая рассылка с TTL=3 | Работает |
-| **Дельта-синхронизация** | Только изменившиеся слои | Работает |
-| **Троттлинг** | Не чаще 5 секунд | Работает |
-
-### Маршрутизация сообщений
-
-| Механизм | Описание | Статус |
-|----------|----------|--------|
-| **Gossip** | Рассылка всем подписанным узлам | Работает |
-| **Форвардинг** | Пересылка через соседей с TTL | Работает |
-| **Onion Routing** | Цепочка из 3+ пиров | Планируется |
+The network has no servers. Every node is equal.
 
 ---
 
-## Протоколы
+## Network Architecture
 
-### Основной протокол: `/sbicore/1.0.0`
+### Transport Layer
 
-Используется для обмена сообщениями между узлами.
+| Transport | Purpose | Status |
+|-----------|---------|--------|
+| **TCP** | Primary transport | Works |
+| **WebSocket + TLS** | HTTPS masquerading, DPI bypass | Works (WS 9001 blocked by Gorodok ISP) |
+| **mDNS** | Local network discovery | Works |
+| **Bluetooth** | Communication without internet | Planned |
+| **Wi-Fi Direct** | Direct connection without router | Planned |
 
-Формат:
+### Peer Discovery
 
-    MSGID:текст сообщения
+| Mechanism | Scope | Status |
+|-----------|-------|--------|
+| **mDNS** | Local network | Works |
+| **DHT Kademlia** | Global network (WAN) | Planned (15+ nodes) |
+| **Bootstrap nodes** | First entry into the network | ISOTOPE VPS (bootstrap) |
 
-### Протокол синхронизации: `/sbicore/sync/1.0.0`
+### Layer Synchronization
 
-Используется для обмена слоями нейросети.
+| Mechanism | Description | Status |
+|-----------|-------------|--------|
+| **Gossip protocol** | Epidemic broadcast with TTL=3 | Works (for 3+ nodes) |
+| **Delta synchronization** | Only changed layers | Works |
+| **Throttling** | No more than once per 5 seconds | Works |
 
-Формат (JSON):
+### Message Routing
 
-    {
-      "ttl": 3,
-      "delta": [
-        {"index": 0, "data": [0.1, 0.2, ...]},
-        {"index": 1, "data": [0.3, 0.4, ...]}
-      ]
-    }
-
----
-
-## Жизненный цикл узла
-
-1. **Запуск** — генерация Ed25519-ключей
-2. **Загрузка состояния** — из state_nodeX.json
-3. **Подключение к сети** — mDNS + DHT + bootstrap
-4. **Синхронизация слоёв** — gossip-протокол
-5. **Обмен сообщениями** — форвардинг
-6. **Обучение** — каждый узел учится локально
-
----
-
-## Отказоустойчивость
-
-- **Нет единой точки отказа** — любой узел может упасть, сеть продолжит работать
-- **Селф-хилинг** — если relay-пир падает, соседи перенимают его обязанности (планируется)
-- **Автономность** — mDNS работает без интернета
+| Mechanism | Description | Status |
+|-----------|-------------|--------|
+| **Gossip** | Broadcast to all subscribed nodes | Works |
+| **Forwarding** | Relay through neighbors with TTL | Works |
+| **Sphinx** | Layered encryption, 2 relays + recipient | Implemented (v2.0.1) |
+| **Onion Routing (full)** | Chain of 3+ peers | Planned (v2.0+) |
 
 ---
 
-## Безопасность
+## Protocols
 
-- **Шифрование:** Noise (встроено в libp2p)
-- **Аутентификация:** PeerID на основе Ed25519
-- **Защита от атак Сивиллы:** этический хеш + вес узлов
+### Main protocol: `/sbicore/1.0.0`
 
----
+Used for message exchange between nodes.
 
-## Ограничения текущей версии
+Format:
+MSGID:message text
 
-- DHT не тестировался в WAN — в Docker за NAT не работает
-- Gossip для 3 узлов = broadcast — эффект будет виден при 10+ узлах
-- Onion Routing — в разработке
+text
+
+### Synchronization protocol: `/sbicore/sync/1.0.0`
+
+Used for exchanging neural network layers.
+
+Format (JSON):
+
+```json
+{
+  "ttl": 3,
+  "delta": [
+    {"index": 0, "data": [0.1, 0.2, ...]},
+    {"index": 1, "data": [0.3, 0.4, ...]}
+  ]
+}
+Node Lifecycle
+Startup — generation of RSA (PeerID) + Ed25519 (signature) + X25519 (E2E)
+
+State loading — from state_nodeX.json
+
+Network connection — mDNS + DHT + bootstrap
+
+Layer synchronization — gossip protocol
+
+Message exchange — forwarding
+
+Learning — each node learns locally
+
+Fault Tolerance
+No single point of failure — any node can fail, the network continues to work
+
+Self-healing — if a relay peer fails, neighbors take over its duties (planned)
+
+Autonomy — mDNS works without internet
+
+Security
+Encryption: Noise (built into libp2p)
+
+Authentication: PeerID — RSA (until v2.0.6), Ed25519 — signature (v1.24)
+
+E2E encryption: X25519 + box.Seal (v1.24)
+
+Sybil attack protection: ethical hash + node weight
+
+Current Version Limitations
+DHT has not been tested in WAN — does not work in Docker behind NAT
+
+Gossip for 3 nodes = broadcast — the effect will be visible at 10+ nodes
+
+Onion Routing (full) — planned. Sphinx (v2.0.1) — implemented.

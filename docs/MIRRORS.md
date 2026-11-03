@@ -1,57 +1,56 @@
-# Зеркала ISOTOPE
+# ISOTOPE Mirrors
 
-Если основной репозиторий заблокирован или недоступен, используйте зеркала.
+If the main repository is blocked or unavailable, use the mirrors.
 
 ---
 
-## Основной репозиторий
+## Main Repository
 
 - **GitHub:** [github.com/isotope-network/isotope-core](https://github.com/isotope-network/isotope-core)
 
 ---
 
-## Зеркала кода
+## Code Mirrors
 
-| Платформа | Ссылка | Статус |
-|-----------|--------|--------|
-| GitHub (основной) | github.com/isotope-network/isotope-core | Активно |
-| GitLab | gitlab.com/isotope-network/isotope-core | Активно |
-| Codeberg | codeberg.org/isotope-network/isotope-core | Активно |
-| IPFS | /ipns/isotope.network | Планируется |
-
----
-
-## Зеркала сайта
-
-| Ссылка | Статус |
-|--------|--------|
-| [isotope.network](https://isotope.network) | Активно |
-| [isotope.zone](https://isotope.zone) | Активно |
-| Tor (скоро) | Планируется |
+| Platform | Link | Status |
+|----------|------|--------|
+| GitHub (main) | github.com/isotope-network/isotope-core | Active |
+| GitLab | gitlab.com/isotope-network/isotope-core | Active |
+| Codeberg | codeberg.org/isotope-network/isotope-core | Active |
+| IPFS | /ipns/isotope.network | Planned |
 
 ---
 
-## Автоматическая синхронизация
+## Website Mirrors
 
-Зеркала на GitLab и Codeberg обновляются автоматически при каждом пуше в основной репозиторий (GitHub Actions).
-
-Зеркала на IPFS обновляются вручную при каждом релизе.
-
----
-
-## Как создать своё зеркало
-
-1. Форкните репозиторий
-2. Настройте CI/CD для синхронизации
-3. Сообщите нам через Issue — добавим в список
+| Link | Status |
+|------|--------|
+| [isotope.network](https://isotope.network) | Active |
+| isotope.zone | Planned |
 
 ---
 
-## Контакты
+## Automatic Synchronization
 
-- Email: mirrors@isotope.network
-- GitHub Issues: метка `mirror`
+The GitLab and Codeberg mirrors are updated automatically on every push to the main repository (GitHub Actions).
+
+The IPFS mirrors are updated manually with each release.
 
 ---
 
-**Чем больше зеркал — тем неуязвимее ISOTOPE.**
+## How to Create Your Own Mirror
+
+1. Fork the repository
+2. Set up CI/CD for synchronization
+3. Let us know via an Issue — we'll add it to the list
+
+---
+
+## Contacts
+
+- Email: keeper@isotope.network
+- GitHub Issues: label `mirror`
+
+---
+
+**The more mirrors there are, the more invulnerable ISOTOPE becomes.**

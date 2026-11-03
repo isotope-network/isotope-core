@@ -1,244 +1,127 @@
-# FAQ — вопросы экспертов
+# FAQ — Expert Questions
 
-Честные ответы на сложные вопросы.
-Без воды, с цифрами, без приукрашивания.
-
----
-
-## Криптограф
-
-**1. Ваш этический хеш — это SHA-256 от строки.
-Любой, кто знает строку, может вычислить хеш.
-Это не защита, это просто пароль.**
-
-Верно. Хеш — это не криптографическая защита,
-а ключ доступа. Как пароль от Wi-Fi.
-Он нужен, чтобы в сеть не вошли случайные люди.
-Настоящая защита — в децентрализации и открытом коде.
-Взлом одного узла не раскрывает остальные.
-
-**2. Где подписи сообщений?
-Сейчас кто угодно может подделать senderID.**
-
-Сейчас подпись — это первые 8 символов PeerID.
-Полная Ed25519-подпись каждого сообщения — в плане v2.0.
-До этого сеть защищена тем, что senderID берётся
-из libp2p-соединения, которое уже аутентифицировано.
-
-**3. Почему RSA-ключи, а не Ed25519? RSA — медленный.**
-
-Это временное решение.
-Следующее обновление — Ed25519.
-RSA был выбран на старте
-для совместимости с libp2p по умолчанию.
+Honest answers to difficult questions. No fluff, with numbers, without embellishment.
 
 ---
 
-## Сетевик
+## Cryptographer
 
-**4. Ваш gossip с TTL=3 — это лавина.
-При 1000 узлов сообщение будет ходить кругами.**
+**1. Your ethical hash is a SHA-256 of a string. Anyone who knows the string can compute the hash. That's not protection, it's just a password.**
 
-Да, текущий gossip наивен.
-Для 1000+ узлов нужен gossipsub (уже в libp2p).
-Мы сознательно начали с простого, чтобы отладить ядро.
-Gossipsub — в v2.0.
+Correct. The hash is not cryptographic protection but an access key. Like a Wi-Fi password. It's needed so that random people don't join the network. The real protection lies in decentralization and open code. Compromising one node does not expose the others.
 
-**5. mDNS работает только в одной подсети.
-В интернете он бесполезен.**
+**2. Where are the message signatures? Right now anyone can forge a senderID.**
 
-Верно. mDNS — для локалки.
-Для глобальной сети — DHT. Оба работают параллельно.
-mDNS даёт связь без интернета, DHT — глобальный поиск.
+As of v1.24 (E2E) — full Ed25519 signature for every message. `signature` in the QR, verification during exchange. `senderID` is taken from the libp2p connection, which is already authenticated.
 
-**6. WebSocket+TLS — это не маскировка.
-DPI видит WebSocket-хендшейк.**
+**3. Why RSA keys instead of Ed25519? RSA is slow.**
 
-WebSocket поверх TLS выглядит как обычный HTTPS.
-Да, DPI может анализировать трафик глубже,
-но это уже дорого и не масштабируется.
-Для полной маскировки нужен морфинг-трафик —
-это в плане (G6a).
-
-**7. Репликация на 2 узла — это мало.
-При падении обоих данные теряются.**
-
-Да, это минимальная репликация.
-Фактор репликации будет расти с ростом сети.
-При 50+ узлах можно реплицировать на 5-7 узлов.
-Плюс — реплики хранят только узлы с весом > 0.5,
-что снижает риск потери.
-
-**8. Самоадаптация каждые 5 минут — это медленно.
-При резком росте нагрузки сеть не успеет.**
-
-Для текущего масштаба (5 узлов) — достаточно.
-Интервал адаптации сам адаптивен:
-при аномалиях метрик частота проверок увеличится.
-Это заложено в правилах автокоррекции.
+PeerID is RSA (for compatibility with libp2p defaults). Signing is Ed25519 (v1.24). E2E encryption is X25519 (v1.24). Planned (v2.0.6+) — migrating PeerID to Ed25519 (seed phrase).
 
 ---
 
-## ML-инженер
+## Network Engineer
 
-**9. 100-мерные векторы с биграммами — это не семантика.
-Это статистика букв. Вы не понимаете смысл слов.**
+**4. Your gossip with TTL=3 is a flood. With 1000 nodes, a message will circulate in loops.**
 
-Честно — да.
-Текущий этический движок различает «убей» и «помоги»
-на уровне n-грамм, а не смысла.
-Настоящее понимание смысла придёт с AI Mesh,
-когда на узлы загрузятся модели уровня BERT.
-Сейчас у нас быстрый фильтр, а не глубокий анализ.
+Yes, the current gossip is naive. For 1000+ nodes, gossipsub is needed (already in libp2p). We deliberately started simple to debug the core. Gossipsub is planned.
 
-**10. Ваше «обучение» — это просто градиентный спуск
-на одном слое. Это не обучение, это подгонка весов.**
+**5. mDNS only works within a single subnet. On the internet it's useless.**
 
-Верно для текущей версии. Один слой, lr адаптивный.
-Полноценное федеративное обучение — v2.5.
-Сейчас мы проверяем, что сама архитектура работает:
-веса обновляются, синхронизируются, влияют на фильтрацию.
+Correct. mDNS is for the local network. For the global network — DHT. Both work in parallel. mDNS provides connectivity without the internet, DHT — global discovery.
 
-**11. Почему 100 нейронов?
-Это на 4 порядка меньше,
-чем у любой современной модели.**
+**6. WebSocket+TLS is not obfuscation. DPI sees the WebSocket handshake.**
 
-100 измерений достаточно для биграммной классификации.
-Полноценные модели будут на узлах AI Mesh.
-Этический движок — это предохранитель, а не мозг.
+WebSocket over TLS looks like regular HTTPS. Yes, DPI can analyze traffic more deeply, but that's already expensive and doesn't scale. Full obfuscation requires adaptive masking (Reality, 20+ strategies) — in development.
+
+**7. Replication to 2 nodes is too little. If both fail, data is lost.**
+
+Yes, this is minimal replication. The replication factor will grow as the network grows. With 50+ nodes, replication to 5-7 nodes becomes possible. Plus, replicas are stored only by nodes with weight > 0.5, which reduces the risk of loss.
+
+**8. Self-adaptation every 5 minutes is slow. With a sharp load increase, the network won't keep up.**
+
+For the current scale (4 nodes) — it's sufficient. The adaptation interval is itself adaptive: during metric anomalies, the check frequency increases. This is built into the auto-correction rules.
 
 ---
 
-## Юрист
+## ML Engineer
 
-**12. Ваш этический хеш — это чьи-то ценности,
-навязанные всем.
-В некоторых странах это может быть признано экстремизмом.**
+**9. 100-dimensional vectors with bigrams are not semantics. It's letter statistics. You don't understand the meaning of words.**
 
-Хеш универсален: не убий, не кради, не лги.
-Это есть в законах всех стран.
-Формулировки взяты из мировых религий,
-а не из политических деклараций.
-Плюс — любой может форкнуть сеть со своим хешем.
+Honestly — yes. The current ethical engine distinguishes "kill" from "help" at the level of n-grams, not meaning. True understanding of meaning will come with AI Mesh, when BERT-level models are loaded onto the nodes. Right now we have a fast filter, not deep analysis.
 
-**13. Пользователи анонимны.
-Если через ISOTOPE будут координировать преступления —
-кто ответит?**
+**10. Your "learning" is just gradient descent on a single layer. That's not learning, it's weight fitting.**
 
-Никто. Как и в случае с Tor, Bitcoin, Telegram.
-Технология нейтральна.
-Наша этическая фильтрация снижает риски,
-но не устраняет их полностью.
-Ответственность за использование — на пользователе.
+True for the current version. One layer, adaptive lr. Full federated learning — v3.0. Right now we're verifying that the architecture itself works: weights update, synchronize, and influence filtering.
 
-**14. Вы не храните данные, но вы — создатель.
-Суд может заставить вас изменить код.**
+**11. Why 100 neurons? That's 4 orders of magnitude less than any modern model.**
 
-Суд может заставить меня изменить код в моём репозитории.
-Но пользователи уже скачали текущую версию.
-Форки продолжат работать.
-Децентрализация сильнее любого суда.
-
-**15. Весовая модель доступа — это дискриминация.
-Новые узлы не имеют прав.**
-
-Новые узлы имеют базовые права: читать, писать.
-Права растут с репутацией — это не дискриминация,
-а защита от спама и ботов.
-В реальном мире вы тоже не доверяете незнакомцу
-ключи от квартиры в первый день знакомства.
+100 dimensions is sufficient for bigram classification. Full models will run on AI Mesh nodes. The ethical engine is a fuse, not a brain.
 
 ---
 
-## Бизнес-ангел
+## Lawyer
 
-**16. Какой у вас TAM/SAM/SOM?
-Без цифр это хобби.**
+**12. Your ethical hash is someone's values imposed on everyone. In some countries this could be recognized as extremism.**
 
-Рынок мессенджеров — $100+ млрд.
-B2B-обмен данными — $80+ млрд.
-AI-инференс — $50+ млрд и растёт.
-SAM — сейчас нулевой. Мы на pre-seed стадии.
-Цифры появятся после первых Enterprise-контрактов.
+The hash is universal: don't kill, don't steal, don't lie. This is present in the laws of all countries. The formulations are taken from world religions, not from political declarations. Plus — anyone can fork the network with their own hash.
 
-**17. Кто ваши конкуренты? Signal? Telegram? Tox?**
+**13. Users are anonymous. If crimes are coordinated through ISOTOPE — who is responsible?**
 
-Прямых нет.
-Signal — централизован.
-Telegram — цензурируем.
-Tox — без модерации.
-Мы — единственный мессенджер с этическим иммунитетом.
-В B2B — конкуренты Hyperledger, Corda,
-но они блокчейн, а мы — P2P с затухающей памятью.
+No one. As with Tor, Bitcoin, Telegram. The technology is neutral. Our ethical filtering reduces risks but does not eliminate them entirely. Responsibility for use lies with the user.
 
-**18. Какой у вас go-to-market?
-Без плана — нет инвестиций.**
+**14. You don't store data, but you are the creator. A court could force you to change the code.**
 
-Сначала Community-вектор: мессенджер как демонстрация.
-Потом Enterprise: консорциум банков (E0).
-Токеномика — после 10 000 пользователей.
-План есть, но он на ранней стадии.
+A court could force me to change the code in my repository. But users have already downloaded the current version. Forks will continue to work. Decentralization is stronger than any court.
 
-**19. Каналы с весовыми уровнями — это цензура?
-Новичок видит только 30% контента.**
+**15. The weighted access model is discrimination. New nodes have no rights.**
 
-Нет. Это защита от спама.
-Новичок видит тизер. Наработал вес — получил полный доступ.
-В реальном мире вы тоже не получаете всё сразу:
-сначала стажировка, потом доступ к закрытым материалам.
+New nodes have basic rights: read, write. Rights grow with reputation — this is not discrimination but protection against spam and bots. In the real world, you don't give a stranger the keys to your apartment on the first day either.
 
 ---
 
-## Правозащитник
+## Business Angel
 
-**20. Ваш этический фильтр может ошибаться.
-Хорошее сообщение может быть отфильтровано.
-Это цензура ошибок.**
+**16. What is your TAM/SAM/SOM? Without numbers, this is a hobby.**
 
-Да, может. Ложные срабатывания возможны.
-Но пользователь всегда видит свой preHash/antiHash
-и может их настроить.
-Плюс — лайки/дизлайки позволяют сообществу
-корректировать сеть.
-Это не идеальный фильтр, а адаптивный.
+The messenger market is $100+ billion. B2B data exchange — $80+ billion. AI inference — $50+ billion and growing. SAM — currently zero. We are at the pre-seed stage. Numbers will appear after the first Enterprise contracts.
 
-**21. Анонимность в ISOTOPE —
-это защита для диссидентов или для террористов?**
+**17. Who are your competitors? Signal? Telegram? Tox?**
 
-И для тех, и для других.
-Как и в случае с любой технологией.
-Но этический хеш отсекает явное зло,
-а сообщество — спорное.
-Мы не можем гарантировать,
-что ISOTOPE не используют во вред.
-Мы можем гарантировать, что она не создана для этого.
+No direct competitors. Signal is centralized. Telegram is censorable. Tox has no moderation. Briar, Session, Cwtch, Nostr are P2P but without an immune system. We are the only messenger with ethical immunity. In B2B, competitors are Hyperledger, Corda, but they are blockchain, while we are P2P with fading memory.
 
-**22. Почему вы не работаете
-с правозащитными организациями?**
+**18. What is your go-to-market? Without a plan, there's no investment.**
 
-Работаем. Открытый код, документация, философский слой —
-всё в открытом доступе.
-Прямое сотрудничество возможно,
-когда проект станет стабильнее.
-Сейчас мы на этапе ядра.
+First the Community vector: the messenger as a demonstration. Then Enterprise: a consortium of banks (E0). Tokenomics — after 10,000 users. The plan exists, but it's at an early stage.
+
+**19. Channels with weight levels — is that censorship? A newcomer sees only 30% of the content.**
+
+No. It's protection against spam. A newcomer sees a teaser. Once they build weight, they get full access. In the real world, you don't get everything at once either: first an internship, then access to classified materials.
 
 ---
 
-## Философ
+## Human Rights Advocate
 
-**23. Вы утверждаете, что технология может
-отличать добро от зла. Это наивно.
-Добро и зло — контекстуальны.**
+**20. Your ethical filter can make mistakes. A good message can be filtered out. That's censorship of errors.**
 
-Мы не утверждаем,
-что технология определяет добро и зло.
-Мы утверждаем, что сообщество через лайки/дизлайки
-и этический хеш формирует коллективное представление.
-Технология не судит — она отражает суждение людей.
+Yes, it can. False positives are possible. But the user always sees their preHash/antiHash and can adjust them. Plus, likes/dislikes allow the community to correct the network. This is not a perfect filter but an adaptive one.
 
-**24. ISOTOPE — это утопия.
-Люди не готовы к такой свободе.**
+**21. Is anonymity in ISOTOPE protection for dissidents or for terrorists?**
 
-Люди не готовы к свободе, пока не попробуют её.
-Мы даём инструмент.
-Пользоваться или нет — выбор каждого.
+For both. As with any technology. But the ethical hash cuts off obvious evil, and the community — the debatable. We cannot guarantee that ISOTOPE won't be used for harm. We can guarantee that it was not created for that.
+
+**22. Why don't you work with human rights organizations?**
+
+We do. Open code, documentation, the philosophical layer — all publicly available. Direct cooperation is possible once the project becomes more stable. Right now we are at the core stage.
+
+---
+
+## Philosopher
+
+**23. You claim that technology can distinguish good from evil. That's naive. Good and evil are contextual.**
+
+We do not claim that technology determines good and evil. We claim that the community, through likes/dislikes and the ethical hash, forms a collective representation. Technology does not judge — it reflects the judgment of people.
+
+**24. ISOTOPE is a utopia. People are not ready for such freedom.**
+
+People are not ready for freedom until they try it. We provide a tool. Whether to use it or not is everyone's choice.

@@ -1,149 +1,123 @@
-# Области применения ISOTOPE
+# ISOTOPE Application Areas
 
-ISOTOPE — инфраструктура для этичного, неуязвимого,
-самообучающегося обмена данными и ИИ.
+ISOTOPE is infrastructure for ethical, invulnerable, self-learning data and AI exchange.
 
-Любое взаимодействие, где нужны децентрализация,
-этическая фильтрация и доверие без посредников,
-может быть построено на ISOTOPE.
+Any interaction that requires decentralization, ethical filtering, and trust without intermediaries can be built on ISOTOPE.
 
 ---
 
-## Данные
+## Data
 
-### Трансграничные платежи
-- **Проблема:** SWIFT централизован, медленный, дорогой,
-  политически уязвим
-- **Решение:** P2P-сеть банков, gossip вместо SWIFT,
-  этический фильтр антифрода
-- **Результат:** секунды вместо дней, микро-комиссии,
-  невозможность отключить страну
+### Cross-Border Payments
 
-### Децентрализованный рынок данных
-- **Проблема:** Google и Facebook владеют данными,
-  люди не получают ничего
-- **Решение:** обезличенные запросы к узлам-людям,
-  токеномика за ответы
-- **Результат:** люди зарабатывают на своих данных,
-  монополии теряют исключительность
+- **Problem:** SWIFT is centralized, slow, expensive, and politically vulnerable.
+- **Solution:** a P2P network of banks, gossip instead of SWIFT, an ethical anti-fraud filter.
+- **Result:** seconds instead of days, micro-commissions, a country cannot be cut off.
 
-### Кредитный скоринг для невидимых
-- **Проблема:** 2 млрд человек без кредитной истории
-- **Решение:** репутационный вес в сети
-  на основе цифрового следа
-- **Результат:** доступ к финансам для невидимых,
-  новые клиенты для банков
+### Decentralized Data Marketplace
 
-### Сертификация цепочек поставок
-- **Проблема:** подделка сертификатов, дорогая проверка
-- **Решение:** каждый этап — узел, криптоподпись,
-  фильтр аномалий
-- **Результат:** проверка за секунды, подделать невозможно
+- **Problem:** Google and Facebook own the data, people get nothing.
+- **Solution:** anonymized queries to human nodes, tokenomics for answers (planned, v2.5+).
+- **Result:** people earn from their data, monopolies lose their exclusivity.
 
-### Наследование цифровых активов
-- **Проблема:** биткоины и домены теряются
-  со смертью владельца
-- **Решение:** цифровое завещание в сети,
-  нотариусы-узлы, автоисполнение
-- **Результат:** активы не теряются,
-  наследники получают без суда
+### Credit Scoring for the Invisible
+
+- **Problem:** 2 billion people without a credit history.
+- **Solution:** reputation weight in the network based on a digital footprint.
+- **Result:** access to finance for the invisible, new clients for banks.
+
+### Supply Chain Certification
+
+- **Problem:** forged certificates, expensive verification.
+- **Solution:** each stage is a node, cryptographic signature, anomaly filter.
+- **Result:** verification in seconds, forgery impossible.
+
+### Inheritance of Digital Assets
+
+- **Problem:** bitcoins and domains are lost when the owner dies.
+- **Solution:** a digital will in the network, notary nodes, automatic execution.
+- **Result:** assets are not lost, heirs receive them without court.
 
 ---
 
-## ИИ
+## AI
 
-### Распределённый инференс (ISOTOPE AI Mesh)
-- **Проблема:** централизованные ИИ-серверы перегружены
-  в пиковые часы
-- **Решение:** облегчённые модели работают на узлах.
-  Простые запросы — ближайший узел.
-  Сложные — дата-центр
-- **Результат:** 80% запросов уходят из дата-центра,
-  ответ мгновенный, перегрузок нет
+### Distributed Inference (ISOTOPE AI Mesh)
 
-### Этический паспорт модели
-- **Проблема:** в сеть может попасть модель,
-  обученная на вредном контенте
-- **Решение:** до загрузки модель проходит проверку —
-  хеш от архитектуры и тренировочных данных
-- **Результат:** вредная модель не попадает в сеть.
-  Фильтр источников, а не контента
+- **Problem:** centralized AI servers are overloaded during peak hours.
+- **Solution (planned, v3.0):** lightweight models run on nodes. Simple queries — the nearest node. Complex ones — the data center.
+- **Expected result:** 80% of queries leave the data center, instant response, no overloads.
 
-### Федеративное обучение ИИ
-- **Проблема:** данные для ИИ заперты в больницах
-  из-за врачебной тайны
-- **Решение:** модель путешествует по узлам,
-  обучается локально, агрегируется без центра
-- **Результат:** ИИ на реальных данных,
-  приватность не нарушена
+### Ethical Passport of a Model
 
-### Маркетплейс ИИ-моделей
-- **Проблема:** модели принадлежат 3-5 корпорациям
-- **Решение:** любой создатель публикует модель в сети.
-  Узлы загружают её, создатель получает роялти
-- **Результат:** конкуренция моделей, пользователь выигрывает
+- **Problem:** a model trained on harmful content could enter the network.
+- **Solution (planned, v3.0):** before loading, a model undergoes verification — a hash of the architecture and training data.
+- **Expected result:** a harmful model does not enter the network. A filter of sources, not content.
+
+### Federated AI Learning
+
+- **Problem:** data for AI is locked in hospitals due to medical confidentiality.
+- **Solution (planned, v3.0):** the model travels across nodes, trains locally, and is aggregated without a center.
+- **Expected result:** AI on real data, privacy not violated.
+
+### AI Model Marketplace
+
+- **Problem:** models belong to 3-5 corporations.
+- **Solution (planned, v3.0+):** any creator publishes a model in the network. Nodes download it, the creator receives royalties.
+- **Expected result:** competition of models, the user wins.
 
 ---
 
-## Общение
+## Communication
 
-### Мессенджер без цензуры
-- **Проблема:** мессенджеры блокируются,
-  читаются, цензурируются
-- **Решение:** P2P без серверов, этический фильтр
-  вместо модератора, работа без интернета
-- **Результат:** связь, которую нельзя заблокировать
+### Uncensored Messenger
 
-### Децентрализованные каналы
-- **Проблема:** каналы в мессенджерах
-  блокируются или удаляются
-- **Решение:** каналы без владельца,
-  подписчики оценивают важность
-- **Результат:** контент живёт,
-  пока сообщество считает его ценным
+- **Problem:** messengers are blocked, read, censored.
+- **Solution:** P2P without servers, an ethical filter instead of a moderator.
+- **Result:** communication that cannot be blocked.
 
-### Связь в чрезвычайных ситуациях
-- **Проблема:** при отключении интернета
-  связь пропадает
-- **Решение:** mDNS, Bluetooth mesh, Wi-Fi Direct
-- **Результат:** спасатели и люди в зоне бедствия
-  остаются на связи
+### Decentralized Channels
 
-### Электронное голосование
-- **Проблема:** централизованное — подделка,
-  блокчейн — не тайное
-- **Решение:** анонимный ID, один голос — одно сообщение,
-  аудит без деанонимизации
-- **Результат:** тайное и проверяемое одновременно
+- **Problem:** channels in messengers are blocked or deleted.
+- **Solution:** channels without an owner, subscribers rate importance.
+- **Result:** content lives as long as the community considers it valuable.
+
+### Communication in Emergency Situations
+
+- **Problem:** when the internet is cut off, communication is lost.
+- **Solution (planned, grant):** mDNS, Bluetooth mesh, Wi-Fi Direct.
+- **Expected result:** rescuers and people in a disaster zone stay connected.
+
+### Electronic Voting
+
+- **Problem:** centralized — forgery, blockchain — not secret.
+- **Solution:** anonymous ID, one vote — one message, audit without deanonymization.
+- **Result:** secret and verifiable at the same time.
 
 ---
 
-## Наука
+## Science
 
-### Исследовательские консорциумы
-- **Проблема:** учёные не могут обмениваться данными
-  без нарушения приватности
-- **Решение:** агрегированные запросы к узлам-больницам,
-  токеномика за участие
-- **Результат:** данные для науки без раскрытия пациентов
+### Research Consortia
 
-### Децентрализованное рецензирование
-- **Проблема:** журналы-монополисты, paywall
-- **Решение:** рецензия — ответ узла с весом,
-  автор платит токенами, доступ открыт
-- **Результат:** нет paywall, рецензенты зарабатывают,
-  качество через репутацию
+- **Problem:** scientists cannot exchange data without violating privacy.
+- **Solution:** aggregated queries to hospital nodes, tokenomics for participation (planned).
+- **Result:** data for science without exposing patients.
+
+### Decentralized Peer Review
+
+- **Problem:** monopoly journals, paywall.
+- **Solution:** review — a node's response with weight, the author pays in tokens (planned), access is open.
+- **Result:** no paywall, reviewers earn, quality through reputation.
 
 ---
 
-## Приоритеты
+## Priorities
 
-**Первый фокус (после v1.9):**
-E0-E6 — Консорциум банков и страховых.
-Это самый готовый, экономически выгодный
-и юридически защищённый кейс.
+**First focus (v2.0+):**
+E0–E6 — Consortium of Banks and Insurers. This is the most ready, economically viable, and legally protected case. (Concept, planned.)
 
-**Параллельно:**
-ISOTOPE AI Mesh — распределённый инференс ИИ.
+**In parallel:**
+ISOTOPE AI Mesh — distributed AI inference. (Concept, v3.0.)
 
-Остальные направления развиваются параллельно или за ними.
+The other directions develop in parallel or after them.

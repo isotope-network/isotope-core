@@ -1,92 +1,92 @@
-# Токеномика ISOTOPE
+# ISOTOPE Tokenomics
 
-## Статус: концепт
+## Status: concept
 
-Токеномика ISOTOPE — это экономическая модель, которая мотивирует участников сети держать узлы, создавать качественный контент и обмениваться данными без раскрытия личности.
+ISOTOPE tokenomics is an economic model that motivates network participants to run nodes, create quality content, and exchange data without revealing identity.
 
-Токеномика не реализована в текущей версии. Это часть дорожной карты (v2.5+).
-
----
-
-## Зачем нужен токен
-
-Сеть без владельца, без серверов, без рекламы. Но сети нужно топливо:
-
-- **Мотивация держать узел.** Узлы работают 24/7 — они должны получать вознаграждение.
-- **Мотивация создавать контент.** Владельцы каналов должны зарабатывать на качественном контенте.
-- **Защита от спама.** Бесплатные сообщения незнакомцам — вектор для спама. Микро-комиссия решает это.
-- **Оплата ресурсов.** Хранение истории, создание каналов, приоритет доставки — стоят токенов.
-- **Управление.** Держатели токенов голосуют за развитие протокола.
+Tokenomics is not implemented in the current version. It is part of the roadmap (v2.5+).
 
 ---
 
-## Что можно делать с токеном
+## Why a Token Is Needed
 
-| Действие | Бесплатно | С токеном |
-|----------|-----------|-----------|
-| Отправить сообщение знакомому | Да | Да |
-| Отправить сообщение незнакомцу | Нет | Да (микро-комиссия) |
-| Хранить историю 30 дней | Да | Да |
-| Хранить историю вечно | Нет | Да (N токенов/ГБ/месяц) |
-| Создать публичный канал | Нет | Да (разовая комиссия) |
-| Голосовать за этический хеш | Нет | Да (1 токен = 1 голос) |
-| Стать валидатором | Нет | Да (стейкинг N токенов) |
+A network without an owner, without servers, without advertising. But the network needs fuel:
+
+- **Motivation to run a node.** Nodes work 24/7 — they must receive a reward.
+- **Motivation to create content.** Channel owners must earn from quality content.
+- **Spam protection.** Free messages to strangers are a vector for spam. A micro-fee solves this.
+- **Payment for resources.** Storing history, creating channels, delivery priority — cost tokens.
+- **Governance.** Token holders vote on protocol development.
 
 ---
 
-## Как заработать токены
+## What You Can Do with a Token
 
-| Способ | Описание |
-|--------|----------|
-| **Поддержка узла** | Узел работает 24/7 → награда раз в сутки |
-| **Полезный контент** | Сообщения лайкают → микро-токены автору |
-| **Модерация** | Дизлайкаешь спам → получаешь комиссию |
-| **Стейкинг** | Заморозил токены → участвуешь в валидации → процент |
-| **Покупка** | На бирже или у других пользователей |
-
----
-
-## Эмиссия
-
-- **Начальная:** фиксированное количество (например, 100 млн ISOTOPE)
-- **Новые токены:** только через вознаграждение узлов и контента
-- **Инфляция:** 2-5% в год, уменьшается со временем
-- **Сжигание:** часть комиссий уничтожается → дефляционное давление
+| Action | Free | With Token |
+|--------|------|------------|
+| Send a message to an acquaintance | Yes | Yes |
+| Send a message to a stranger | No | Yes (micro-fee) |
+| Store history for 30 days | Yes | Yes |
+| Store history forever | No | Yes (N tokens/GB/month) |
+| Create a public channel | No | Yes (one-time fee) |
+| Vote on the ethical hash | No | Yes (1 token = 1 vote) |
+| Become a validator | No | Yes (staking N tokens) |
 
 ---
 
-## B2B-обмен данными
+## How to Earn Tokens
 
-Токеномика особенно эффективна в сценарии ISOTOPE Enterprise:
-
-- Банк платит токенами за запросы к сети
-- Узел, предоставивший полезный ответ, получает токены
-- Качество данных вознаграждается (высокий вес узла = дороже ответ)
-- Обман наказывается (низкий вес = ответы не учитываются)
-
-Это рыночный механизм качества данных без центрального арбитра.
+| Method | Description |
+|--------|-------------|
+| **Node support** | Node works 24/7 → reward once a day |
+| **Useful content** | Messages are liked → micro-tokens to the author |
+| **Moderation** | You dislike spam → you receive a commission |
+| **Staking** | You freeze tokens → you participate in validation → percentage |
+| **Purchase** | On an exchange or from other users |
 
 ---
 
-## Дорожная карта токеномики
+## Emission
 
-| Фаза | Что | Срок |
-|------|-----|------|
+- **Initial:** fixed amount (e.g., 100 million ISOTOPE)
+- **New tokens:** only through rewards for nodes and content
+- **Inflation:** 2-5% per year, decreasing over time
+- **Burning:** part of commissions is destroyed → deflationary pressure
+
+---
+
+## B2B Data Exchange
+
+Tokenomics is especially effective in the ISOTOPE Enterprise scenario:
+
+- A bank pays tokens for queries to the network
+- A node that provides a useful answer receives tokens
+- Data quality is rewarded (high node weight = more expensive answer)
+- Deception is punished (low weight = answers are not counted)
+
+This is a market mechanism for data quality without a central arbiter.
+
+---
+
+## Tokenomics Roadmap
+
+| Phase | What | Timeline |
+|-------|------|----------|
 | 1 | White Paper | v2.0 |
-| 2 | Внутренний токен (без биржи) | v2.5 |
-| 3 | Тестирование с 10-100 пользователями | v2.6 |
-| 4 | Смарт-контракт + аудит | v3.0 |
-| 5 | Листинг на DEX | v3.5 |
-| 6 | Листинг на CEX | По готовности |
+| 2 | Internal token (no exchange) | v2.5 |
+| 3 | Testing with 10-100 users | v2.6 |
+| 4 | Smart contract + audit | v3.0 |
+| 5 | DEX listing | v3.5 |
+| 6 | CEX listing | When ready |
 
 ---
 
-## Риски
+## Risks
 
-- **Регуляция.** Токен могут признать ценной бумагой. Нужна юридическая консультация.
-- **Спекуляция.** Токен должен быть нужен внутри сети, а не только для биржи.
-- **Волатильность.** Цена может упасть → мотивация держать узлы упадёт.
+- **Regulation.** The token may be recognized as a security. Legal consultation is needed.
+- **Speculation.** The token must be needed within the network, not only for the exchange.
+- **Volatility.** The price may fall → motivation to run nodes will drop.
 
 ---
 
-**Токеномика ISOTOPE — это не спекуляция. Это топливо для иммунной системы общения.**
+**ISOTOPE tokenomics is not speculation. It is fuel for the immune system of communication.**

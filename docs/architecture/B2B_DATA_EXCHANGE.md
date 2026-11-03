@@ -1,88 +1,90 @@
-# ISOTOPE Enterprise: B2B-обмен данными без раскрытия личности
+# ISOTOPE Enterprise: B2B Data Exchange Without Disclosing Identity
 
-## Статус: концепт
+## Status: concept
 
-ISOTOPE Enterprise — это коммерческое расширение для обмена данными между организациями (банки, страховые, медицинские учреждения) без раскрытия персональных данных.
+ISOTOPE Enterprise is a commercial extension for data exchange between organizations (banks, insurers, medical institutions) without disclosing personal data.
 
-Не реализовано. Часть дорожной карты.
-
----
-
-## Проблема
-
-Сегодня организации обмениваются данными через централизованные бюро (кредитные истории, медицинские реестры). Это:
-
-- **Избыточное раскрытие** — получаешь больше данных, чем нужно для ответа
-- **Потеря контроля** — клиент не знает, кто и что про него запрашивал
-- **Единая точка отказа** — централизованную базу можно взломать или заставить выдать всё
+Not implemented. Part of the roadmap.
 
 ---
 
-## Решение ISOTOPE
+## The Problem
 
-Вместо «расскажите всё про клиента» — «ответьте на конкретный вопрос: да или нет».
+Today, organizations exchange data through centralized bureaus (credit histories, medical registries). This leads to:
 
-### Пример: кредитный скоринг
-
-**Сейчас:** Банк запрашивает кредитную историю → получает ВСЁ.
-
-**С ISOTOPE:**
-1. Клиент генерирует анонимный ID и даёт разрешение банку на запрос
-2. Банк спрашивает: «Количество просрочек > 3 за 2 года?» → получает «нет»
-3. Банк спрашивает: «Текущая долговая нагрузка > 50%?» → получает «нет»
-4. Ни один банк не раскрывает данные своих клиентов — только ответы на вопросы
-
-### Пример: медицинский андеррайтинг
-
-**Сейчас:** Страховая запрашивает историю болезней → получает диагнозы.
-
-**С ISOTOPE:**
-1. Больница вычисляет коэффициент риска (число, не диагноз)
-2. Страховая спрашивает: «Коэффициент риска по сердечно-сосудистым?» → получает «0.88»
-3. Страховая получает число для расчёта тарифа, не зная диагнозов
+- **Excessive disclosure** — you receive more data than needed for an answer
+- **Loss of control** — the client does not know who requested what about them
+- **Single point of failure** — a centralized database can be hacked or forced to disclose everything
 
 ---
 
-## Как это работает технически
+## The ISOTOPE Solution
 
-1. **Анонимизация:** Клиент получает ID = хеш(данные + соль). Бессмысленная строка для всех, кроме своего банка.
-2. **Запрос в сеть:** Gossip-протокол рассылает запрос по узлам.
-3. **Ответ без раскрытия:** Узел, знающий этот ID, отвечает только на конкретный вопрос.
-4. **Взвешивание ответов:** Этический движок агрегирует ответы с учётом веса узлов.
+Instead of «tell everything about the client» — «answer a specific question: yes or no».
 
----
+### Example: Credit Scoring
 
-## Токеномика в B2B
+**Today:** A bank requests a credit history → receives EVERYTHING.
 
-- Банк платит токенами за запросы
-- Узел получает токены за полезные ответы
-- Качественные ответы (от узлов с высоким весом) ценятся выше
-- Обман наказывается падением веса
+**With ISOTOPE:**
 
----
+1. The client generates an anonymous ID and gives the bank permission to query.
+2. The bank asks: «Number of delinquencies > 3 in 2 years?» → receives «no».
+3. The bank asks: «Current debt burden > 50%?» → receives «no».
+4. No bank discloses its clients' data — only answers to questions.
 
-## Юридическая совместимость
+### Example: Medical Underwriting
 
-| Закон | Как ISOTOPE соблюдает |
-|-------|----------------------|
-| **GDPR** | Право на забвение (затухание данных). Минимизация данных (только ответы). Согласие клиента. |
-| **152-ФЗ** | Обезличенные данные. Банковская тайна (ответы — не персональные данные). |
-| **HIPAA** | Минимально необходимая информация. Деидентификация. Аудит доступа. |
+**Today:** An insurer requests a medical history → receives diagnoses.
 
----
+**With ISOTOPE:**
 
-## Дорожная карта Enterprise
-
-| Этап | Что |
-|------|-----|
-| **E0** | Формирование консорциума (участники, соглашение, меморандум) |
-| E1 | Приватные подсети |
-| E2 | Дифференцированные права доступа |
-| E3 | Аудит-трейл для клиента |
-| E4 | Zero-Knowledge Proofs (опционально) |
-| E5 | Типовой договор + сертификация |
-| E6 | Пилот: 3 банка + 1 страховая |
+1. The hospital calculates a risk coefficient (a number, not a diagnosis).
+2. The insurer asks: «Cardiovascular risk coefficient?» → receives «0.88».
+3. The insurer receives a number for tariff calculation without knowing diagnoses.
 
 ---
 
-**ISOTOPE Enterprise — это не продажа данных. Это инфраструктура для обмена ответами без раскрытия.**
+## How It Works Technically
+
+1. **Anonymization:** The client receives an ID = hash(data + salt). A meaningless string for everyone except their own bank.
+2. **Query to the network:** The gossip protocol broadcasts the query across nodes.
+3. **Answer without disclosure:** The node that knows this ID answers only the specific question.
+4. **Weighting of answers:** The ethical engine aggregates answers taking into account node weights.
+
+---
+
+## Tokenomics in B2B
+
+- The bank pays tokens for queries.
+- The node receives tokens for useful answers.
+- Quality answers (from nodes with high weight) are valued higher.
+- Deception is punished by a drop in weight.
+
+---
+
+## Legal Compatibility
+
+| Law | How ISOTOPE Complies |
+|-----|----------------------|
+| **GDPR** | Right to be forgotten (data decay). Data minimization (only answers). Client consent. |
+| **152-FZ** | Anonymized data. Banking secrecy (answers are not personal data). |
+| **HIPAA** | Minimum necessary information. De-identification. Access audit. |
+
+---
+
+## Enterprise Roadmap
+
+| Stage | What |
+|-------|------|
+| **E0** | Consortium formation (participants, agreement, memorandum) |
+| E1 | Private subnets |
+| E2 | Differentiated access rights |
+| E3 | Audit trail for the client |
+| E4 | Zero-Knowledge Proofs (optional) |
+| E5 | Standard contract + certification |
+| E6 | Pilot: 3 banks + 1 insurer |
+
+---
+
+**ISOTOPE Enterprise is not the sale of data. It is infrastructure for exchanging answers without disclosure.**
