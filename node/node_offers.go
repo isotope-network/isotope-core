@@ -299,6 +299,35 @@ func (n *Node) handleFileOffer(m Message) {
 	log.Printf("[FILE_OFFER] received from %s (mediaID=%s, %s, %d bytes)",
 		m.Sender, payload.MediaID, payload.FileName, payload.FileSize)
 
+	// v2.0.7: порог — у получателя. Решение «запрашивать или нет» — его право.
+	// -1 — всегда запрашивать (push в UI, ждать). 0 — никогда (авто-принять).
+	// N > 0 — запрашивать, если fileSize >= N*МБ. Иначе — авто-принять.
+	thresholdMB := -1
+	if n.settingsStore != nil {
+		thresholdMB = n.settingsStore.GetFileRequestThreshold()
+	}
+
+	needAsk := false
+	switch {
+	case thresholdMB < 0:
+		needAsk = true
+	case thresholdMB == 0:
+		needAsk = false
+	default:
+		thresholdBytes := int64(thresholdMB) * 1024 * 1024
+		needAsk = payload.FileSize >= thresholdBytes
+	}
+
+	if !needAsk {
+		// Авто-принять: сразу [FILE_ACCEPT]. Без UI (пользователь выбрал «не спрашивать»).
+		log.Printf("[FILE_OFFER] auto-accept (threshold=%d MB, size=%d): %s",
+			thresholdMB, payload.FileSize, payload.MediaID)
+		if err := n.SendFileAccept(m.Ref, payload.MediaID, m.Sender); err != nil {
+			log.Printf("[FILE_OFFER] auto-accept failed: %v", err)
+		}
+		return
+	}
+
 	// Push в UI: предложение принять.
 	if n.messageHook != nil {
 		push := map[string]interface{}{

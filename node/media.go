@@ -336,38 +336,15 @@ func (n *Node) SendFileByPath(peerID, filePath, fileName string, ttlPeriod, ttlM
 
 	chunkTotal := int((fileSize + ChunkSize - 1) / ChunkSize)
 
-	// Право отказа: проверка порога. -1 — всегда запрашивать. 0 — никогда.
-	// N — запрашивать от N МБ.
-	thresholdMB := -1
-	if n.settingsStore != nil {
-		thresholdMB = n.settingsStore.GetFileRequestThreshold()
+	// v2.0.7: право отказа — у получателя. Отправитель всегда шлёт [FILE_OFFER].
+	// Получатель решает (свой порог): запросить или авто-принять.
+	if err := n.SendFileOffer(peerID, mediaID, fileName, fileSize, chunkTotal, ttlSeconds, ttlMode, expiresAt); err != nil {
+		log.Printf("[FILE_OFFER] send failed for %s: %v", mediaID, err)
+		return mediaID, false, fileSize, chunkTotal, fmt.Errorf("send offer failed: %w", err)
 	}
-	needOffer := false
-	if thresholdMB < 0 {
-		needOffer = true
-	} else if thresholdMB > 0 {
-		thresholdBytes := int64(thresholdMB) * 1024 * 1024
-		if fileSize >= thresholdBytes {
-			needOffer = true
-		}
-	}
-
-	if needOffer {
-		if err := n.SendFileOffer(peerID, mediaID, fileName, fileSize, chunkTotal, ttlSeconds, ttlMode, expiresAt); err != nil {
-			log.Printf("[FILE_OFFER] send failed for %s: %v", mediaID, err)
-			// Fallback: отправить сразу (чтобы не потерять файл).
-			go n.sendFileChunksAsync(peerID, mediaID, fileName, fileSize, "file", ttlSeconds, ttlMode, expiresAt)
-			return mediaID, false, fileSize, chunkTotal, nil
-		}
-		log.Printf("[FILE_OFFER] waiting for accept: mediaID=%s, %d chunks, %d bytes",
-			mediaID, chunkTotal, fileSize)
-		return mediaID, true, fileSize, chunkTotal, nil
-	}
-
-	// Без запроса — фоновая отправка. MethodChannel возвращается немедленно.
-	go n.sendFileChunksAsync(peerID, mediaID, fileName, fileSize, "file", ttlSeconds, ttlMode, expiresAt)
-
-	return mediaID, false, fileSize, chunkTotal, nil
+	log.Printf("[FILE_OFFER] sent, waiting for accept: mediaID=%s, %d chunks, %d bytes",
+		mediaID, chunkTotal, fileSize)
+	return mediaID, true, fileSize, chunkTotal, nil
 }
 
 // sendFileChunksAsync — читает чанки из sent/<MediaID>.bin,

@@ -743,6 +743,9 @@ class _ChatScreenState extends State<ChatScreen> {
     for (final p in provider.pendingMessages) {
       items.add(_ChatItem.pending(p));
     }
+    for (final o in provider.fileOffersFor(peerID)) {
+      items.add(_ChatItem.incomingOffer(o));
+    }
     for (final o in provider.outgoingOffersFor(peerID)) {
       items.add(_ChatItem.outgoingOffer(o));
     }
@@ -790,22 +793,6 @@ class _ChatScreenState extends State<ChatScreen> {
                 textAlign: TextAlign.center,
               ),
             ),
-          if (context.watch<ChatProvider>().fileOffersFor(context.read<ChatProvider>().currentNodeIp).isNotEmpty)
-            Consumer<ChatProvider>(
-              builder: (_, provider, __) {
-                final offers = provider.fileOffersFor(provider.currentNodeIp);
-                return Column(
-                  children: offers.map((o) {
-                    return FileOfferBubble(
-                      offer: o,
-                      state: FileOfferState.pending,
-                      onAccept: () => provider.acceptFileOffer(o.mediaID),
-                      onDecline: () => provider.declineFileOffer(o.mediaID),
-                    );
-                  }).toList(),
-                );
-              },
-            ),
           Expanded(
             child: Consumer<ChatProvider>(
               builder: (_, provider, __) {
@@ -825,6 +812,17 @@ class _ChatScreenState extends State<ChatScreen> {
                     // Pending — отдельный вид.
                     if (item.kind == _ChatItemKind.pending) {
                       return _buildPendingRow(item.message!, provider);
+                    }
+
+                    // Входящий оффер — плашка с кнопками «Принять / Не принять».
+                    if (item.kind == _ChatItemKind.incomingOffer) {
+                      final offer = item.offer!;
+                      return FileOfferBubble(
+                        offer: offer,
+                        state: FileOfferState.pending,
+                        onAccept: () => provider.acceptFileOffer(offer.mediaID),
+                        onDecline: () => provider.declineFileOffer(offer.mediaID),
+                      );
                     }
 
                     // Исходящий оффер — плашка со статусом (без кнопок).
@@ -955,7 +953,7 @@ class _ChatScreenState extends State<ChatScreen> {
 }
 
 /// Тип элемента ленты чата.
-enum _ChatItemKind { message, pending, outgoingOffer }
+enum _ChatItemKind { message, pending, incomingOffer, outgoingOffer }
 
 /// Элемент ленты: сообщение, pending или исходящий оффер.
 /// Один список для ListView.builder — простая индексация, одна сортировка.
@@ -975,6 +973,10 @@ class _ChatItem {
   factory _ChatItem.pending(Message m) {
     final t = parseIsoLocal(m.time) ?? DateTime.now();
     return _ChatItem._(_ChatItemKind.pending, m, null, t);
+  }
+
+  factory _ChatItem.incomingOffer(FileOfferData o) {
+    return _ChatItem._(_ChatItemKind.incomingOffer, null, o, o.createdAt);
   }
 
   factory _ChatItem.outgoingOffer(FileOfferData o) {
