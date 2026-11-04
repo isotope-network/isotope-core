@@ -56,6 +56,12 @@
   "privacySeedCreateOrRestore": "Создать или восстановить",
   "privacySeedShowRestoreOther": "Показать, восстановить из другой",
 
+  "privacyFileRequestSection": "Запрос на приём файлов",
+  "privacyFileRequestSectionSub": "Перед получением файла — спросить согласие. Можно задать порог: всегда спрашивать, никогда не спрашивать или спрашивать от определённого размера.",
+  "privacyFileRequestAlways": "Всегда запрашивать",
+  "privacyFileRequestFromMB": "Запрашивать от определённого размера",
+  "privacyFileRequestNever": "Никогда не запрашивать",
+
   "seedDialogTitle": "Seed-фраза",
   "seedDialogHasSeed": "Seed-фраза задана. PeerID восстановим при перезапуске.\n\nВосстановить из другой фразы? PeerID изменится, контакты — заново.",
   "seedDialogNoSeed": "Seed-фраза не задана. Сейчас используется случайный PeerID (RSA).\n\nСоздать seed-фразу — PeerID станет восстановимым. После перезапуска PeerID изменится, контакты — заново.",

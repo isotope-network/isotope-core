@@ -28,6 +28,44 @@ class HelloAck {
   });
 }
 
+/// Данные предложения принять файл (v2.0.7).
+/// Используется и получателем (входящий оффер), и отправителем (исходящий).
+/// Приходит из Go push'ем file_offer / file_accept / file_decline / file_offer_expired.
+class FileOfferData {
+  final String mediaID;
+  final String offerMsgID;
+  final String sender;
+  final String fileName;
+  final int fileSize;
+  final int chunkTotal;
+  final String state; // pending | accepted | declined | expired
+  final DateTime createdAt;
+
+  FileOfferData({
+    required this.mediaID,
+    required this.offerMsgID,
+    required this.sender,
+    required this.fileName,
+    required this.fileSize,
+    required this.chunkTotal,
+    this.state = 'pending',
+    DateTime? createdAt,
+  }) : createdAt = createdAt ?? DateTime.now();
+
+  FileOfferData copyWith({String? state}) {
+    return FileOfferData(
+      mediaID: mediaID,
+      offerMsgID: offerMsgID,
+      sender: sender,
+      fileName: fileName,
+      fileSize: fileSize,
+      chunkTotal: chunkTotal,
+      state: state ?? this.state,
+      createdAt: createdAt,
+    );
+  }
+}
+
 class ChatProvider extends ChangeNotifier {
   late ApiService api;
   late WsService ws;
@@ -84,6 +122,16 @@ class ChatProvider extends ChangeNotifier {
   // Статус файла по mediaID (1=sent, 2=delivered, 3=hidden, 4=read).
   // Источник — GetFileStatuses (Go). Один на файл, не на чанк.
   final Map<String, int> _fileStatuses = {};
+
+  // ==== FILE OFFERS (v2.0.7 — право отказа от файла) ====
+  // Входящие офферы: mediaID → FileOfferData. Получатель видит кнопки.
+  final Map<String, FileOfferData> _fileOffers = {};
+  // Исходящие офферы: mediaID → FileOfferData. Отправитель видит статус.
+  // pending  — «Ждём готовности принятия».
+  // accepted — «Получатель принял. Отправка…».
+  // declined — «Получатель не готов».
+  // expired  — «Запрос истёк».
+  final Map<String, FileOfferData> _outgoingOffers = {};
 
   // ==== FOREGROUND NOTIFICATION (шторка) ====
   // Настройки из Go: показывать количество / имена / прогресс.
@@ -651,6 +699,91 @@ class ChatProvider extends ChangeNotifier {
             final mediaID = fc['mediaID'] as String? ?? '';
             if (mediaID.isNotEmpty) {
               _fileProgress[mediaID] = 100;
+              _safeNotify();
+            }
+          }
+          return;
+        }
+
+        // Специальное событие: входящий оффер файла (получатель).
+        if (messageJSON.contains('"file_offer"')) {
+          final map = jsonDecode(messageJSON) as Map<String, dynamic>;
+          final fo = map['file_offer'] as Map<String, dynamic>?;
+          if (fo != null) {
+            final mediaID = fo['media_id'] as String? ?? '';
+            final offerMsgID = fo['offer_msg_id'] as String? ?? '';
+            final sender = fo['sender'] as String? ?? '';
+            final fileName = fo['file_name'] as String? ?? '';
+            final fileSize = (fo['file_size'] as num?)?.toInt() ?? 0;
+            final chunkTotal = (fo['chunk_total'] as num?)?.toInt() ?? 0;
+            if (mediaID.isNotEmpty && sender.isNotEmpty) {
+              _fileOffers[mediaID] = FileOfferData(
+                mediaID: mediaID,
+                offerMsgID: offerMsgID,
+                sender: sender,
+                fileName: fileName,
+                fileSize: fileSize,
+                chunkTotal: chunkTotal,
+                state: 'pending',
+              );
+              LogService.log('P2P: file_offer $mediaID от $sender ($fileName)');
+              _safeNotify();
+            }
+          }
+          return;
+        }
+
+        // Специальное событие: получатель принял файл (отправителю).
+        if (messageJSON.contains('"file_accept"')) {
+          final map = jsonDecode(messageJSON) as Map<String, dynamic>;
+          final fa = map['file_accept'] as Map<String, dynamic>?;
+          if (fa != null) {
+            final mediaID = fa['media_id'] as String? ?? '';
+            if (mediaID.isNotEmpty) {
+              final existing = _outgoingOffers[mediaID];
+              if (existing != null) {
+                _outgoingOffers[mediaID] = existing.copyWith(state: 'accepted');
+              }
+              LogService.log('P2P: file_accept $mediaID');
+              _safeNotify();
+            }
+          }
+          return;
+        }
+
+        // Специальное событие: получатель отклонил файл (отправителю).
+        if (messageJSON.contains('"file_decline"')) {
+          final map = jsonDecode(messageJSON) as Map<String, dynamic>;
+          final fd = map['file_decline'] as Map<String, dynamic>?;
+          if (fd != null) {
+            final mediaID = fd['media_id'] as String? ?? '';
+            if (mediaID.isNotEmpty) {
+              final existing = _outgoingOffers[mediaID];
+              if (existing != null) {
+                _outgoingOffers[mediaID] = existing.copyWith(state: 'declined');
+              }
+              // Входящий decline (если мы — получатель и отправитель отменил).
+              _fileOffers.remove(mediaID);
+              LogService.log('P2P: file_decline $mediaID');
+              _safeNotify();
+            }
+          }
+          return;
+        }
+
+        // Специальное событие: оффер истёк (отправителю).
+        if (messageJSON.contains('"file_offer_expired"')) {
+          final map = jsonDecode(messageJSON) as Map<String, dynamic>;
+          final fe = map['file_offer_expired'] as Map<String, dynamic>?;
+          if (fe != null) {
+            final mediaID = fe['media_id'] as String? ?? '';
+            if (mediaID.isNotEmpty) {
+              final existing = _outgoingOffers[mediaID];
+              if (existing != null) {
+                _outgoingOffers[mediaID] = existing.copyWith(state: 'expired');
+              }
+              _fileOffers.remove(mediaID);
+              LogService.log('P2P: file_offer_expired $mediaID');
               _safeNotify();
             }
           }
@@ -1392,6 +1525,102 @@ class ChatProvider extends ChangeNotifier {
       _peerSeenController.add(_currentNodeIp);
     }
 
+    // v2.0.7: если Go вернул ID — файл мог уйти в оффер (не отправлен).
+    // Проверяем _outgoingOffers: если оффер есть — отправитель видит статус.
+    // Если оффера нет — файл ушёл сразу (ниже порога). Ничего не делаем.
+    if (!_outgoingOffers.containsKey(mediaId.toString()) &&
+        response['offer_pending'] == true) {
+      _outgoingOffers[mediaId.toString()] = FileOfferData(
+        mediaID: mediaId.toString(),
+        offerMsgID: '',
+        sender: _currentNodeIp,
+        fileName: response['file_name'] as String? ?? fileName,
+        fileSize: (response['file_size'] as num?)?.toInt() ?? 0,
+        chunkTotal: (response['chunk_total'] as num?)?.toInt() ?? 0,
+        state: 'pending',
+        createdAt: DateTime.now(),
+      );
+    }
+
+    return true;
+  }
+
+  /// Принимает файл-оффер: шлёт [FILE_ACCEPT] отправителю.
+  Future<bool> acceptFileOffer(String mediaID) async {
+    final offer = _fileOffers[mediaID];
+    if (offer == null) {
+      LogService.log('ChatProvider: acceptFileOffer — оффер $mediaID не найден');
+      return false;
+    }
+    final r = await LibP2PService.sendFileAccept(
+      offerMsgID: offer.offerMsgID,
+      mediaID: mediaID,
+      recipient: offer.sender,
+    );
+    if (r.containsKey('error')) {
+      LogService.log('ChatProvider: sendFileAccept failed: ${r['error']}');
+      return false;
+    }
+    _fileOffers.remove(mediaID);
+    _safeNotify();
+    LogService.log('ChatProvider: file_offer $mediaID принят');
+    return true;
+  }
+
+  /// Отклоняет файл-оффер: шлёт [FILE_DECLINE] отправителю.
+  Future<bool> declineFileOffer(String mediaID) async {
+    final offer = _fileOffers[mediaID];
+    if (offer == null) {
+      LogService.log('ChatProvider: declineFileOffer — оффер $mediaID не найден');
+      return false;
+    }
+    final r = await LibP2PService.sendFileDecline(
+      offerMsgID: offer.offerMsgID,
+      mediaID: mediaID,
+      recipient: offer.sender,
+    );
+    if (r.containsKey('error')) {
+      LogService.log('ChatProvider: sendFileDecline failed: ${r['error']}');
+      return false;
+    }
+    _fileOffers.remove(mediaID);
+    _safeNotify();
+    LogService.log('ChatProvider: file_offer $mediaID отклонён');
+    return true;
+  }
+
+  /// Возвращает входящие офферы от указанного контакта (для UI получателя).
+  List<FileOfferData> fileOffersFor(String peerID) {
+    if (peerID.isEmpty) return [];
+    return _fileOffers.values.where((o) => o.sender == peerID).toList();
+  }
+
+  /// Возвращает исходящий оффер по mediaID (для UI отправителя).
+  FileOfferData? outgoingOfferFor(String mediaID) => _outgoingOffers[mediaID];
+
+  /// Возвращает все исходящие офферы для указанного контакта.
+  List<FileOfferData> outgoingOffersFor(String peerID) {
+    if (peerID.isEmpty) return [];
+    return _outgoingOffers.values.where((o) => o.sender == peerID).toList();
+  }
+
+  /// Загружает порог запроса файла из Go.
+  Future<int> loadFileRequestThreshold() async {
+    try {
+      return await LibP2PService.getFileRequestThreshold();
+    } catch (e) {
+      LogService.log('ChatProvider: loadFileRequestThreshold ERROR: $e');
+      return -1;
+    }
+  }
+
+  /// Устанавливает порог запроса файла в Go.
+  Future<bool> setFileRequestThreshold(int thresholdMB) async {
+    final r = await LibP2PService.setFileRequestThreshold(thresholdMB);
+    if (r.containsKey('error')) {
+      LogService.log('ChatProvider: setFileRequestThreshold failed: ${r['error']}');
+      return false;
+    }
     return true;
   }
 

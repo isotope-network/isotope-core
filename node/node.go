@@ -268,6 +268,11 @@ type Node struct {
 
 	// dummyScreenOn — состояние экрана (v2.0.4 d.1.1).
 	dummyScreenOn bool
+
+	// OFFERS — входящие офферы на приём файлов (право отказа).
+	// Отдельный файл isotope_offers.json.
+	offersFile string
+	offers     *OffersStore
 }
 
 // NewNode — создаёт новый узел
@@ -462,6 +467,15 @@ func (n *Node) InitP2P() error {
 	if n.deletedFile != "" {
 		_ = os.MkdirAll(filepath.Dir(n.deletedFile), 0700)
 		n.deleted = NewDeletedStore(n.deletedFile)
+	}
+
+	// OFFERS — входящие офферы на приём файлов (право отказа).
+	if n.offersFile == "" && n.stateFile != "" {
+		n.offersFile = filepath.Join(filepath.Dir(n.stateFile), "isotope_offers.json")
+	}
+	if n.offersFile != "" {
+		_ = os.MkdirAll(filepath.Dir(n.offersFile), 0700)
+		n.offers = NewOffersStore(n.offersFile)
 	}
 
 	settingsFile := filepath.Join(filepath.Dir(n.stateFile), "isotope_settings.json")
@@ -1274,3 +1288,5 @@ func (n *Node) handleReplicaData(data string) {
 		}
 	}
 }
+
+// node/node.go

@@ -685,6 +685,27 @@ func (n *Node) cleanupLoop() {
 					log.Printf("[TTL] purged %d expired messages", removed)
 					n.scheduleSaveState()
 				}
+				// Очистка протухших офферов (24 ч).
+				if n.offers != nil {
+					expired := n.offers.CleanupExpired()
+					if len(expired) > 0 {
+						log.Printf("[OFFERS] cleaned up %d expired offers", len(expired))
+						// Push в UI: запрос истёк. Только на клиенте (не relay).
+						if !n.isRelay && n.messageHook != nil {
+							for _, o := range expired {
+								push := map[string]interface{}{
+									"file_offer_expired": map[string]interface{}{
+										"media_id": o.MediaID,
+										"sender":   o.Sender,
+									},
+								}
+								if data, err := json.Marshal(push); err == nil {
+									n.messageHook(string(data))
+								}
+							}
+						}
+					}
+				}
 			case <-diagTicker.C:
 				var m runtime.MemStats
 				runtime.ReadMemStats(&m)
@@ -1270,3 +1291,5 @@ func expandTransportAlternatives(addr string) []string {
 
 	return result
 }
+
+// node/node_p2p.go

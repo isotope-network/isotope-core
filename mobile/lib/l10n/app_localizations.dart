@@ -416,6 +416,36 @@ abstract class AppLocalizations {
   /// **'Show, restore from another'**
   String get privacySeedShowRestoreOther;
 
+  /// No description provided for @privacyFileRequestSection.
+  ///
+  /// In en, this message translates to:
+  /// **'File request'**
+  String get privacyFileRequestSection;
+
+  /// No description provided for @privacyFileRequestSectionSub.
+  ///
+  /// In en, this message translates to:
+  /// **'Before receiving a file — ask for consent. You can set a threshold: always ask, never ask, or ask from a certain size.'**
+  String get privacyFileRequestSectionSub;
+
+  /// No description provided for @privacyFileRequestAlways.
+  ///
+  /// In en, this message translates to:
+  /// **'Always ask'**
+  String get privacyFileRequestAlways;
+
+  /// No description provided for @privacyFileRequestFromMB.
+  ///
+  /// In en, this message translates to:
+  /// **'Ask from a certain size'**
+  String get privacyFileRequestFromMB;
+
+  /// No description provided for @privacyFileRequestNever.
+  ///
+  /// In en, this message translates to:
+  /// **'Never ask'**
+  String get privacyFileRequestNever;
+
   /// No description provided for @seedDialogTitle.
   ///
   /// In en, this message translates to:

@@ -421,6 +421,37 @@ class MainActivity : FlutterActivity() {
                             runOnUiThread { result.success(response) }
                         }.start()
                     }
+                    "sendFileOffer" -> {
+                        val peerID = call.argument<String>("peerID") ?: ""
+                        val mediaID = call.argument<String>("mediaID") ?: ""
+                        val fileName = call.argument<String>("fileName") ?: ""
+                        val fileSize = (call.argument<Number>("fileSize") ?: 0).toLong()
+                        val chunkTotal = call.argument<Int>("chunkTotal") ?: 0
+                        val ttlSeconds = call.argument<Int>("ttlSeconds") ?: 0
+                        val ttlMode = call.argument<String>("ttlMode") ?: ""
+                        Thread {
+                            val response = Mobile.sendFileOffer(peerID, mediaID, fileName, fileSize, chunkTotal.toLong(), ttlSeconds.toLong(), ttlMode)
+                            runOnUiThread { result.success(response) }
+                        }.start()
+                    }
+                    "sendFileAccept" -> {
+                        val offerMsgID = call.argument<String>("offerMsgID") ?: ""
+                        val mediaID = call.argument<String>("mediaID") ?: ""
+                        val recipient = call.argument<String>("recipient") ?: ""
+                        Thread {
+                            val response = Mobile.sendFileAccept(offerMsgID, mediaID, recipient)
+                            runOnUiThread { result.success(response) }
+                        }.start()
+                    }
+                    "sendFileDecline" -> {
+                        val offerMsgID = call.argument<String>("offerMsgID") ?: ""
+                        val mediaID = call.argument<String>("mediaID") ?: ""
+                        val recipient = call.argument<String>("recipient") ?: ""
+                        Thread {
+                            val response = Mobile.sendFileDecline(offerMsgID, mediaID, recipient)
+                            runOnUiThread { result.success(response) }
+                        }.start()
+                    }
                     "sendReadBatch" -> {
                         val refsJson = call.argument<String>("refs") ?: "[]"
                         val recipient = call.argument<String>("recipient") ?: ""
@@ -561,6 +592,19 @@ class MainActivity : FlutterActivity() {
                         val enabled = call.argument<Boolean>("enabled") ?: false
                         Thread {
                             val response = Mobile.setMaskingEnabled(enabled)
+                            runOnUiThread { result.success(response) }
+                        }.start()
+                    }
+                    "getFileRequestThreshold" -> {
+                        Thread {
+                            val response = Mobile.getFileRequestThreshold()
+                            runOnUiThread { result.success(response) }
+                        }.start()
+                    }
+                    "setFileRequestThreshold" -> {
+                        val thresholdMB = call.argument<Int>("thresholdMB") ?: -1
+                        Thread {
+                            val response = Mobile.setFileRequestThreshold(thresholdMB.toLong())
                             runOnUiThread { result.success(response) }
                         }.start()
                     }

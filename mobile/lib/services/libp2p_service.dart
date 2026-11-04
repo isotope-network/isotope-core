@@ -706,6 +706,33 @@ class LibP2PService {
     }
   }
 
+  /// Возвращает порог запроса на приём файла (МБ).
+  /// -1 — всегда запрашивать. 0 — никогда. N > 0 — от N МБ.
+  static Future<int> getFileRequestThreshold() async {
+    try {
+      final response = await _channel.invokeMethod<String>('getFileRequestThreshold');
+      final decoded = _safeDecode(response, fallback: '{"threshold_mb":-1}');
+      final raw = decoded['threshold_mb'];
+      if (raw is num) return raw.toInt();
+      return -1;
+    } on PlatformException {
+      return -1;
+    }
+  }
+
+  /// Устанавливает порог запроса на приём файла (МБ).
+  /// -1 — всегда, 0 — никогда, N > 0 — от N МБ.
+  static Future<Map<String, dynamic>> setFileRequestThreshold(int thresholdMB) async {
+    try {
+      final response = await _channel.invokeMethod<String>('setFileRequestThreshold', {
+        'thresholdMB': thresholdMB,
+      });
+      return _safeDecode(response);
+    } on PlatformException catch (e) {
+      return {'error': e.message ?? 'platform_error', 'operation': 'set_file_request_threshold'};
+    }
+  }
+
   /// Передаёт Go состояние экрана (v2.0.4 d.1.1).
   /// true — экран включён (dummy 10–120 сек). false — выключен (×5).
   static Future<void> setDummyScreenOn(bool screenOn) async {
@@ -1026,6 +1053,72 @@ class LibP2PService {
       return _safeDecode(response);
     } on PlatformException catch (e) {
       return {'error': e.message ?? 'platform_error', 'operation': 'send_file_complete'};
+    }
+  }
+
+  /// Отправитель → получатель: предложение принять файл.
+  /// Создаётся в Go при SendFileByPath, если файл ≥ порога запроса.
+  /// Возвращает {"status":"ok"} или {"error":"..."}.
+  static Future<Map<String, dynamic>> sendFileOffer({
+    required String peerID,
+    required String mediaID,
+    required String fileName,
+    required int fileSize,
+    required int chunkTotal,
+    required int ttlSeconds,
+    required String ttlMode,
+  }) async {
+    try {
+      final response = await _channel.invokeMethod<String>('sendFileOffer', {
+        'peerID': peerID,
+        'mediaID': mediaID,
+        'fileName': fileName,
+        'fileSize': fileSize,
+        'chunkTotal': chunkTotal,
+        'ttlSeconds': ttlSeconds,
+        'ttlMode': ttlMode,
+      });
+      return _safeDecode(response);
+    } on PlatformException catch (e) {
+      return {'error': e.message ?? 'platform_error', 'operation': 'send_file_offer'};
+    }
+  }
+
+  /// Получатель → отправитель: файл принят.
+  /// Возвращает {"status":"ok"} или {"error":"..."}.
+  static Future<Map<String, dynamic>> sendFileAccept({
+    required String offerMsgID,
+    required String mediaID,
+    required String recipient,
+  }) async {
+    try {
+      final response = await _channel.invokeMethod<String>('sendFileAccept', {
+        'offerMsgID': offerMsgID,
+        'mediaID': mediaID,
+        'recipient': recipient,
+      });
+      return _safeDecode(response);
+    } on PlatformException catch (e) {
+      return {'error': e.message ?? 'platform_error', 'operation': 'send_file_accept'};
+    }
+  }
+
+  /// Получатель → отправитель: файл отклонён.
+  /// Возвращает {"status":"ok"} или {"error":"..."}.
+  static Future<Map<String, dynamic>> sendFileDecline({
+    required String offerMsgID,
+    required String mediaID,
+    required String recipient,
+  }) async {
+    try {
+      final response = await _channel.invokeMethod<String>('sendFileDecline', {
+        'offerMsgID': offerMsgID,
+        'mediaID': mediaID,
+        'recipient': recipient,
+      });
+      return _safeDecode(response);
+    } on PlatformException catch (e) {
+      return {'error': e.message ?? 'platform_error', 'operation': 'send_file_decline'};
     }
   }
 

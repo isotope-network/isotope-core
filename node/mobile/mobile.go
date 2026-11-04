@@ -441,13 +441,20 @@ func SendFileByPath(peerID, filePath, fileName, period, mode string) string {
 		return errorJSON("filePath is required")
 	}
 
-	mediaID, err := node.SendFileByPath(peerID, filePath, fileName, period, mode)
+	mediaID, offerPending, fileSize, chunkTotal, err := node.SendFileByPath(peerID, filePath, fileName, period, mode)
 	if err != nil {
 		return errorJSON(err.Error())
 	}
 
-	addLog("[FILE] sent (by path) to %s (mediaID=%s, %s)", peerID, mediaID, fileName)
-	return fmt.Sprintf(`{"status":"ok","id":"%s"}`, mediaID)
+	if offerPending {
+		addLog("[FILE] offer sent to %s (mediaID=%s, %s, %d bytes, %d chunks) — waiting for accept",
+			peerID, mediaID, fileName, fileSize, chunkTotal)
+	} else {
+		addLog("[FILE] sent (by path) to %s (mediaID=%s, %s, %d bytes, %d chunks)",
+			peerID, mediaID, fileName, fileSize, chunkTotal)
+	}
+	return fmt.Sprintf(`{"status":"ok","id":"%s","offer_pending":%v,"file_name":"%s","file_size":%d,"chunk_total":%d}`,
+		mediaID, offerPending, fileName, fileSize, chunkTotal)
 }
 
 // SendPhoto — отправляет фото конкретному пиру (E2E).
@@ -1555,6 +1562,117 @@ func GetSeedPhrase() string {
 		"phrase": phrase,
 	})
 	return string(data)
+}
+
+// ============================================================
+// FILE OFFER (v2.0.7) — право отказа от файла
+// ============================================================
+
+// SendFileOffer — отправляет [FILE_OFFER] получателю.
+// Создаётся в SendFileByPath, если файл ≥ порога (FileRequestThreshold).
+// Возвращает {"status":"ok"} или errorJSON.
+func SendFileOffer(peerID, mediaID, fileName string, fileSize int64, chunkTotal int, ttlSeconds int, ttlMode string) string {
+	nodeMu.Lock()
+	defer nodeMu.Unlock()
+
+	if node == nil {
+		return errorJSON("node not started")
+	}
+	if peerID == "" {
+		return errorJSON("peerID is required")
+	}
+	if mediaID == "" {
+		return errorJSON("mediaID is required")
+	}
+	if err := node.SendFileOffer(peerID, mediaID, fileName, fileSize, chunkTotal, ttlSeconds, ttlMode, time.Time{}); err != nil {
+		return errorJSON(err.Error())
+	}
+	addLog("[FILE_OFFER] sent to %s (mediaID=%s, %s, %d bytes)", peerID, mediaID, fileName, fileSize)
+	return `{"status":"ok"}`
+}
+
+// SendFileAccept — отправляет [FILE_ACCEPT] отправителю оффера.
+// Вызывается из UI, когда получатель нажал «Принять».
+// Возвращает {"status":"ok"} или errorJSON.
+func SendFileAccept(offerMsgID, mediaID, recipient string) string {
+	nodeMu.Lock()
+	defer nodeMu.Unlock()
+
+	if node == nil {
+		return errorJSON("node not started")
+	}
+	if offerMsgID == "" {
+		return errorJSON("offerMsgID is required")
+	}
+	if mediaID == "" {
+		return errorJSON("mediaID is required")
+	}
+	if recipient == "" {
+		return errorJSON("recipient is required")
+	}
+	if err := node.SendFileAccept(offerMsgID, mediaID, recipient); err != nil {
+		return errorJSON(err.Error())
+	}
+	addLog("[FILE_ACCEPT] sent to %s (mediaID=%s)", recipient, mediaID)
+	return `{"status":"ok"}`
+}
+
+// SendFileDecline — отправляет [FILE_DECLINE] отправителю оффера.
+// Вызывается из UI, когда получатель нажал «Не принять».
+// Возвращает {"status":"ok"} или errorJSON.
+func SendFileDecline(offerMsgID, mediaID, recipient string) string {
+	nodeMu.Lock()
+	defer nodeMu.Unlock()
+
+	if node == nil {
+		return errorJSON("node not started")
+	}
+	if offerMsgID == "" {
+		return errorJSON("offerMsgID is required")
+	}
+	if mediaID == "" {
+		return errorJSON("mediaID is required")
+	}
+	if recipient == "" {
+		return errorJSON("recipient is required")
+	}
+	if err := node.SendFileDecline(offerMsgID, mediaID, recipient); err != nil {
+		return errorJSON(err.Error())
+	}
+	addLog("[FILE_DECLINE] sent to %s (mediaID=%s)", recipient, mediaID)
+	return `{"status":"ok"}`
+}
+
+// GetFileRequestThreshold — возвращает порог запроса на приём файла (МБ).
+// -1 — всегда запрашивать. 0 — никогда. N > 0 — от N МБ.
+// Формат: {"threshold_mb":N}.
+func GetFileRequestThreshold() string {
+	nodeMu.Lock()
+	defer nodeMu.Unlock()
+
+	if node == nil {
+		return `{"threshold_mb":-1}`
+	}
+	threshold := node.GetFileRequestThreshold()
+	data, _ := json.Marshal(map[string]int{"threshold_mb": threshold})
+	return string(data)
+}
+
+// SetFileRequestThreshold — устанавливает порог запроса (МБ).
+// -1 — всегда, 0 — никогда, N > 0 — от N МБ.
+// Возвращает {"status":"ok"} или errorJSON.
+func SetFileRequestThreshold(thresholdMB int) string {
+	nodeMu.Lock()
+	defer nodeMu.Unlock()
+
+	if node == nil {
+		return errorJSON("node not started")
+	}
+	if err := node.SetFileRequestThreshold(thresholdMB); err != nil {
+		return errorJSON(err.Error())
+	}
+	addLog("[SETTINGS] file_request_threshold set: %d MB", thresholdMB)
+	return `{"status":"ok"}`
 }
 
 // node/mobile/mobile.go

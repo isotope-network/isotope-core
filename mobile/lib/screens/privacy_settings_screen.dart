@@ -24,6 +24,7 @@ class _PrivacySettingsScreenState extends State<PrivacySettingsScreen> {
   bool _sphinxEnabled = false;
   bool _mixingEnabled = false;
   bool _maskingEnabled = false;
+  int _fileRequestThreshold = -1;
   String _seedPhrase = '';
   bool _loading = true;
 
@@ -41,6 +42,7 @@ class _PrivacySettingsScreenState extends State<PrivacySettingsScreen> {
       final sphinxEnabled = await LibP2PService.getSphinxEnabled();
       final mixingEnabled = await LibP2PService.getMixingEnabled();
       final maskingEnabled = await LibP2PService.getMaskingEnabled();
+      final fileRequestThreshold = await LibP2PService.getFileRequestThreshold();
       final seedPhrase = await LibP2PService.getSeedPhrase();
       if (mounted) {
         setState(() {
@@ -52,6 +54,7 @@ class _PrivacySettingsScreenState extends State<PrivacySettingsScreen> {
           _sphinxEnabled = sphinxEnabled;
           _mixingEnabled = mixingEnabled;
           _maskingEnabled = maskingEnabled;
+          _fileRequestThreshold = fileRequestThreshold;
           _seedPhrase = seedPhrase;
           _loading = false;
         });
@@ -205,6 +208,28 @@ class _PrivacySettingsScreenState extends State<PrivacySettingsScreen> {
     } catch (e) {
       LogService.log('PrivacySettings: setMaskingEnabled exception: $e');
       if (mounted) setState(() => _maskingEnabled = !value);
+    }
+  }
+
+  Future<void> _setFileRequestThreshold(int value) async {
+    final prev = _fileRequestThreshold;
+    setState(() => _fileRequestThreshold = value);
+    try {
+      final result = await LibP2PService.setFileRequestThreshold(value);
+      if (result.containsKey('error')) {
+        LogService.log('PrivacySettings: setFileRequestThreshold failed: ${result['error']}');
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Ошибка: ${result['error']}')),
+          );
+          setState(() => _fileRequestThreshold = prev);
+        }
+      } else {
+        LogService.log('PrivacySettings: file_request_threshold=$value');
+      }
+    } catch (e) {
+      LogService.log('PrivacySettings: setFileRequestThreshold exception: $e');
+      if (mounted) setState(() => _fileRequestThreshold = prev);
     }
   }
 
@@ -509,6 +534,60 @@ class _PrivacySettingsScreenState extends State<PrivacySettingsScreen> {
                   subtitle: Text(AppLocalizations.of(context).privacyMaskingSub),
                   value: _maskingEnabled,
                   onChanged: _setMaskingEnabled,
+                ),
+                const Divider(),
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+                  child: Text(
+                    AppLocalizations.of(context).privacyFileRequestSection,
+                    style: const TextStyle(fontWeight: FontWeight.bold),
+                  ),
+                ),
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 16),
+                  child: Text(
+                    AppLocalizations.of(context).privacyFileRequestSectionSub,
+                    style: const TextStyle(fontSize: 12, color: Colors.grey),
+                  ),
+                ),
+                ListTile(
+                  leading: _fileRequestThreshold == -1
+                      ? const Icon(Icons.check, color: Colors.green)
+                      : const Icon(Icons.check, color: Colors.transparent),
+                  title: Text(AppLocalizations.of(context).privacyFileRequestAlways),
+                  onTap: () => _setFileRequestThreshold(-1),
+                ),
+                ListTile(
+                  leading: _fileRequestThreshold > 0
+                      ? const Icon(Icons.check, color: Colors.green)
+                      : const Icon(Icons.check, color: Colors.transparent),
+                  title: Text(AppLocalizations.of(context).privacyFileRequestFromMB),
+                  subtitle: _fileRequestThreshold > 0
+                      ? Padding(
+                          padding: const EdgeInsets.only(top: 8),
+                          child: TextFormField(
+                            initialValue: _fileRequestThreshold.toString(),
+                            keyboardType: TextInputType.number,
+                            decoration: const InputDecoration(
+                              labelText: 'МБ',
+                              isDense: true,
+                              border: OutlineInputBorder(),
+                            ),
+                            onFieldSubmitted: (v) {
+                              final n = int.tryParse(v.trim()) ?? 10;
+                              if (n > 0) _setFileRequestThreshold(n);
+                            },
+                          ),
+                        )
+                      : null,
+                  onTap: () => _setFileRequestThreshold(10),
+                ),
+                ListTile(
+                  leading: _fileRequestThreshold == 0
+                      ? const Icon(Icons.check, color: Colors.green)
+                      : const Icon(Icons.check, color: Colors.transparent),
+                  title: Text(AppLocalizations.of(context).privacyFileRequestNever),
+                  onTap: () => _setFileRequestThreshold(0),
                 ),
                 const Divider(),
                 Padding(

@@ -261,30 +261,30 @@ func (n *Node) SendPhotoByPath(peerID, filePath, fileName string, ttlPeriod, ttl
 //
 // Base64 через MethodChannel не проходит — OOM устранён.
 // Возвращает MediaID.
-func (n *Node) SendFileByPath(peerID, filePath, fileName string, ttlPeriod, ttlMode string) (string, error) {
+func (n *Node) SendFileByPath(peerID, filePath, fileName string, ttlPeriod, ttlMode string) (string, bool, int64, int, error) {
 	if n.host == nil {
-		return "", fmt.Errorf("node not started")
+		return "", false, 0, 0, fmt.Errorf("node not started")
 	}
 	if peerID == "" {
-		return "", fmt.Errorf("peerID is required")
+		return "", false, 0, 0, fmt.Errorf("peerID is required")
 	}
 	if filePath == "" {
-		return "", fmt.Errorf("filePath is required")
+		return "", false, 0, 0, fmt.Errorf("filePath is required")
 	}
 
 	src, err := os.Open(filePath)
 	if err != nil {
-		return "", fmt.Errorf("open file failed: %w", err)
+		return "", false, 0, 0, fmt.Errorf("open file failed: %w", err)
 	}
 	defer src.Close()
 
 	stat, err := src.Stat()
 	if err != nil {
-		return "", fmt.Errorf("stat file failed: %w", err)
+		return "", false, 0, 0, fmt.Errorf("stat file failed: %w", err)
 	}
 	fileSize := stat.Size()
 	if fileSize == 0 {
-		return "", fmt.Errorf("empty file")
+		return "", false, 0, 0, fmt.Errorf("empty file")
 	}
 
 	mediaID := generateMsgID(fmt.Sprintf("file:%s:%s:%d", peerID, fileName, time.Now().UnixNano()))
@@ -292,16 +292,16 @@ func (n *Node) SendFileByPath(peerID, filePath, fileName string, ttlPeriod, ttlM
 	// Копия в sent/ — источник для sendFileChunksAsync и retry.
 	sentPath := n.sentPath(mediaID)
 	if err := os.MkdirAll(n.sentDirPath(), 0700); err != nil {
-		return "", fmt.Errorf("mkdir sent failed: %w", err)
+		return "", false, 0, 0, fmt.Errorf("mkdir sent failed: %w", err)
 	}
 	dst, err := os.Create(sentPath)
 	if err != nil {
-		return "", fmt.Errorf("create sent copy failed: %w", err)
+		return "", false, 0, 0, fmt.Errorf("create sent copy failed: %w", err)
 	}
 	if _, err := io.Copy(dst, src); err != nil {
 		dst.Close()
 		os.Remove(sentPath)
-		return "", fmt.Errorf("copy to sent failed: %w", err)
+		return "", false, 0, 0, fmt.Errorf("copy to sent failed: %w", err)
 	}
 	dst.Close()
 
@@ -334,10 +334,40 @@ func (n *Node) SendFileByPath(peerID, filePath, fileName string, ttlPeriod, ttlM
 		expiresAt = time.Now().Add(time.Duration(ttlSeconds) * time.Second)
 	}
 
-	// Фоновая отправка. MethodChannel возвращается немедленно.
+	chunkTotal := int((fileSize + ChunkSize - 1) / ChunkSize)
+
+	// Право отказа: проверка порога. -1 — всегда запрашивать. 0 — никогда.
+	// N — запрашивать от N МБ.
+	thresholdMB := -1
+	if n.settingsStore != nil {
+		thresholdMB = n.settingsStore.GetFileRequestThreshold()
+	}
+	needOffer := false
+	if thresholdMB < 0 {
+		needOffer = true
+	} else if thresholdMB > 0 {
+		thresholdBytes := int64(thresholdMB) * 1024 * 1024
+		if fileSize >= thresholdBytes {
+			needOffer = true
+		}
+	}
+
+	if needOffer {
+		if err := n.SendFileOffer(peerID, mediaID, fileName, fileSize, chunkTotal, ttlSeconds, ttlMode, expiresAt); err != nil {
+			log.Printf("[FILE_OFFER] send failed for %s: %v", mediaID, err)
+			// Fallback: отправить сразу (чтобы не потерять файл).
+			go n.sendFileChunksAsync(peerID, mediaID, fileName, fileSize, "file", ttlSeconds, ttlMode, expiresAt)
+			return mediaID, false, fileSize, chunkTotal, nil
+		}
+		log.Printf("[FILE_OFFER] waiting for accept: mediaID=%s, %d chunks, %d bytes",
+			mediaID, chunkTotal, fileSize)
+		return mediaID, true, fileSize, chunkTotal, nil
+	}
+
+	// Без запроса — фоновая отправка. MethodChannel возвращается немедленно.
 	go n.sendFileChunksAsync(peerID, mediaID, fileName, fileSize, "file", ttlSeconds, ttlMode, expiresAt)
 
-	return mediaID, nil
+	return mediaID, false, fileSize, chunkTotal, nil
 }
 
 // sendFileChunksAsync — читает чанки из sent/<MediaID>.bin,

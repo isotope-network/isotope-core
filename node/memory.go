@@ -41,6 +41,15 @@ const (
 	// Открытое (Version=0). Ref = media_id. Payload не нужен (media_id в Ref).
 	// Используется для удержания sent/ (Этап 2).
 	TypeFileComplete MessageType = 9
+	// TypeFileOffer — отправитель → получатель: предложение принять файл.
+	// Ref = offer_msg_id. Text = JSON {mediaID, fileName, fileSize, chunkTotal}.
+	TypeFileOffer MessageType = 10
+	// TypeFileAccept — получатель → отправитель: файл принят.
+	// Ref = offer_msg_id. Text = JSON {mediaID}.
+	TypeFileAccept MessageType = 11
+	// TypeFileDecline — получатель → отправитель: файл отклонён.
+	// Ref = offer_msg_id. Text = JSON {mediaID}.
+	TypeFileDecline MessageType = 12
 )
 
 // ============================================================

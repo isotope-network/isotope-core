@@ -1,3 +1,4 @@
+// mobile/lib/screens/chat_screen.dart
 import 'dart:async';
 import 'dart:io';
 import 'package:flutter/material.dart';
@@ -16,6 +17,7 @@ import '../services/libp2p_service.dart';
 import '../services/log_service.dart';
 import '../services/permission_service.dart';
 import '../widgets/message_bubble.dart';
+import '../widgets/file_offer_bubble.dart';
 
 class ChatScreen extends StatefulWidget {
   final String nodeAddress;
@@ -731,6 +733,23 @@ class _ChatScreenState extends State<ChatScreen> {
     );
   }
 
+  /// Объединяет три источника в один список для ListView.builder.
+  /// Message + pending + исходящие офферы. Сортировка по времени.
+  List<_ChatItem> _buildChatItems(ChatProvider provider, String peerID) {
+    final items = <_ChatItem>[];
+    for (final m in provider.messagesFor(peerID)) {
+      items.add(_ChatItem.message(m));
+    }
+    for (final p in provider.pendingMessages) {
+      items.add(_ChatItem.pending(p));
+    }
+    for (final o in provider.outgoingOffersFor(peerID)) {
+      items.add(_ChatItem.outgoingOffer(o));
+    }
+    items.sort((a, b) => a.time.compareTo(b.time));
+    return items;
+  }
+
   @override
   Widget build(BuildContext context) {
     return PopScope(
@@ -771,40 +790,79 @@ class _ChatScreenState extends State<ChatScreen> {
                 textAlign: TextAlign.center,
               ),
             ),
+          if (context.watch<ChatProvider>().fileOffersFor(context.read<ChatProvider>().currentNodeIp).isNotEmpty)
+            Consumer<ChatProvider>(
+              builder: (_, provider, __) {
+                final offers = provider.fileOffersFor(provider.currentNodeIp);
+                return Column(
+                  children: offers.map((o) {
+                    return FileOfferBubble(
+                      offer: o,
+                      state: FileOfferState.pending,
+                      onAccept: () => provider.acceptFileOffer(o.mediaID),
+                      onDecline: () => provider.declineFileOffer(o.mediaID),
+                    );
+                  }).toList(),
+                );
+              },
+            ),
           Expanded(
             child: Consumer<ChatProvider>(
               builder: (_, provider, __) {
-                final messages = provider.messagesFor(provider.currentNodeIp);
-                final pending = provider.pendingMessages;
+                final items = _buildChatItems(provider, provider.currentNodeIp);
                 final unreadCount = provider.unreadSnapshotFor(provider.currentNodeIp);
-                final totalCount = messages.length + pending.length;
 
-                if (totalCount == 0) {
+                if (items.isEmpty) {
                   return const Center(child: Text('Нет сообщений'));
                 }
 
                 return ListView.builder(
                   controller: _scrollController,
-                  itemCount: totalCount,
+                  itemCount: items.length,
                   itemBuilder: (_, index) {
-                    // Сначала — обычные, потом — pending.
-                    final isPending = index >= messages.length;
-                    if (isPending) {
-                      final pmsg = pending[index - messages.length];
-                      return _buildPendingRow(pmsg, provider);
+                    final item = items[index];
+
+                    // Pending — отдельный вид.
+                    if (item.kind == _ChatItemKind.pending) {
+                      return _buildPendingRow(item.message!, provider);
                     }
-                    final msg = messages[index];
+
+                    // Исходящий оффер — плашка со статусом (без кнопок).
+                    if (item.kind == _ChatItemKind.outgoingOffer) {
+                      final offer = item.offer!;
+                      FileOfferState st = FileOfferState.pending;
+                      switch (offer.state) {
+                        case 'accepted':
+                          st = FileOfferState.accepted;
+                          break;
+                        case 'declined':
+                          st = FileOfferState.declined;
+                          break;
+                        case 'expired':
+                          st = FileOfferState.expired;
+                          break;
+                        default:
+                          st = FileOfferState.pending;
+                      }
+                      return FileOfferBubble(
+                        offer: offer,
+                        state: st,
+                      );
+                    }
+
+                    // Message.
+                    final msg = item.message!;
                     final isOwn = msg.isOwn;
-                    final unreadStart = messages.length - unreadCount;
+                    final unreadStart = items.length - unreadCount;
                     final showDivider = !isOwn && unreadCount > 0 && index == unreadStart;
 
-                    // Разделитель дат: показываем, если это первое сообщение
-                    // или день отличается от предыдущего.
                     bool showDateDivider = false;
                     if (index == 0) {
                       showDateDivider = true;
                     } else {
-                      final prev = parseIsoLocal(messages[index - 1].time);
+                      final prevItem = items[index - 1];
+                      final prevStr = prevItem.message?.time ?? '';
+                      final prev = parseIsoLocal(prevStr);
                       final cur = parseIsoLocal(msg.time);
                       if (prev == null || cur == null) {
                         showDateDivider = true;
@@ -895,4 +953,33 @@ class _ChatScreenState extends State<ChatScreen> {
     );
   }
 }
+
+/// Тип элемента ленты чата.
+enum _ChatItemKind { message, pending, outgoingOffer }
+
+/// Элемент ленты: сообщение, pending или исходящий оффер.
+/// Один список для ListView.builder — простая индексация, одна сортировка.
+class _ChatItem {
+  final _ChatItemKind kind;
+  final Message? message;
+  final FileOfferData? offer;
+  final DateTime time;
+
+  _ChatItem._(this.kind, this.message, this.offer, this.time);
+
+  factory _ChatItem.message(Message m) {
+    final t = parseIsoLocal(m.time) ?? DateTime.now();
+    return _ChatItem._(_ChatItemKind.message, m, null, t);
+  }
+
+  factory _ChatItem.pending(Message m) {
+    final t = parseIsoLocal(m.time) ?? DateTime.now();
+    return _ChatItem._(_ChatItemKind.pending, m, null, t);
+  }
+
+  factory _ChatItem.outgoingOffer(FileOfferData o) {
+    return _ChatItem._(_ChatItemKind.outgoingOffer, null, o, o.createdAt);
+  }
+}
+
 // mobile/lib/screens/chat_screen.dart

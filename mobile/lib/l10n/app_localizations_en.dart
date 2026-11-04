@@ -178,6 +178,22 @@ class AppLocalizationsEn extends AppLocalizations {
   String get privacySeedShowRestoreOther => 'Show, restore from another';
 
   @override
+  String get privacyFileRequestSection => 'File request';
+
+  @override
+  String get privacyFileRequestSectionSub =>
+      'Before receiving a file — ask for consent. You can set a threshold: always ask, never ask, or ask from a certain size.';
+
+  @override
+  String get privacyFileRequestAlways => 'Always ask';
+
+  @override
+  String get privacyFileRequestFromMB => 'Ask from a certain size';
+
+  @override
+  String get privacyFileRequestNever => 'Never ask';
+
+  @override
   String get seedDialogTitle => 'Seed phrase';
 
   @override

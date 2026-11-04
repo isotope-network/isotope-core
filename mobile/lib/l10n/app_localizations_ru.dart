@@ -179,6 +179,22 @@ class AppLocalizationsRu extends AppLocalizations {
   String get privacySeedShowRestoreOther => 'Показать, восстановить из другой';
 
   @override
+  String get privacyFileRequestSection => 'Запрос на приём файлов';
+
+  @override
+  String get privacyFileRequestSectionSub =>
+      'Перед получением файла — спросить согласие. Можно задать порог: всегда спрашивать, никогда не спрашивать или спрашивать от определённого размера.';
+
+  @override
+  String get privacyFileRequestAlways => 'Всегда запрашивать';
+
+  @override
+  String get privacyFileRequestFromMB => 'Запрашивать от определённого размера';
+
+  @override
+  String get privacyFileRequestNever => 'Никогда не запрашивать';
+
+  @override
   String get seedDialogTitle => 'Seed-фраза';
 
   @override

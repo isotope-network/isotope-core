@@ -215,6 +215,25 @@ func (n *Node) SetMaskingEnabled(enabled bool) error {
 	return n.settingsStore.SetMaskingEnabled(enabled)
 }
 
+// GetFileRequestThreshold — порог запроса на приём файла (МБ).
+// -1 — всегда. 0 — никогда. N — от N МБ.
+func (n *Node) GetFileRequestThreshold() int {
+	if n.settingsStore == nil {
+		return -1
+	}
+	return n.settingsStore.GetFileRequestThreshold()
+}
+
+// SetFileRequestThreshold — устанавливает порог запроса и сохраняет.
+// -1 — всегда. 0 — никогда. N — от N МБ.
+func (n *Node) SetFileRequestThreshold(thresholdMB int) error {
+	if n.settingsStore == nil {
+		return fmt.Errorf("settings store not initialized")
+	}
+	log.Printf("[SETTINGS] file_request_threshold=%d MB", thresholdMB)
+	return n.settingsStore.SetFileRequestThreshold(thresholdMB)
+}
+
 // SendMessage — отправляет сообщение всем пирам (broadcast).
 func (n *Node) SendMessage(text string, ttlPeriod string, ttlMode string) (string, error) {
 	if n.host == nil {
@@ -299,3 +318,5 @@ func (n *Node) GetWeight() float64 {
 	}
 	return total / float64(len(msgs))
 }
+
+// node/node_settings.go

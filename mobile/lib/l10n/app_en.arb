@@ -56,6 +56,12 @@
   "privacySeedCreateOrRestore": "Create or restore",
   "privacySeedShowRestoreOther": "Show, restore from another",
 
+  "privacyFileRequestSection": "File request",
+  "privacyFileRequestSectionSub": "Before receiving a file — ask for consent. You can set a threshold: always ask, never ask, or ask from a certain size.",
+  "privacyFileRequestAlways": "Always ask",
+  "privacyFileRequestFromMB": "Ask from a certain size",
+  "privacyFileRequestNever": "Never ask",
+
   "seedDialogTitle": "Seed phrase",
   "seedDialogHasSeed": "Seed phrase is set. PeerID will be restored on restart.\n\nRestore from another phrase? PeerID will change, contacts — re-add.",
   "seedDialogNoSeed": "Seed phrase is not set. A random PeerID (RSA) is used now.\n\nCreate a seed phrase — PeerID becomes recoverable. After restart PeerID will change, contacts — re-add.",

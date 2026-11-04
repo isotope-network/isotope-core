@@ -47,6 +47,9 @@ type Settings struct {
 	// true — отправитель шлёт пустой Sphinx-пакет каждые 60 сек (постоянный трафик).
 	// false — без dummy. Дефолт false. Размер 64 КБ — всегда (a+b).
 	MaskingEnabled bool `json:"masking_enabled"`
+	// FileRequestThreshold — порог запроса на приём файла (МБ).
+	// -1 — всегда запрашивать (дефолт). 0 — никогда. N — запрашивать от N МБ.
+	FileRequestThreshold int `json:"file_request_threshold"`
 }
 
 // SETTINGS_VERSION — текущая версия формата.
@@ -71,6 +74,7 @@ func NewSettingsStore(file string) *SettingsStore {
 			ShowNotificationCount:    false, // дефолт: не показывать количество
 			ShowNotificationNames:    false, // дефолт: не показывать имена
 			ShowNotificationProgress: false, // дефолт: не показывать прогресс
+			FileRequestThreshold:     -1,    // дефолт: всегда запрашивать
 		},
 	}
 	if err := s.Load(); err != nil {
@@ -122,6 +126,12 @@ func (s *SettingsStore) Load() error {
 	// Обратная совместимость: старый файл без show_notification_content.
 	if _, ok := raw["show_notification_content"]; !ok {
 		loaded.ShowNotificationContent = true
+	}
+	// Обратная совместимость: старый файл без file_request_threshold.
+	// Нет поля → дефолт -1 (всегда запрашивать). 0 — валидное значение
+	// (никогда), поэтому проверяем именно наличие ключа.
+	if _, ok := raw["file_request_threshold"]; !ok {
+		loaded.FileRequestThreshold = -1
 	}
 
 	// Миграция my_ttl → ttl_period + ttl_mode.
@@ -329,6 +339,26 @@ func (s *SettingsStore) SetMaskingEnabled(enabled bool) error {
 		return nil
 	}
 	s.data.MaskingEnabled = enabled
+	s.mu.Unlock()
+	return s.Save()
+}
+
+// GetFileRequestThreshold — порог запроса на приём файла (МБ).
+// -1 — всегда. 0 — никогда. N — от N МБ.
+func (s *SettingsStore) GetFileRequestThreshold() int {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.data.FileRequestThreshold
+}
+
+// SetFileRequestThreshold — устанавливает порог и сохраняет.
+func (s *SettingsStore) SetFileRequestThreshold(thresholdMB int) error {
+	s.mu.Lock()
+	if s.data.FileRequestThreshold == thresholdMB {
+		s.mu.Unlock()
+		return nil
+	}
+	s.data.FileRequestThreshold = thresholdMB
 	s.mu.Unlock()
 	return s.Save()
 }
