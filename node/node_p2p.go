@@ -896,7 +896,7 @@ func (n *Node) replicateMessage(msg Message) {
 		return
 	}
 	isFileChunk := isChunkedMediaType(msg.MediaType) && msg.ChunkTotal > 0
-	isTextForSphinxBatch := (msg.MediaType == "" || msg.MediaType == "text") && msg.Recipient != ""
+	isTextForSphinxBatch := (msg.MediaType == "" || msg.MediaType == "text") && msg.Recipient != "" && !n.isServiceType(msg.Type)
 	if isTextForSphinxBatch && n.useOnion && !n.isRelay {
 		n.addToBatch(msg.Recipient, msg.ID, msg.PlainText)
 		return
