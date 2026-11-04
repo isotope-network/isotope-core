@@ -336,6 +336,25 @@ func (n *Node) SendFileByPath(peerID, filePath, fileName string, ttlPeriod, ttlM
 
 	chunkTotal := int((fileSize + ChunkSize - 1) / ChunkSize)
 
+	// v2.0.7: .meta рядом с .bin. handleFileAccept восстановит метаданные
+	// (fileName/fileSize/chunkTotal/mediaType) — без них оффер не запустить.
+	meta := fileMeta{
+		MediaID:    mediaID,
+		FileName:   fileName,
+		FileSize:   fileSize,
+		ChunkTotal: chunkTotal,
+		MediaType:  "file",
+		TtlSeconds: ttlSeconds,
+		TtlMode:    ttlMode,
+		ExpiresAt:  expiresAt,
+		CreatedAt:  time.Now(),
+	}
+	if err := n.writeFileMeta(meta); err != nil {
+		os.Remove(sentPath)
+		os.Remove(filepath.Join(n.filesDirPath(), mediaID+ext))
+		return "", false, 0, 0, fmt.Errorf("write meta failed: %w", err)
+	}
+
 	// v2.0.7: право отказа — у получателя. Отправитель всегда шлёт [FILE_OFFER].
 	// Получатель решает (свой порог): запросить или авто-принять.
 	if err := n.SendFileOffer(peerID, mediaID, fileName, fileSize, chunkTotal, ttlSeconds, ttlMode, expiresAt); err != nil {
@@ -460,6 +479,52 @@ func (n *Node) sendFileChunksAsync(peerID, mediaID, fileName string, fileSize in
 	go n.saveState()
 }
 
+// fileMeta — метаданные исходящего файла (v2.0.7).
+// Пишется при SendFileByPath рядом с sent/<mediaID>.bin.
+// Нужен handleFileAccept (восстановить fileName/fileSize/chunkTotal)
+// и resumeFile (восстановить fileName).
+type fileMeta struct {
+	MediaID    string    `json:"media_id"`
+	FileName   string    `json:"file_name"`
+	FileSize   int64     `json:"file_size"`
+	ChunkTotal int       `json:"chunk_total"`
+	MediaType  string    `json:"media_type"`
+	TtlSeconds int       `json:"ttl_seconds"`
+	TtlMode    string    `json:"ttl_mode"`
+	ExpiresAt  time.Time `json:"expires_at"`
+	CreatedAt  time.Time `json:"created_at"`
+}
+
+// metaPath — путь к .meta для mediaID.
+func (n *Node) metaPath(mediaID string) string {
+	return n.sentPath(mediaID) + ".meta"
+}
+
+// writeFileMeta — записывает .meta (JSON) рядом с sent/<mediaID>.bin.
+func (n *Node) writeFileMeta(meta fileMeta) error {
+	data, err := json.MarshalIndent(meta, "", "  ")
+	if err != nil {
+		return fmt.Errorf("marshal meta failed: %w", err)
+	}
+	if err := os.WriteFile(n.metaPath(meta.MediaID), data, 0600); err != nil {
+		return fmt.Errorf("write meta failed: %w", err)
+	}
+	return nil
+}
+
+// readFileMeta — читает .meta для mediaID.
+func (n *Node) readFileMeta(mediaID string) (fileMeta, error) {
+	var meta fileMeta
+	data, err := os.ReadFile(n.metaPath(mediaID))
+	if err != nil {
+		return meta, err
+	}
+	if err := json.Unmarshal(data, &meta); err != nil {
+		return meta, fmt.Errorf("unmarshal meta failed: %w", err)
+	}
+	return meta, nil
+}
+
 // resumeIncompleteFiles — восстановление незавершённых файловых отправок
 // после перезапуска приложения.
 // Обходит sent/<mediaID>.bin: для каждого файла восстанавливает
@@ -496,7 +561,12 @@ func (n *Node) resumeFile(mediaID string) {
 		}
 	}
 	if len(chunks) == 0 {
-		// Нет метаданных — нечего восстанавливать.
+		// Нет чанков в memory (оффер не принят или чанки очищены).
+		// Пробуем .meta — для восстановления fileName (для логов/UI).
+		if meta, err := n.readFileMeta(mediaID); err == nil {
+			log.Printf("[RESUME] %s: meta only (offer pending, %s, %d bytes, %d chunks)",
+				mediaID, meta.FileName, meta.FileSize, meta.ChunkTotal)
+		}
 		return
 	}
 	first := chunks[0]

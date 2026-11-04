@@ -410,21 +410,18 @@ func (n *Node) handleFileAccept(m Message) {
 	}
 	log.Printf("[FILE_ACCEPT] received from %s (mediaID=%s)", m.Sender, mediaID)
 
-	// Метаданные — из memory (свои чанки уже есть).
-	all := n.memory.GetAll()
-	var first *Message
-	for i := range all {
-		if all[i].MediaID == mediaID && all[i].IsOwn && isChunkedMediaType(all[i].MediaType) {
-			first = &all[i]
-			break
-		}
-	}
-	if first == nil {
-		log.Printf("[FILE_ACCEPT] no own chunks for mediaID=%s, ignored", mediaID)
+	// v2.0.7: метаданные — из sent/<mediaID>.bin.meta.
+	// Чанков в memory ещё нет (оффер — до sendFileChunksAsync).
+	meta, err := n.readFileMeta(mediaID)
+	if err != nil {
+		log.Printf("[FILE_ACCEPT] read meta failed for %s: %v, ignored", mediaID, err)
 		return
 	}
-
-	expiresAt := first.ExpiresAt
+	if meta.FileName == "" || meta.FileSize <= 0 || meta.ChunkTotal <= 0 {
+		log.Printf("[FILE_ACCEPT] invalid meta for %s (name=%q size=%d chunks=%d), ignored",
+			mediaID, meta.FileName, meta.FileSize, meta.ChunkTotal)
+		return
+	}
 
 	// Push в UI: получатель принял, отправка начинается.
 	if n.messageHook != nil {
@@ -439,8 +436,15 @@ func (n *Node) handleFileAccept(m Message) {
 		}
 	}
 
-	go n.sendFileChunksAsync(m.Sender, mediaID, first.FileName, first.FileSize,
-		first.MediaType, first.TtlPeriodSeconds, first.TtlMode, expiresAt)
+	mediaType := meta.MediaType
+	if mediaType == "" {
+		mediaType = "file"
+	}
+	log.Printf("[FILE_ACCEPT] starting chunks for %s (%s, %d bytes, %d chunks)",
+		mediaID, meta.FileName, meta.FileSize, meta.ChunkTotal)
+
+	go n.sendFileChunksAsync(m.Sender, mediaID, meta.FileName, meta.FileSize,
+		mediaType, meta.TtlSeconds, meta.TtlMode, meta.ExpiresAt)
 }
 
 // handleFileDecline — отправитель: получатель отказался.
@@ -453,8 +457,9 @@ func (n *Node) handleFileDecline(m Message) {
 	}
 	log.Printf("[FILE_DECLINE] received from %s (mediaID=%s)", m.Sender, mediaID)
 
-	// Удалить sent/ и files/.
+	// Удалить sent/, sent/.meta и files/.
 	_ = os.Remove(n.sentPath(mediaID))
+	_ = os.Remove(n.metaPath(mediaID))
 	if matches, err := filepath.Glob(filepath.Join(n.filesDirPath(), mediaID+".*")); err == nil {
 		for _, p := range matches {
 			_ = os.Remove(p)

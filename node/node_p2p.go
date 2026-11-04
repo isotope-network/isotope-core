@@ -793,6 +793,7 @@ func (n *Node) cleanupSentOnce() {
 
 		if info.ModTime().Before(cutoff) {
 			if err := os.Remove(fullPath); err == nil {
+				_ = os.Remove(n.metaPath(mediaID))
 				log.Printf("[SENT] removed %s (older than 24h)", mediaID)
 			}
 			continue
@@ -800,6 +801,7 @@ func (n *Node) cleanupSentOnce() {
 
 		if st, ok := statuses[mediaID]; ok && st.total > 0 && st.delivered >= st.total {
 			if err := os.Remove(fullPath); err == nil {
+				_ = os.Remove(n.metaPath(mediaID))
 				log.Printf("[SENT] removed %s (all %d chunks delivered)", mediaID, st.total)
 			}
 		}
