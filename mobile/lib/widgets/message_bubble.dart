@@ -185,6 +185,25 @@ class MessageBubble extends StatelessWidget {
     final hasPreview = message.localFilePath.isNotEmpty &&
         (kind == _FileKind.image || kind == _FileKind.video);
     final showProgress = p >= 0 && p < 100;
+    final hasOffer = offerState != null;
+
+    // v2.0.7+: оффер + превью — превью + статус под ним.
+    if (hasOffer && hasPreview) {
+      return Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          kind == _FileKind.image
+              ? _ImageFileView(message: message)
+              : _VideoFileView(message: message),
+          const SizedBox(height: 4),
+          _OfferStatusRow(
+            offerState: offerState!,
+            onCancel: onCancelOffer,
+          ),
+        ],
+      );
+    }
 
     // Превью + прогресс-бар под ним (пока идёт отправка/приём).
     if (hasPreview && showProgress) {
@@ -952,6 +971,68 @@ class _FileRow extends StatelessWidget {
           ),
         ],
       ),
+    );
+  }
+}
+
+/// Статус оффера под превью (v2.0.7+).
+/// Только текст + «Отменить» (pending). Без иконки/имени/размера.
+class _OfferStatusRow extends StatelessWidget {
+  final String offerState;
+  final VoidCallback? onCancel;
+
+  const _OfferStatusRow({required this.offerState, this.onCancel});
+
+  @override
+  Widget build(BuildContext context) {
+    String text;
+    Color color;
+    bool canCancel = false;
+    switch (offerState) {
+      case 'pending':
+        text = 'Ждём готовности принятия';
+        color = Colors.black54;
+        canCancel = true;
+        break;
+      case 'declined':
+        text = 'Получатель не готов';
+        color = Colors.red;
+        break;
+      case 'expired':
+        text = 'Запрос истёк';
+        color = Colors.black54;
+        break;
+      case 'aborted':
+        text = 'Отправитель прервал отправку';
+        color = Colors.black54;
+        break;
+      case 'cancelled':
+        text = 'Отправитель отменил отправку';
+        color = Colors.black54;
+        break;
+      default:
+        text = '';
+        color = Colors.black54;
+    }
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Text(text, style: TextStyle(fontSize: 12, color: color)),
+        if (canCancel) ...[
+          const SizedBox(width: 8),
+          GestureDetector(
+            onTap: onCancel,
+            child: const Text(
+              'Отменить',
+              style: TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
+                color: Colors.red,
+              ),
+            ),
+          ),
+        ],
+      ],
     );
   }
 }

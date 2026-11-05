@@ -431,6 +431,7 @@ func (n *Node) SendFileCancel(offerMsgID, mediaID, recipient string) error {
 // SendFileAbort — отправитель → получатель: [FILE_ABORT] (v2.0.7+).
 // Оффер уже принят, чанки идут. Отправитель передумал.
 // Получатель удаляет chunks/ и files/, видит «Отправитель прервал отправку».
+// Ставит aborted[mediaID] — sendFileChunksAsync остановится перед следующим чанком.
 func (n *Node) SendFileAbort(peerID, mediaID string) error {
 	if n.host == nil {
 		return fmt.Errorf("node not started")
@@ -438,6 +439,10 @@ func (n *Node) SendFileAbort(peerID, mediaID string) error {
 	if peerID == "" || mediaID == "" {
 		return fmt.Errorf("peerID and mediaID are required")
 	}
+
+	n.abortedMu.Lock()
+	n.aborted[mediaID] = true
+	n.abortedMu.Unlock()
 
 	msg := Message{
 		ID:        generateMsgID(fmt.Sprintf("abort:%s:%d", mediaID, time.Now().UnixNano())),
@@ -457,7 +462,7 @@ func (n *Node) SendFileAbort(peerID, mediaID string) error {
 }
 
 // handleFileAbort — получатель: отправитель прервал отправку.
-// Удалить chunks/<mediaID>/ и files/<mediaID>.*, push file_abort.
+// Удалить все чанки из memory, files/<mediaID>.* (DeleteFile), push file_abort.
 func (n *Node) handleFileAbort(m Message) {
 	mediaID := m.Text
 	if mediaID == "" {
@@ -466,13 +471,10 @@ func (n *Node) handleFileAbort(m Message) {
 	}
 	log.Printf("[FILE_ABORT] received from %s (mediaID=%s)", m.Sender, mediaID)
 
-	// Удалить недособранные чанки и файл.
-	chunksDir := filepath.Join(n.filesDirPath(), "chunks", mediaID)
-	_ = os.RemoveAll(chunksDir)
-	if matches, err := filepath.Glob(filepath.Join(n.filesDirPath(), mediaID+".*")); err == nil {
-		for _, p := range matches {
-			_ = os.Remove(p)
-		}
+	// DeleteFile: memory (все чанки) + files/<mediaID>.* + sent/ + .meta.
+	// getChunk → null (memory пуст) → _fetchAndSaveChunk (Dart) остановится.
+	if removed := n.DeleteFile(mediaID); removed >= 0 {
+		log.Printf("[FILE_ABORT] deleted %d chunks for %s", removed, mediaID)
 	}
 
 	// Push в UI: отправитель прервал отправку.

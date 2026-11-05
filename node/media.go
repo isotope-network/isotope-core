@@ -405,6 +405,20 @@ func (n *Node) sendFileChunksAsync(peerID, mediaID, fileName string, fileSize in
 	myID := n.host.ID().String()
 
 	for i := 0; i < int(chunkTotal); i++ {
+		// v2.0.7+: отправитель прервал отправку — остановиться.
+		n.abortedMu.Lock()
+		aborted := n.aborted[mediaID]
+		n.abortedMu.Unlock()
+		if aborted {
+			log.Printf("[FILE] aborted by sender: %s (chunk %d/%d)", mediaID, i, chunkTotal)
+			_ = os.Remove(n.sentPath(mediaID))
+			_ = os.Remove(n.metaPath(mediaID))
+			n.abortedMu.Lock()
+			delete(n.aborted, mediaID)
+			n.abortedMu.Unlock()
+			return
+		}
+
 		buf := make([]byte, ChunkSize)
 		off := int64(i) * int64(ChunkSize)
 		nr, err := src.ReadAt(buf, off)

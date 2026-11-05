@@ -234,6 +234,11 @@ type Node struct {
 	unackedChunks   map[string]retryInfo
 	unackedChunksMu sync.Mutex
 
+	// aborted — mediaID → true, если отправитель прервал отправку.
+	// sendFileChunksAsync проверяет перед каждым чанком → return.
+	aborted   map[string]bool
+	abortedMu sync.Mutex
+
 	// fileStatusLastPush — throttle для push [FILE_STATUS] в Dart.
 	fileStatusLastPush map[string]time.Time
 	fileStatusMu       sync.Mutex
@@ -304,6 +309,7 @@ func NewNode(cfg Config) *Node {
 		sphinxFileSem:           make(chan struct{}, 2),
 		chunkQueue:              make(chan Message, 1000),
 		unackedChunks:           make(map[string]retryInfo),
+		aborted:                 make(map[string]bool),
 		fileStatusLastPush:      make(map[string]time.Time),
 		pendingDelivered:        make(map[string][]string),
 		deliveredCount:          make(map[string]int),
