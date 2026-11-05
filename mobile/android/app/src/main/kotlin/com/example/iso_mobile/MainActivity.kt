@@ -951,6 +951,22 @@ class MainActivity : FlutterActivity() {
 
     private fun showMessageNotification(messageJson: String) {
         try {
+            // v2.0.7: file_offer — своё уведомление.
+            if (messageJson.contains("\"file_offer\"")) {
+                showFileOfferNotification(messageJson)
+                return
+            }
+            // v2.0.7: служебные файловые push'и — не показывать как сообщение.
+            if (messageJson.contains("\"file_cancel\"") ||
+                messageJson.contains("\"file_abort\"") ||
+                messageJson.contains("\"file_accept\"") ||
+                messageJson.contains("\"file_decline\"") ||
+                messageJson.contains("\"file_offer_expired\"") ||
+                messageJson.contains("\"file_status\"") ||
+                messageJson.contains("\"file_complete\"") ||
+                messageJson.contains("\"open_chat\"")) {
+                return
+            }
             val map = org.json.JSONObject(messageJson)
 
             // Только входящие, не свои, не служебные.
@@ -1027,6 +1043,43 @@ class MainActivity : FlutterActivity() {
             NotificationManagerCompat.from(this).notify(sender.hashCode(), builder.build())
         } catch (e: Exception) {
             Log.e("MainActivity", "showMessageNotification error: ${e.message}")
+        }
+    }
+
+    /// v2.0.7: уведомление для file_offer (получатель).
+    /// «📎 Хочет отправить файл: name». Тап → открыть чат.
+    private fun showFileOfferNotification(messageJson: String) {
+        try {
+            val fo = org.json.JSONObject(messageJson).getJSONObject("file_offer")
+            val sender = fo.optString("sender", "")
+            if (sender.isEmpty()) return
+            val fileName = fo.optString("file_name", "Файл")
+            val short = if (fileName.length > 40) fileName.substring(0, 40) + "…" else fileName
+            val title = if (sender.length > 12) sender.substring(0, 12) + "…" else sender
+            val body = "📎 Хочет отправить файл: $short"
+
+            val intent = Intent(this, MainActivity::class.java).apply {
+                flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
+                putExtra("peer_id", sender)
+            }
+            val pendingIntent = PendingIntent.getActivity(
+                this, sender.hashCode(), intent,
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            )
+            val builder = NotificationCompat.Builder(this, NOTIFICATION_CHANNEL_ID)
+                .setSmallIcon(android.R.drawable.ic_dialog_email)
+                .setContentTitle(title)
+                .setContentText(body)
+                .setPriority(NotificationCompat.PRIORITY_HIGH)
+                .setAutoCancel(true)
+                .setContentIntent(pendingIntent)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                if (ActivityCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS)
+                    != PackageManager.PERMISSION_GRANTED) return
+            }
+            NotificationManagerCompat.from(this).notify(sender.hashCode(), builder.build())
+        } catch (e: Exception) {
+            Log.e("MainActivity", "showFileOfferNotification error: ${e.message}")
         }
     }
 
