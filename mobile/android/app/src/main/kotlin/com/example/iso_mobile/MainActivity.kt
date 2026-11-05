@@ -717,6 +717,12 @@ class MainActivity : FlutterActivity() {
                             runOnUiThread { result.success(response) }
                         }.start()
                     }
+                    "getAborted" -> {
+                        Thread {
+                            val response = Mobile.getAborted()
+                            runOnUiThread { result.success(response) }
+                        }.start()
+                    }
                     "removeFromDeleted" -> {
                         val peerID = call.argument<String>("peerID") ?: ""
                         Thread {

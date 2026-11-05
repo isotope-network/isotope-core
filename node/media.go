@@ -567,6 +567,12 @@ func (n *Node) resumeFile(mediaID string) {
 	if mediaID == "" {
 		return
 	}
+	// v2.0.7+: aborted — не восстанавливать (догрузка запрещена).
+	// Иначе после перезапуска приём продолжится (28% → растёт).
+	if n.abortedStore != nil && n.abortedStore.IsAborted(mediaID) {
+		log.Printf("[RESUME] %s: aborted, skip", mediaID)
+		return
+	}
 	all := n.memory.GetAll()
 	var chunks []Message
 	for _, m := range all {

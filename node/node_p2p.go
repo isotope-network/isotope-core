@@ -302,6 +302,13 @@ func (n *Node) handleStream(stream network.Stream) {
 						}
 						replicaMsg.Text = plaintext
 					}
+					// v2.0.7+: aborted — не добавлять в memory, не acceptedCount.
+					if isChunkedMediaType(replicaMsg.MediaType) && replicaMsg.ChunkTotal > 0 && replicaMsg.MediaID != "" {
+						if n.abortedStore != nil && n.abortedStore.IsAborted(replicaMsg.MediaID) {
+							log.Printf("[REPLICA] aborted, skip chunk %s[%d]", replicaMsg.MediaID, replicaMsg.ChunkIndex)
+							return
+						}
+					}
 					replicaMsg.SenderName = n.nameForPeer(replicaMsg.Sender)
 					added := n.memory.Add(replicaMsg)
 					if added {
@@ -529,6 +536,13 @@ func (n *Node) handleSphinxReplicaMsg(replicaMsg Message) {
 			replicaMsg.Text = plaintext
 		}
 	}
+	// v2.0.7+: aborted — не добавлять в memory, не acceptedCount.
+	if isChunkedMediaType(replicaMsg.MediaType) && replicaMsg.ChunkTotal > 0 && replicaMsg.MediaID != "" {
+		if n.abortedStore != nil && n.abortedStore.IsAborted(replicaMsg.MediaID) {
+			log.Printf("[SPHINX] aborted, skip chunk %s[%d]", replicaMsg.MediaID, replicaMsg.ChunkIndex)
+			return
+		}
+	}
 	replicaMsg.SenderName = n.nameForPeer(replicaMsg.Sender)
 	replicaMsg.ReplicatedAt = time.Now()
 	replicaMsg.IsOwn = false
@@ -704,6 +718,12 @@ func (n *Node) cleanupLoop() {
 								}
 							}
 						}
+					}
+				}
+				// v2.0.7+: очистка aborted (24 ч).
+				if n.abortedStore != nil {
+					if removed := n.abortedStore.CleanupExpired(); removed > 0 {
+						log.Printf("[ABORTED] cleaned up %d expired", removed)
 					}
 				}
 			case <-diagTicker.C:

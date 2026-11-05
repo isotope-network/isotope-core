@@ -193,6 +193,10 @@ type Node struct {
 	deletedFile string
 	deleted     *DeletedStore
 
+	// ABORTED — отменённые mediaID (v2.0.7+). Переживает перезапуск.
+	abortedFile  string
+	abortedStore *AbortedStore
+
 	// myReadEnabled — настройка "делюсь ли я статусом прочтения".
 	myReadEnabled bool
 
@@ -473,6 +477,15 @@ func (n *Node) InitP2P() error {
 	if n.deletedFile != "" {
 		_ = os.MkdirAll(filepath.Dir(n.deletedFile), 0700)
 		n.deleted = NewDeletedStore(n.deletedFile)
+	}
+
+	// ABORTED — отменённые mediaID (v2.0.7+). Переживает перезапуск.
+	if n.abortedFile == "" && n.stateFile != "" {
+		n.abortedFile = filepath.Join(filepath.Dir(n.stateFile), "isotope_aborted.json")
+	}
+	if n.abortedFile != "" {
+		_ = os.MkdirAll(filepath.Dir(n.abortedFile), 0700)
+		n.abortedStore = NewAbortedStore(n.abortedFile)
 	}
 
 	// OFFERS — входящие офферы на приём файлов (право отказа).

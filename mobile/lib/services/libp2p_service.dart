@@ -900,6 +900,25 @@ class LibP2PService {
     }
   }
 
+  /// v2.0.7+: список aborted mediaID (для «не догружать» после перезапуска).
+  static Future<List<String>> getAborted() async {
+    try {
+      final response = await _channel.invokeMethod<String>('getAborted');
+      final raw = response ?? '[]';
+      try {
+        final decoded = jsonDecode(raw);
+        if (decoded is List) {
+          return decoded.map((e) => e.toString()).toList();
+        }
+        return [];
+      } on FormatException {
+        return [];
+      }
+    } on PlatformException {
+      return [];
+    }
+  }
+
   /// Убирает peerID из списка удалённых.
   /// Вызывается при QR-возврате контакта.
   static Future<Map<String, dynamic>> removeFromDeleted({

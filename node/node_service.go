@@ -150,6 +150,11 @@ func (n *Node) handleFileComplete(m Message) {
 	mediaID := m.Ref
 	log.Printf("[FILE_COMPLETE] mediaID=%s from=%s", mediaID, m.Sender)
 
+	// v2.0.7+: файл всё-таки принят — убрать из aborted (не нужен).
+	if n.abortedStore != nil {
+		_ = n.abortedStore.Remove(mediaID)
+	}
+
 	statusToSet := StatusDelivered
 	peerReadEnabled := n.getPeerReadEnabled(m.Sender)
 	if !n.myReadEnabled || !peerReadEnabled {

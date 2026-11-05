@@ -1006,6 +1006,20 @@ func GetDeletedPeers() string {
 	return string(data)
 }
 
+// GetAborted — возвращает JSON-массив aborted mediaID (v2.0.7+).
+// Dart не догружает эти файлы после перезапуска.
+func GetAborted() string {
+	nodeMu.Lock()
+	defer nodeMu.Unlock()
+
+	if node == nil {
+		return `[]`
+	}
+	list := node.GetAborted()
+	data, _ := json.Marshal(list)
+	return string(data)
+}
+
 // RemoveFromDeleted — убирает peerID из списка удалённых.
 // Вызывается при QR-возврате контакта (явное действие пользователя).
 func RemoveFromDeleted(peerID string) string {

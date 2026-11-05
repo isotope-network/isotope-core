@@ -673,6 +673,8 @@ class ChatProvider extends ChangeNotifier {
             final mediaID = fs['mediaID'] as String? ?? '';
             final delivered = fs['delivered'] as int? ?? 0;
             final total = fs['total'] as int? ?? 0;
+            // v2.0.7: aborted — не обновлять _fileProgress (шторка не висит).
+            if (_offerStates[mediaID] == 'aborted') return;
             if (mediaID.isNotEmpty && total > 0) {
               final percent = ((delivered / total) * 100).clamp(0, 100).round();
               // Не понижаем прогресс: файл мог уже быть 100%, а retry-эхо
@@ -696,6 +698,8 @@ class ChatProvider extends ChangeNotifier {
           final fc = map['file_complete'] as Map<String, dynamic>?;
           if (fc != null) {
             final mediaID = fc['mediaID'] as String? ?? '';
+            // v2.0.7: aborted — не обновлять _fileProgress (шторка не висит).
+            if (_offerStates[mediaID] == 'aborted') return;
             if (mediaID.isNotEmpty) {
               _fileProgress[mediaID] = 100;
               _safeNotify();
@@ -1792,6 +1796,8 @@ class ChatProvider extends ChangeNotifier {
     try {
       final data = await LibP2PService.getMessages();
       final shortMyID = _libp2pPeerId.length > 8 ? _libp2pPeerId.substring(0, 8) : _libp2pPeerId;
+      // v2.0.7+: aborted — не догружать (после перезапуска).
+      final aborted = (await LibP2PService.getAborted()).toSet();
       final result = <Message>[];
       for (final json in data) {
         final map = json as Map<String, dynamic>;
@@ -1806,6 +1812,8 @@ class ChatProvider extends ChangeNotifier {
             chunkTotal > 0 &&
             mediaId.toString().isNotEmpty) {
           final mid = mediaId.toString();
+          // v2.0.7+: aborted — не восстанавливать (не догружать).
+          if (aborted.contains(mid)) continue;
           final existing = _fileMessages[mid];
           if (existing == null) {
             // Восстановление пути для собранного файла.

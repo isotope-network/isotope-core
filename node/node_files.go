@@ -107,6 +107,10 @@ func (n *Node) pushFileStatus(mediaID string, delivered, total int) {
 	if mediaID == "" || total <= 0 {
 		return
 	}
+	// v2.0.7+: aborted — не push прогресс (шторка не висит).
+	if n.abortedStore != nil && n.abortedStore.IsAborted(mediaID) {
+		return
+	}
 	n.fileStatusMu.Lock()
 	last := n.fileStatusLastPush[mediaID]
 	complete := delivered >= total
@@ -370,6 +374,14 @@ func (n *Node) DeleteFile(mediaID string) int {
 	return removed
 }
 
+// GetAborted — возвращает список aborted mediaID (v2.0.7+, для Dart).
+func (n *Node) GetAborted() []string {
+	if n.abortedStore == nil {
+		return []string{}
+	}
+	return n.abortedStore.GetAll()
+}
+
 // FileStatusEntry — статус файловой отправки для Dart.
 type FileStatusEntry struct {
 	MediaID   string `json:"media_id"`
@@ -427,3 +439,5 @@ func (n *Node) GetFileStatuses() []FileStatusEntry {
 	}
 	return result
 }
+
+// D:\isotope\node\node_files.go

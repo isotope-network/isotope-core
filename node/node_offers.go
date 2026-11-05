@@ -472,10 +472,18 @@ func (n *Node) handleFileAbort(m Message) {
 	}
 	log.Printf("[FILE_ABORT] received from %s (mediaID=%s)", m.Sender, mediaID)
 
-	// DeleteFile: memory (все чанки) + files/<mediaID>.* + sent/ + .meta.
+	// DeleteFile: memory (все чанки) + files/<mediaID>.* + sent/ + .meta + chunks/.
 	// getChunk → null (memory пуст) → _fetchAndSaveChunk (Dart) остановится.
 	if removed := n.DeleteFile(mediaID); removed >= 0 {
 		log.Printf("[FILE_ABORT] deleted %d chunks for %s", removed, mediaID)
+	}
+
+	// v2.0.7+: сохранить aborted на диск — переживёт перезапуск.
+	// getMessagesViaLibP2P (Dart) / resumeFile (Go) — не догружать.
+	if n.abortedStore != nil {
+		if err := n.abortedStore.Add(mediaID); err != nil {
+			log.Printf("[FILE_ABORT] abortedStore.Add(%s) failed: %v", mediaID, err)
+		}
 	}
 
 	// Push в UI: отправитель прервал отправку.
