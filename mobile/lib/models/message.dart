@@ -85,15 +85,16 @@ class Message {
     this.localFilePath = '',
   });
 
-  /// Копия с обновлённым expiresAt.
-  Message copyWith({DateTime? expiresAt}) {
+  /// Копия с обновлённым expiresAt и/или time.
+  /// v2.0.7: time — для сортировки в контактах после file_abort.
+  Message copyWith({DateTime? expiresAt, String? time}) {
     return Message(
       id: id,
       text: text,
       plainText: plainText,
       version: version,
       sender: sender,
-      time: time,
+      time: time ?? this.time,
       isOwn: isOwn,
       score: score,
       weight: weight,

@@ -339,6 +339,10 @@ func (n *Node) DeleteFile(mediaID string) int {
 	}
 	sentPath := n.sentPath(mediaID)
 	_ = os.Remove(sentPath)
+	_ = os.Remove(n.metaPath(mediaID))
+	// v2.0.7+: недособранные чанки на диске (получатель) — тоже удалить.
+	// Без этого tryAssemble соберёт файл из старых chunks/ — файл «принят».
+	_ = os.RemoveAll(filepath.Join(n.filesDirPath(), "chunks", mediaID))
 	filesPattern := filepath.Join(n.filesDirPath(), mediaID+".*")
 	if matches, err := filepath.Glob(filesPattern); err == nil {
 		for _, p := range matches {

@@ -815,10 +815,27 @@ class ChatProvider extends ChangeNotifier {
           final fa = map['file_abort'] as Map<String, dynamic>?;
           if (fa != null) {
             final mediaID = fa['media_id'] as String? ?? '';
+            final sender = fa['sender'] as String? ?? '';
             if (mediaID.isNotEmpty) {
               // v2.0.7: не удалять _fileMessages — место для надписи.
               _offerStates[mediaID] = 'aborted';
               _fileProgress.remove(mediaID);
+              // Обновить time — для сортировки (контакт вверху).
+              final agg = _fileMessages[mediaID];
+              if (agg != null) {
+                _fileMessages[mediaID] = agg.copyWith(
+                  time: DateTime.now().toUtc().toIso8601String(),
+                );
+              }
+              // Бейдж — как новое сообщение (если чат не открыт).
+              if (sender.isNotEmpty && sender != _currentOpenPeerID) {
+                _unreadByPeer[sender] = (_unreadByPeer[sender] ?? 0) + 1;
+              }
+              // Очистка очередей — не собирать файл.
+              _chunkQueue.remove(mediaID);
+              _assembling.remove(mediaID);
+              _fileCompleteSent.remove(mediaID);
+              _ackBuffer.remove(mediaID);
               LogService.log('P2P: file_abort $mediaID');
               _safeNotify();
             }
@@ -2338,6 +2355,9 @@ class ChatProvider extends ChangeNotifier {
   int fileProgress(String mediaId) {
     if (mediaId.isEmpty) return -1;
 
+    // v2.0.7: aborted — не считать chunksCount, не собирать.
+    if (_offerStates[mediaId] == 'aborted') return -1;
+
     // Отправитель: push [FILE_STATUS] из Go → _fileProgress.
     final pushed = _fileProgress[mediaId];
     if (pushed != null) return pushed;
@@ -2431,7 +2451,9 @@ class ChatProvider extends ChangeNotifier {
       _offerStates.remove(mediaId);
       final chatPeer = fileMsg.isOwn ? fileMsg.recipient : fileMsg.sender;
       if (chatPeer.isNotEmpty) {
-        _lastMessageByPeer.remove(chatPeer);
+        // v2.0.7: не remove — пересчитать (max из оставшихся).
+        // Контакт должен остаться вверху (последние действия — с ним).
+        _recomputeLastMessageForPeer(chatPeer);
       }
       LibP2PService.deleteFile(mediaId).catchError((_) => <String, dynamic>{});
       MediaStorage.invalidatePathCache(mediaId);
@@ -2445,6 +2467,34 @@ class ChatProvider extends ChangeNotifier {
     _messagesMap.remove(id);
     _messageStatuses.remove(id);
     _safeNotify();
+  }
+
+  /// Пересчитывает _lastMessageByPeer[peerID] — max из оставшихся.
+  /// v2.0.7: после deleteMessage контакт не должен падать вниз.
+  void _recomputeLastMessageForPeer(String peerID) {
+    if (peerID.isEmpty) return;
+    Message? latest;
+    for (final m in _messagesMap.values) {
+      final fromPeer = m.sender == peerID;
+      final toPeer = m.recipient == peerID;
+      if (!fromPeer && !toPeer) continue;
+      if (latest == null || m.time.compareTo(latest.time) > 0) {
+        latest = m;
+      }
+    }
+    for (final m in _fileMessages.values) {
+      final fromPeer = m.sender == peerID;
+      final toPeer = m.recipient == peerID;
+      if (!fromPeer && !toPeer) continue;
+      if (latest == null || m.time.compareTo(latest.time) > 0) {
+        latest = m;
+      }
+    }
+    if (latest == null) {
+      _lastMessageByPeer.remove(peerID);
+    } else {
+      _lastMessageByPeer[peerID] = latest;
+    }
   }
 
   /// Полное удаление переписки с контактом.
