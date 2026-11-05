@@ -188,7 +188,11 @@ class MessageBubble extends StatelessWidget {
     final hasOffer = offerState != null;
 
     // v2.0.7+: оффер + превью — превью + статус под ним.
-    if (hasOffer && hasPreview) {
+    // Только для состояний, где прогресса нет (pending/declined/expired/aborted/cancelled).
+    // accepted — как обычно (превью + прогресс-бар).
+    final offerWithoutProgress = hasOffer &&
+        offerState != 'accepted';
+    if (offerWithoutProgress && hasPreview) {
       return Column(
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,

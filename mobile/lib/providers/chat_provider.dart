@@ -2416,11 +2416,13 @@ class ChatProvider extends ChangeNotifier {
         cancelFileOffer(mediaId);
         return;
       }
-      final progress = _fileProgress[mediaId] ?? 0;
-      if (fileMsg.isOwn && offerState == 'accepted' && progress > 0 && progress < 100) {
-        abortFileSend(mediaId);
-        return;
-      }
+      // v2.0.7: accepted — всегда abort (независимо от progress).
+        // progress может быть null (файл только принят, чанки ещё не пошли).
+        // Без этого — sendFileChunksAsync продолжает, файл собирается.
+        if (fileMsg.isOwn && offerState == 'accepted') {
+          abortFileSend(mediaId);
+          return;
+        }
 
       _fileMessages.remove(mediaId);
       _fileProgress.remove(mediaId);

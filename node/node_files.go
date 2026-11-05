@@ -24,6 +24,15 @@ func (n *Node) chunkWorker() {
 		return
 	}
 	for msg := range n.chunkQueue {
+		// v2.0.7+: отправитель прервал — не отправлять.
+		n.abortedMu.Lock()
+		aborted := n.aborted[msg.MediaID]
+		n.abortedMu.Unlock()
+		if aborted {
+			log.Printf("[CHUNK] aborted, skip %s[%d]", msg.MediaID, msg.ChunkIndex)
+			continue
+		}
+
 		msg.PlainText = ""
 		data, err := json.Marshal(msg)
 		if err != nil {
