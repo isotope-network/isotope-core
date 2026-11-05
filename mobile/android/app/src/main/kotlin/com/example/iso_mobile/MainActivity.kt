@@ -963,10 +963,19 @@ class MainActivity : FlutterActivity() {
                 showFileOfferNotification(messageJson)
                 return
             }
-            // v2.0.7: служебные файловые push'и — не показывать как сообщение.
-            if (messageJson.contains("\"file_cancel\"") ||
-                messageJson.contains("\"file_abort\"") ||
-                messageJson.contains("\"file_accept\"") ||
+            // v2.0.7: file_cancel / file_abort — отменить уведомление оффера.
+            // Иначе heads-up (file_offer) висит, пока не перезапустишь приложение.
+            if (messageJson.contains("\"file_cancel\"") || messageJson.contains("\"file_abort\"")) {
+                try {
+                    val obj = org.json.JSONObject(messageJson)
+                    val inner = obj.optJSONObject("file_cancel") ?: obj.optJSONObject("file_abort")
+                    val sender = inner?.optString("sender", "") ?: ""
+                    if (sender.isNotEmpty()) clearChatNotifications(sender)
+                } catch (_: Exception) {}
+                return
+            }
+            // v2.0.7: прочие служебные файловые push'и — не показывать как сообщение.
+            if (messageJson.contains("\"file_accept\"") ||
                 messageJson.contains("\"file_decline\"") ||
                 messageJson.contains("\"file_offer_expired\"") ||
                 messageJson.contains("\"file_status\"") ||
