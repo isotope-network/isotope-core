@@ -776,6 +776,19 @@ class LibP2PService {
     }
   }
 
+  /// v2.0.7: сброс системного уведомления (шторка + бейдж ярлыка) для peerID.
+  /// Вызывается при открытии чата. Fire-and-forget: ошибки не критичны.
+  static Future<void> clearChatNotifications(String peerID) async {
+    if (peerID.isEmpty) return;
+    try {
+      await _channel.invokeMethod<String>('clearChatNotifications', {
+        'peerID': peerID,
+      });
+    } on PlatformException {
+      // Тихо — не критично.
+    }
+  }
+
   /// Возвращает представление по умолчанию.
   static Future<String> getMyDisplayName() async {
     try {

@@ -336,6 +336,7 @@ func (n *Node) handleFileOffer(m Message) {
 				"media_id":     payload.MediaID,
 				"offer_msg_id": m.Ref,
 				"sender":       m.Sender,
+				"sender_name":  n.nameForPeer(m.Sender),
 				"file_name":    payload.FileName,
 				"file_size":    payload.FileSize,
 				"chunk_total":  payload.ChunkTotal,

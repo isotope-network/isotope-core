@@ -748,6 +748,13 @@ class MainActivity : FlutterActivity() {
                         pendingOpenChat = null
                         result.success(peer)
                     }
+                    "clearChatNotifications" -> {
+                        val peerID = call.argument<String>("peerID") ?: ""
+                        runOnUiThread {
+                            clearChatNotifications(peerID)
+                            result.success("ok")
+                        }
+                    }
                     "getLogs" -> {
                         result.success(Mobile.getLogs())
                     }
@@ -1055,7 +1062,10 @@ class MainActivity : FlutterActivity() {
             if (sender.isEmpty()) return
             val fileName = fo.optString("file_name", "Файл")
             val short = if (fileName.length > 40) fileName.substring(0, 40) + "…" else fileName
-            val title = if (sender.length > 12) sender.substring(0, 12) + "…" else sender
+            // v2.0.7: имя отправителя (из Go — nameForPeer). Fallback — PeerID.
+            val senderName = fo.optString("sender_name", "")
+            val title = if (senderName.isNotEmpty()) senderName
+                        else if (sender.length > 12) sender.substring(0, 12) + "…" else sender
             val body = "📎 Хочет отправить файл: $short"
 
             val intent = Intent(this, MainActivity::class.java).apply {
@@ -1081,6 +1091,13 @@ class MainActivity : FlutterActivity() {
         } catch (e: Exception) {
             Log.e("MainActivity", "showFileOfferNotification error: ${e.message}")
         }
+    }
+
+    /// v2.0.7: сброс уведомления (шторка + бейдж ярлыка) для peerID.
+    /// Вызывается из Dart при открытии чата (setChatOpen(true, peerID)).
+    private fun clearChatNotifications(peerID: String) {
+        if (peerID.isEmpty()) return
+        NotificationManagerCompat.from(this).cancel(peerID.hashCode())
     }
 
     private fun handleIntentForChatOpen(intent: Intent?) {

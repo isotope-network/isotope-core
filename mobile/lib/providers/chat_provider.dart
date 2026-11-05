@@ -405,6 +405,8 @@ class ChatProvider extends ChangeNotifier {
       _unreadSnapshotByPeer[peerID] = _unreadByPeer[peerID] ?? 0;
       _unreadByPeer[peerID] = 0;
       _sendReadBatchFor(peerID);
+      // v2.0.7: сброс системного уведомления (шторка + бейдж ярлыка).
+      LibP2PService.clearChatNotifications(peerID).catchError((_) {});
     } else {
       _currentOpenPeerID = null;
     }
