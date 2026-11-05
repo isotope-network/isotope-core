@@ -126,12 +126,9 @@ class ChatProvider extends ChangeNotifier {
   // ==== FILE OFFERS (v2.0.7 — право отказа от файла) ====
   // Входящие офферы: mediaID → FileOfferData. Получатель видит кнопки.
   final Map<String, FileOfferData> _fileOffers = {};
-  // Исходящие офферы: mediaID → FileOfferData. Отправитель видит статус.
-  // pending  — «Ждём готовности принятия».
-  // accepted — «Получатель принял. Отправка…».
-  // declined — «Получатель не готов».
-  // expired  — «Запрос истёк».
-  final Map<String, FileOfferData> _outgoingOffers = {};
+  // Состояние исходящего оффера: mediaID → 'pending' | 'accepted' | 'declined' | 'expired'.
+  // Файл-плашка (Message в _fileMessages) + это состояние = UI отправителя.
+  final Map<String, String> _offerStates = {};
 
   // ==== FOREGROUND NOTIFICATION (шторка) ====
   // Настройки из Go: показывать количество / имена / прогресс.
@@ -740,10 +737,8 @@ class ChatProvider extends ChangeNotifier {
           if (fa != null) {
             final mediaID = fa['media_id'] as String? ?? '';
             if (mediaID.isNotEmpty) {
-              final existing = _outgoingOffers[mediaID];
-              if (existing != null) {
-                _outgoingOffers[mediaID] = existing.copyWith(state: 'accepted');
-              }
+              _offerStates[mediaID] = 'accepted';
+              _fileProgress[mediaID] = 0;
               LogService.log('P2P: file_accept $mediaID');
               _safeNotify();
             }
@@ -758,10 +753,7 @@ class ChatProvider extends ChangeNotifier {
           if (fd != null) {
             final mediaID = fd['media_id'] as String? ?? '';
             if (mediaID.isNotEmpty) {
-              final existing = _outgoingOffers[mediaID];
-              if (existing != null) {
-                _outgoingOffers[mediaID] = existing.copyWith(state: 'declined');
-              }
+              _offerStates[mediaID] = 'declined';
               // Входящий decline (если мы — получатель и отправитель отменил).
               _fileOffers.remove(mediaID);
               LogService.log('P2P: file_decline $mediaID');
@@ -778,12 +770,26 @@ class ChatProvider extends ChangeNotifier {
           if (fe != null) {
             final mediaID = fe['media_id'] as String? ?? '';
             if (mediaID.isNotEmpty) {
-              final existing = _outgoingOffers[mediaID];
-              if (existing != null) {
-                _outgoingOffers[mediaID] = existing.copyWith(state: 'expired');
-              }
+              _offerStates[mediaID] = 'expired';
               _fileOffers.remove(mediaID);
               LogService.log('P2P: file_offer_expired $mediaID');
+              _safeNotify();
+            }
+          }
+          return;
+        }
+
+        // Специальное событие: отправитель отменил оффер (получателю).
+        if (messageJSON.contains('"file_cancel"')) {
+          final map = jsonDecode(messageJSON) as Map<String, dynamic>;
+          final fc = map['file_cancel'] as Map<String, dynamic>?;
+          if (fc != null) {
+            final mediaID = fc['media_id'] as String? ?? '';
+            if (mediaID.isNotEmpty) {
+              _fileOffers.remove(mediaID);
+              _fileMessages.remove(mediaID);
+              _offerStates.remove(mediaID);
+              LogService.log('P2P: file_cancel $mediaID');
               _safeNotify();
             }
           }
@@ -1525,21 +1531,43 @@ class ChatProvider extends ChangeNotifier {
       _peerSeenController.add(_currentNodeIp);
     }
 
-    // v2.0.7: если Go вернул ID — файл мог уйти в оффер (не отправлен).
-    // Проверяем _outgoingOffers: если оффер есть — отправитель видит статус.
-    // Если оффера нет — файл ушёл сразу (ниже порога). Ничего не делаем.
-    if (!_outgoingOffers.containsKey(mediaId.toString()) &&
-        response['offer_pending'] == true) {
-      _outgoingOffers[mediaId.toString()] = FileOfferData(
-        mediaID: mediaId.toString(),
-        offerMsgID: '',
-        sender: _currentNodeIp,
-        fileName: response['file_name'] as String? ?? fileName,
-        fileSize: (response['file_size'] as num?)?.toInt() ?? 0,
-        chunkTotal: (response['chunk_total'] as num?)?.toInt() ?? 0,
-        state: 'pending',
-        createdAt: DateTime.now(),
+    // v2.0.7: если Go вернул ID — файл ушёл в оффер (всегда, Баг 1).
+    // Создаём файл-плашку (_fileMessages) + состояние оффера (_offerStates).
+    final mediaIDStr = mediaId.toString();
+    final fileNameStr = response['file_name'] as String? ?? fileName;
+    final fileSizeInt = (response['file_size'] as num?)?.toInt() ?? 0;
+    final chunkTotalInt = (response['chunk_total'] as num?)?.toInt() ?? 0;
+
+    if (response['offer_pending'] == true) {
+      _offerStates[mediaIDStr] = 'pending';
+
+      // Файл-плашка (с превью для видео/фото — через _restoreOwnFilePathAsync).
+      final now = DateTime.now().toUtc().toIso8601String();
+      final ttlSec = _ttlPeriodSeconds(_ttlPeriod);
+      _fileMessages[mediaIDStr] = Message(
+        id: mediaIDStr,
+        text: '',
+        plainText: '',
+        sender: 'Вы',
+        time: now,
+        isOwn: true,
+        score: 0,
+        weight: 0.5,
+        archived: false,
+        channel: _activeChannel,
+        ttlPeriodSeconds: ttlSec,
+        ttlMode: _ttlMode,
+        expiresAt: null,
+        recipient: _currentNodeIp,
+        mediaType: 'file',
+        fileName: fileNameStr,
+        fileSize: fileSizeInt,
+        mediaId: mediaIDStr,
+        chunkIndex: 0,
+        chunkTotal: chunkTotalInt,
       );
+      // Постоянная копия Go в files/<mediaID>.<ext> — для превью/«Открыть».
+      _restoreOwnFilePathAsync(mediaIDStr);
     }
 
     return true;
@@ -1595,13 +1623,58 @@ class ChatProvider extends ChangeNotifier {
     return _fileOffers.values.where((o) => o.sender == peerID).toList();
   }
 
-  /// Возвращает исходящий оффер по mediaID (для UI отправителя).
-  FileOfferData? outgoingOfferFor(String mediaID) => _outgoingOffers[mediaID];
+  /// Возвращает состояние исходящего оффера по mediaID (для UI отправителя).
+  /// 'pending' | 'accepted' | 'declined' | 'expired' | null (не оффер).
+  String? offerStateFor(String mediaID) => _offerStates[mediaID];
 
-  /// Возвращает все исходящие офферы для указанного контакта.
-  List<FileOfferData> outgoingOffersFor(String peerID) {
-    if (peerID.isEmpty) return [];
-    return _outgoingOffers.values.where((o) => o.sender == peerID).toList();
+  /// Отменяет исходящий оффер: шлёт [FILE_CANCEL] получателю.
+  /// Удаляет .bin/.meta (через deleteFile), _fileMessages, _offerStates, _fileProgress.
+  Future<bool> cancelFileOffer(String mediaID) async {
+    final state = _offerStates[mediaID];
+    if (state == null) {
+      LogService.log('ChatProvider: cancelFileOffer — оффер $mediaID не найден');
+      return false;
+    }
+    if (state != 'pending') {
+      LogService.log('ChatProvider: cancelFileOffer — оффер $mediaID уже $state');
+      return false;
+    }
+    final offerMsgID = _fileMessages[mediaID]?.id ?? mediaID;
+    final r = await LibP2PService.sendFileCancel(
+      offerMsgID: offerMsgID,
+      mediaID: mediaID,
+      recipient: _currentNodeIp,
+    );
+    if (r.containsKey('error')) {
+      LogService.log('ChatProvider: sendFileCancel failed: ${r['error']}');
+      return false;
+    }
+    _offerStates.remove(mediaID);
+    _fileMessages.remove(mediaID);
+    _fileProgress.remove(mediaID);
+    LibP2PService.deleteFile(mediaID).catchError((_) => <String, dynamic>{});
+    MediaStorage.invalidatePathCache(mediaID);
+    _safeNotify();
+    LogService.log('ChatProvider: file_offer $mediaID отменён');
+    return true;
+  }
+
+  /// Время последнего события для контакта: max(message.time, offer.createdAt).
+  /// Для сортировки в connect_screen (контакт с оффером — вверху).
+  DateTime? lastMessageTimeFor(String peerID) {
+    if (peerID.isEmpty) return null;
+    DateTime? latest;
+    final msg = _lastMessageByPeer[peerID];
+    if (msg != null) {
+      latest = DateTime.tryParse(msg.time);
+    }
+    for (final o in _fileOffers.values) {
+      if (o.sender != peerID) continue;
+      if (latest == null || o.createdAt.isAfter(latest)) {
+        latest = o.createdAt;
+      }
+    }
+    return latest;
   }
 
   /// Загружает порог запроса файла из Go.

@@ -22,6 +22,11 @@ class MessageBubble extends StatelessWidget {
   final String? senderName;
   /// Прогресс передачи файла (0-100). Для file-сообщений.
   final int Function(String mediaId)? progressFor;
+  /// Состояние оффера файла (v2.0.7+): pending / accepted / declined / expired / null.
+  /// Только для отправителя. Получатель — FileOfferBubble (входящий).
+  final String? offerState;
+  /// Колбэк «Отменить» для оффера (pending). Только отправитель.
+  final VoidCallback? onCancelOffer;
 
   const MessageBubble({
     super.key,
@@ -30,6 +35,8 @@ class MessageBubble extends StatelessWidget {
     this.onDislike,
     this.senderName,
     this.progressFor,
+    this.offerState,
+    this.onCancelOffer,
   });
 
   int _progressFor(String mediaId) {
@@ -226,6 +233,8 @@ class MessageBubble extends StatelessWidget {
     return _FileRow(
       message: message,
       progress: p,
+      offerState: offerState,
+      onCancelOffer: onCancelOffer,
     );
   }
 
@@ -730,8 +739,15 @@ class _VideoFileFullscreenState extends State<_VideoFileFullscreen> {
 class _FileRow extends StatelessWidget {
   final Message message;
   final int progress;
+  final String? offerState;
+  final VoidCallback? onCancelOffer;
 
-  const _FileRow({required this.message, this.progress = 0});
+  const _FileRow({
+    required this.message,
+    this.progress = 0,
+    this.offerState,
+    this.onCancelOffer,
+  });
 
   String _fmtSize(int bytes) {
     if (bytes < 1024) return '$bytes Б';
@@ -746,10 +762,84 @@ class _FileRow extends StatelessWidget {
     LogService.log('FILE: open $path → ${result.type}');
   }
 
+  /// Плашка оффера (v2.0.7+): статус + «Отменить» (pending).
+  Widget _buildOfferRow(BuildContext context, String name, String status,
+      {required bool canCancel}) {
+    return SizedBox(
+      width: 220,
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            width: 36,
+            height: 36,
+            decoration: const BoxDecoration(
+              color: Color(0xFF4CAF50),
+              shape: BoxShape.circle,
+            ),
+            child: const Icon(Icons.insert_drive_file, color: Colors.white, size: 20),
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  name,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  _fmtSize(message.fileSize),
+                  style: const TextStyle(fontSize: 11, color: Colors.black54),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  status,
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: canCancel ? Colors.black54 : Colors.red,
+                  ),
+                ),
+                if (canCancel) ...[
+                  const SizedBox(height: 4),
+                  GestureDetector(
+                    onTap: onCancelOffer,
+                    child: const Text(
+                      'Отменить',
+                      style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                        color: Colors.red,
+                      ),
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final name = message.fileName.isNotEmpty ? message.fileName : 'Файл';
     final ready = message.localFilePath.isNotEmpty;
+
+    // v2.0.7: оффер-состояние приоритетнее прогресса.
+    if (offerState == 'pending') {
+      return _buildOfferRow(context, name, 'Ждём готовности принятия', canCancel: true);
+    }
+    if (offerState == 'declined') {
+      return _buildOfferRow(context, name, 'Получатель не готов', canCancel: false);
+    }
+    if (offerState == 'expired') {
+      return _buildOfferRow(context, name, 'Запрос истёк', canCancel: false);
+    }
 
     // Состояние файла (по приоритету):
     // 1. Готов (localFilePath есть) → «Открыть».

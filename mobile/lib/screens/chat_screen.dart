@@ -746,9 +746,6 @@ class _ChatScreenState extends State<ChatScreen> {
     for (final o in provider.fileOffersFor(peerID)) {
       items.add(_ChatItem.incomingOffer(o));
     }
-    for (final o in provider.outgoingOffersFor(peerID)) {
-      items.add(_ChatItem.outgoingOffer(o));
-    }
     items.sort((a, b) => a.time.compareTo(b.time));
     return items;
   }
@@ -822,29 +819,6 @@ class _ChatScreenState extends State<ChatScreen> {
                         state: FileOfferState.pending,
                         onAccept: () => provider.acceptFileOffer(offer.mediaID),
                         onDecline: () => provider.declineFileOffer(offer.mediaID),
-                      );
-                    }
-
-                    // Исходящий оффер — плашка со статусом (без кнопок).
-                    if (item.kind == _ChatItemKind.outgoingOffer) {
-                      final offer = item.offer!;
-                      FileOfferState st = FileOfferState.pending;
-                      switch (offer.state) {
-                        case 'accepted':
-                          st = FileOfferState.accepted;
-                          break;
-                        case 'declined':
-                          st = FileOfferState.declined;
-                          break;
-                        case 'expired':
-                          st = FileOfferState.expired;
-                          break;
-                        default:
-                          st = FileOfferState.pending;
-                      }
-                      return FileOfferBubble(
-                        offer: offer,
-                        state: st,
                       );
                     }
 
@@ -924,6 +898,8 @@ class _ChatScreenState extends State<ChatScreen> {
                                 ? null
                                 : provider.nameFor(msg.sender),
                             progressFor: provider.fileProgress,
+                            offerState: provider.offerStateFor(msg.mediaId),
+                            onCancelOffer: () => provider.cancelFileOffer(msg.mediaId),
                             onLike: () => provider.sendFeedback(msg.id, 1),
                             onDislike: () => provider.sendFeedback(msg.id, -1),
                           ),
@@ -953,7 +929,7 @@ class _ChatScreenState extends State<ChatScreen> {
 }
 
 /// Тип элемента ленты чата.
-enum _ChatItemKind { message, pending, incomingOffer, outgoingOffer }
+enum _ChatItemKind { message, pending, incomingOffer }
 
 /// Элемент ленты: сообщение, pending или исходящий оффер.
 /// Один список для ListView.builder — простая индексация, одна сортировка.
@@ -977,10 +953,6 @@ class _ChatItem {
 
   factory _ChatItem.incomingOffer(FileOfferData o) {
     return _ChatItem._(_ChatItemKind.incomingOffer, null, o, o.createdAt);
-  }
-
-  factory _ChatItem.outgoingOffer(FileOfferData o) {
-    return _ChatItem._(_ChatItemKind.outgoingOffer, null, o, o.createdAt);
   }
 }
 

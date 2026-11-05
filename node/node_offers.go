@@ -400,6 +400,33 @@ func (n *Node) SendFileDecline(offerMsgID, mediaID, recipient string) error {
 	return nil
 }
 
+// SendFileCancel — отправитель → получатель: [FILE_CANCEL] (v2.0.7+).
+// Отправитель передумал ждать [FILE_ACCEPT]. Получатель удаляет оффер.
+func (n *Node) SendFileCancel(offerMsgID, mediaID, recipient string) error {
+	if n.host == nil {
+		return fmt.Errorf("node not started")
+	}
+	if offerMsgID == "" || mediaID == "" || recipient == "" {
+		return fmt.Errorf("offerMsgID, mediaID, recipient are required")
+	}
+
+	msg := Message{
+		ID:        generateMsgID(fmt.Sprintf("cancel:%s:%d", mediaID, time.Now().UnixNano())),
+		Text:      mediaID,
+		Sender:    n.host.ID().String(),
+		Recipient: recipient,
+		Type:      TypeFileCancel,
+		Version:   0,
+		Ref:       offerMsgID,
+		Time:      time.Now().UTC().Format("2006-01-02T15:04:05"),
+	}
+	if err := n.sendServiceViaBootstrap(msg); err != nil {
+		return fmt.Errorf("send cancel failed: %w", err)
+	}
+	log.Printf("[FILE_CANCEL] sent to %s (mediaID=%s)", recipient, mediaID)
+	return nil
+}
+
 // handleFileAccept — отправитель: получатель принял файл.
 // Запустить sendFileChunksAsync.
 func (n *Node) handleFileAccept(m Message) {
@@ -488,6 +515,36 @@ func (n *Node) handleFileDecline(m Message) {
 	if n.messageHook != nil {
 		push := map[string]interface{}{
 			"file_decline": map[string]interface{}{
+				"media_id": mediaID,
+				"sender":   m.Sender,
+			},
+		}
+		if data, err := json.Marshal(push); err == nil {
+			n.messageHook(string(data))
+		}
+	}
+}
+
+// handleFileCancel — получатель: отправитель отменил оффер.
+// Удалить оффер из OffersStore, push file_cancel в UI.
+func (n *Node) handleFileCancel(m Message) {
+	mediaID := m.Text
+	if mediaID == "" {
+		log.Printf("[SERVICE] file_cancel: empty mediaID from %s", m.Sender)
+		return
+	}
+	log.Printf("[FILE_CANCEL] received from %s (mediaID=%s)", m.Sender, mediaID)
+
+	if n.offers != nil {
+		if err := n.offers.Remove(mediaID); err != nil {
+			log.Printf("[FILE_CANCEL] offers.Remove(%s) failed: %v", mediaID, err)
+		}
+	}
+
+	// Push в UI: отправитель отменил оффер.
+	if n.messageHook != nil {
+		push := map[string]interface{}{
+			"file_cancel": map[string]interface{}{
 				"media_id": mediaID,
 				"sender":   m.Sender,
 			},

@@ -50,6 +50,10 @@ const (
 	// TypeFileDecline — получатель → отправитель: файл отклонён.
 	// Ref = offer_msg_id. Text = JSON {mediaID}.
 	TypeFileDecline MessageType = 12
+	// TypeFileCancel — отправитель → получатель: отмена оффера (v2.0.7+).
+	// Отправитель передумал ждать [FILE_ACCEPT]. Получатель удаляет оффер.
+	// Ref = offer_msg_id. Text = JSON {mediaID}.
+	TypeFileCancel MessageType = 13
 )
 
 // ============================================================

@@ -1122,6 +1122,25 @@ class LibP2PService {
     }
   }
 
+  /// Отправитель → получатель: отмена оффера (v2.0.7+).
+  /// Вызывается, когда отправитель нажал «Отменить» на плашке файла.
+  static Future<Map<String, dynamic>> sendFileCancel({
+    required String offerMsgID,
+    required String mediaID,
+    required String recipient,
+  }) async {
+    try {
+      final response = await _channel.invokeMethod<String>('sendFileCancel', {
+        'offerMsgID': offerMsgID,
+        'mediaID': mediaID,
+        'recipient': recipient,
+      });
+      return _safeDecode(response);
+    } on PlatformException catch (e) {
+      return {'error': e.message ?? 'platform_error', 'operation': 'send_file_cancel'};
+    }
+  }
+
   /// Помечает входящие сообщения как прочитанные локально (ReadLocally=true).
   /// Вызывается при открытии чата — до отправки [READ] собеседнику.
   /// refs — список msg_id.

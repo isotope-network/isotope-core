@@ -1470,6 +1470,17 @@ Future<void> _connectToNode(NodeInfo node) async {
       final l10n = AppLocalizations.of(context);
       final peerID = node.peerID;
       if (peerID.isEmpty) return l10n.contactIsotope;
+
+      // v2.0.7: входящий оффер файла — приоритетнее последнего сообщения.
+      // Контакт поднимается вверх (lastMessageTimeFor), превью — «📎 Хотите получить файл?».
+      final offers = chatProvider.fileOffersFor(peerID);
+      if (offers.isNotEmpty) {
+        final o = offers.first;
+        final name = o.fileName.isNotEmpty ? o.fileName : 'файл';
+        final short = name.length > 30 ? '${name.substring(0, 30)}...' : name;
+        return '📎 Хотите получить файл? $short';
+      }
+
       final last = chatProvider.getLastMessageForPeer(peerID);
       if (last == null) {
         switch (node.status) {
@@ -1506,13 +1517,28 @@ Future<void> _connectToNode(NodeInfo node) async {
       final peerID = node.peerID;
       if (peerID.isEmpty) return '';
 
-      final last = chatProvider.getLastMessageForPeer(peerID);
-      if (last == null) return '';
-
-      return formatShortTime(last.time);
+      // v2.0.7: max(message.time, offer.createdAt) — для сортировки.
+      final t = chatProvider.lastMessageTimeFor(peerID);
+      if (t == null) return '';
+      return formatShortTime(t.toUtc().toIso8601String());
     } catch (_) {
       return '';
     }
+  }
+
+  /// Сортирует контакты: с оффером/новым сообщением — вверху.
+  /// v2.0.7: lastMessageTimeFor(peerID) = max(message.time, offer.createdAt).
+  List<NodeInfo> _sortedNodes(ChatProvider chatProvider) {
+    final sorted = List<NodeInfo>.from(_discoveredNodes);
+    sorted.sort((a, b) {
+      final ta = chatProvider.lastMessageTimeFor(a.peerID);
+      final tb = chatProvider.lastMessageTimeFor(b.peerID);
+      if (ta == null && tb == null) return 0;
+      if (ta == null) return 1;
+      if (tb == null) return -1;
+      return tb.compareTo(ta); // desc: новые сверху
+    });
+    return sorted;
   }
 
   IconData _getNodeIcon(NodeStatus status) {
@@ -1829,10 +1855,11 @@ Future<void> _connectToNode(NodeInfo node) async {
                     );
                   }
 
+                  final sortedNodes = _sortedNodes(chatProvider);
                   return ListView.builder(
-                    itemCount: _discoveredNodes.length,
+                    itemCount: sortedNodes.length,
                     itemBuilder: (context, index) {
-                      final node = _discoveredNodes[index];
+                      final node = sortedNodes[index];
                       final unread = chatProvider.unreadFor(node.peerID);
                       final displayName = _displayName(node);
                       final subtitleText = _contactStatusSubtitle(node, chatProvider) ?? '';

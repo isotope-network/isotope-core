@@ -1643,6 +1643,32 @@ func SendFileDecline(offerMsgID, mediaID, recipient string) string {
 	return `{"status":"ok"}`
 }
 
+// SendFileCancel — отправляет [FILE_CANCEL] получателю (v2.0.7+).
+// Вызывается из UI, когда отправитель нажал «Отменить» на оффере.
+// Возвращает {"status":"ok"} или errorJSON.
+func SendFileCancel(offerMsgID, mediaID, recipient string) string {
+	nodeMu.Lock()
+	defer nodeMu.Unlock()
+
+	if node == nil {
+		return errorJSON("node not started")
+	}
+	if offerMsgID == "" {
+		return errorJSON("offerMsgID is required")
+	}
+	if mediaID == "" {
+		return errorJSON("mediaID is required")
+	}
+	if recipient == "" {
+		return errorJSON("recipient is required")
+	}
+	if err := node.SendFileCancel(offerMsgID, mediaID, recipient); err != nil {
+		return errorJSON(err.Error())
+	}
+	addLog("[FILE_CANCEL] sent to %s (mediaID=%s)", recipient, mediaID)
+	return `{"status":"ok"}`
+}
+
 // GetFileRequestThreshold — возвращает порог запроса на приём файла (МБ).
 // -1 — всегда запрашивать. 0 — никогда. N > 0 — от N МБ.
 // Формат: {"threshold_mb":N}.

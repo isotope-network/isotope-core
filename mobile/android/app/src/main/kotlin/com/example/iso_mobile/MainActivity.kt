@@ -452,6 +452,15 @@ class MainActivity : FlutterActivity() {
                             runOnUiThread { result.success(response) }
                         }.start()
                     }
+                    "sendFileCancel" -> {
+                        val offerMsgID = call.argument<String>("offerMsgID") ?: ""
+                        val mediaID = call.argument<String>("mediaID") ?: ""
+                        val recipient = call.argument<String>("recipient") ?: ""
+                        Thread {
+                            val response = Mobile.sendFileCancel(offerMsgID, mediaID, recipient)
+                            runOnUiThread { result.success(response) }
+                        }.start()
+                    }
                     "sendReadBatch" -> {
                         val refsJson = call.argument<String>("refs") ?: "[]"
                         val recipient = call.argument<String>("recipient") ?: ""
