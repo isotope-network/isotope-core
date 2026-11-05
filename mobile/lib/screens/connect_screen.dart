@@ -1473,11 +1473,15 @@ Future<void> _connectToNode(NodeInfo node) async {
 
       // v2.0.7: входящий оффер файла — приоритетнее последнего сообщения.
       // Контакт поднимается вверх (lastMessageTimeFor), превью — «📎 Хотите получить файл?».
+      // Если отправитель отменил — «📎 Отправитель отменил отправку».
       final offers = chatProvider.fileOffersFor(peerID);
       if (offers.isNotEmpty) {
         final o = offers.first;
         final name = o.fileName.isNotEmpty ? o.fileName : 'файл';
         final short = name.length > 30 ? '${name.substring(0, 30)}...' : name;
+        if (o.state == 'cancelled') {
+          return '📎 Отправитель отменил отправку: $short';
+        }
         return '📎 Хотите получить файл? $short';
       }
 

@@ -724,6 +724,10 @@ class ChatProvider extends ChangeNotifier {
                 state: 'pending',
               );
               LogService.log('P2P: file_offer $mediaID от $sender ($fileName)');
+              // v2.0.7: оффер — как новое сообщение (бейдж + уведомление).
+              if (sender != _currentOpenPeerID) {
+                _unreadByPeer[sender] = (_unreadByPeer[sender] ?? 0) + 1;
+              }
               _safeNotify();
             }
           }
@@ -785,11 +789,37 @@ class ChatProvider extends ChangeNotifier {
           final fc = map['file_cancel'] as Map<String, dynamic>?;
           if (fc != null) {
             final mediaID = fc['media_id'] as String? ?? '';
+            final sender = fc['sender'] as String? ?? '';
             if (mediaID.isNotEmpty) {
-              _fileOffers.remove(mediaID);
-              _fileMessages.remove(mediaID);
-              _offerStates.remove(mediaID);
-              LogService.log('P2P: file_cancel $mediaID');
+              // v2.0.7: не удалять оффер — пометить cancelled.
+              // Получатель видит «Отправитель отменил отправку».
+              final existing = _fileOffers[mediaID];
+              if (existing != null) {
+                _fileOffers[mediaID] = existing.copyWith(state: 'cancelled');
+              }
+              // Сброс одного непрочитанного (за оффер).
+              if (sender.isNotEmpty) {
+                final cur = _unreadByPeer[sender] ?? 0;
+                _unreadByPeer[sender] = cur > 0 ? cur - 1 : 0;
+              }
+              LogService.log('P2P: file_cancel $mediaID (cancelled)');
+              _safeNotify();
+            }
+          }
+          return;
+        }
+
+        // Специальное событие: отправитель прервал отправку (получателю).
+        if (messageJSON.contains('"file_abort"')) {
+          final map = jsonDecode(messageJSON) as Map<String, dynamic>;
+          final fa = map['file_abort'] as Map<String, dynamic>?;
+          if (fa != null) {
+            final mediaID = fa['media_id'] as String? ?? '';
+            if (mediaID.isNotEmpty) {
+              // v2.0.7: не удалять _fileMessages — место для надписи.
+              _offerStates[mediaID] = 'aborted';
+              _fileProgress.remove(mediaID);
+              LogService.log('P2P: file_abort $mediaID');
               _safeNotify();
             }
           }
@@ -1264,6 +1294,18 @@ class ChatProvider extends ChangeNotifier {
       parts.add(list);
     }
 
+    // Входящий оффер файла (v2.0.7) — как новое сообщение.
+    final pendingOffers = _fileOffers.values.where((o) => o.state == 'pending').toList();
+    if (pendingOffers.isNotEmpty) {
+      final o = pendingOffers.first;
+      String name = 'файл';
+      if (names && o.fileName.isNotEmpty) {
+        name = o.fileName;
+      }
+      final short = name.length > 20 ? '${name.substring(0, 20)}…' : name;
+      parts.add('📎 Хочет отправить файл: $short');
+    }
+
     // Прогресс файла.
     if (progressOn) {
       for (final e in _fileProgress.entries) {
@@ -1568,6 +1610,8 @@ class ChatProvider extends ChangeNotifier {
       );
       // Постоянная копия Go в files/<mediaID>.<ext> — для превью/«Открыть».
       _restoreOwnFilePathAsync(mediaIDStr);
+      // v2.0.7: уведомить UI сразу (плашка + offerState).
+      _safeNotify();
     }
 
     return true;
@@ -1626,6 +1670,33 @@ class ChatProvider extends ChangeNotifier {
   /// Возвращает состояние исходящего оффера по mediaID (для UI отправителя).
   /// 'pending' | 'accepted' | 'declined' | 'expired' | null (не оффер).
   String? offerStateFor(String mediaID) => _offerStates[mediaID];
+
+  /// Прерывает отправку (оффер принят, чанки идут).
+  /// Шлёт [FILE_ABORT] получателю. Удаляет .bin/.meta (через deleteFile),
+  /// _fileMessages, _fileProgress, _offerStates.
+  Future<bool> abortFileSend(String mediaID) async {
+    final state = _offerStates[mediaID];
+    if (state != 'accepted') {
+      LogService.log('ChatProvider: abortFileSend — оффер $mediaID не accepted ($state)');
+      return false;
+    }
+    final r = await LibP2PService.sendFileAbort(
+      peerID: _currentNodeIp,
+      mediaID: mediaID,
+    );
+    if (r.containsKey('error')) {
+      LogService.log('ChatProvider: sendFileAbort failed: ${r['error']}');
+      return false;
+    }
+    _offerStates.remove(mediaID);
+    _fileMessages.remove(mediaID);
+    _fileProgress.remove(mediaID);
+    LibP2PService.deleteFile(mediaID).catchError((_) => <String, dynamic>{});
+    MediaStorage.invalidatePathCache(mediaID);
+    _safeNotify();
+    LogService.log('ChatProvider: file_abort $mediaID (отправитель прервал)');
+    return true;
+  }
 
   /// Отменяет исходящий оффер: шлёт [FILE_CANCEL] получателю.
   /// Удаляет .bin/.meta (через deleteFile), _fileMessages, _offerStates, _fileProgress.
@@ -2336,10 +2407,26 @@ class ChatProvider extends ChangeNotifier {
     }
     if (fileMsg != null && fileMsg.mediaId.isNotEmpty) {
       final mediaId = fileMsg.mediaId;
+
+      // v2.0.7: отправитель удаляет файл ДО получения.
+      // pending — оффер не принят → [FILE_CANCEL] (получатель видит «отменён»).
+      // accepted (идёт) — [FILE_ABORT] (получатель видит «прервал»).
+      final offerState = _offerStates[mediaId];
+      if (fileMsg.isOwn && offerState == 'pending') {
+        cancelFileOffer(mediaId);
+        return;
+      }
+      final progress = _fileProgress[mediaId] ?? 0;
+      if (fileMsg.isOwn && offerState == 'accepted' && progress > 0 && progress < 100) {
+        abortFileSend(mediaId);
+        return;
+      }
+
       _fileMessages.remove(mediaId);
       _fileProgress.remove(mediaId);
       _fileCompleteSent.remove(mediaId);
       _fileStatuses.remove(mediaId);
+      _offerStates.remove(mediaId);
       final chatPeer = fileMsg.isOwn ? fileMsg.recipient : fileMsg.sender;
       if (chatPeer.isNotEmpty) {
         _lastMessageByPeer.remove(chatPeer);

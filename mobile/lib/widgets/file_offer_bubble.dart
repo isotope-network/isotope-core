@@ -3,7 +3,7 @@ import 'package:flutter/material.dart';
 import '../providers/chat_provider.dart';
 
 /// Состояние оффера файла (v2.0.7 — право отказа).
-enum FileOfferState { pending, accepted, declined, expired }
+enum FileOfferState { pending, accepted, declined, expired, cancelled }
 
 /// Плашка «предложение принять файл» (v2.0.7 — право отказа).
 ///
@@ -185,6 +185,11 @@ class FileOfferBubble extends StatelessWidget {
       case FileOfferState.expired:
         return const Text(
           'Запрос истёк',
+          style: TextStyle(fontSize: 13, color: Colors.black54),
+        );
+      case FileOfferState.cancelled:
+        return const Text(
+          'Отправитель отменил отправку',
           style: TextStyle(fontSize: 13, color: Colors.black54),
         );
     }

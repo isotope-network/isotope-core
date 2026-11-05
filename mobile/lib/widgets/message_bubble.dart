@@ -840,6 +840,9 @@ class _FileRow extends StatelessWidget {
     if (offerState == 'expired') {
       return _buildOfferRow(context, name, 'Запрос истёк', canCancel: false);
     }
+    if (offerState == 'aborted') {
+      return _buildOfferRow(context, name, 'Отправитель прервал отправку', canCancel: false);
+    }
 
     // Состояние файла (по приоритету):
     // 1. Готов (localFilePath есть) → «Открыть».

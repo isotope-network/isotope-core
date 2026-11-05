@@ -51,9 +51,14 @@ const (
 	// Ref = offer_msg_id. Text = JSON {mediaID}.
 	TypeFileDecline MessageType = 12
 	// TypeFileCancel — отправитель → получатель: отмена оффера (v2.0.7+).
-	// Отправитель передумал ждать [FILE_ACCEPT]. Получатель удаляет оффер.
+	// Отправитель передумал ждать [FILE_ACCEPT]. Получатель видит «отменён».
 	// Ref = offer_msg_id. Text = JSON {mediaID}.
 	TypeFileCancel MessageType = 13
+	// TypeFileAbort — отправитель → получатель: прервать отправку (v2.0.7+).
+	// Оффер уже принят, чанки идут. Получатель удаляет chunks/ и files/.
+	// Push «Отправитель прервал отправку».
+	// Ref = media_id. Text = mediaID.
+	TypeFileAbort MessageType = 14
 )
 
 // ============================================================

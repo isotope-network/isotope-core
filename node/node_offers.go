@@ -33,7 +33,8 @@ type FileOffer struct {
 	TtlMode        string    `json:"ttl_mode"`
 	ExpiresAt      time.Time `json:"expires_at"` // TTL файла (если задан)
 	CreatedAt      time.Time `json:"created_at"`
-	OfferExpiresAt time.Time `json:"offer_expires_at"` // 24 ч
+	OfferExpiresAt time.Time `json:"offer_expires_at"`    // 24 ч
+	Cancelled      bool      `json:"cancelled,omitempty"` // отправитель отменил оффер
 }
 
 // OffersFile — формат isotope_offers.json.
@@ -427,6 +428,67 @@ func (n *Node) SendFileCancel(offerMsgID, mediaID, recipient string) error {
 	return nil
 }
 
+// SendFileAbort — отправитель → получатель: [FILE_ABORT] (v2.0.7+).
+// Оффер уже принят, чанки идут. Отправитель передумал.
+// Получатель удаляет chunks/ и files/, видит «Отправитель прервал отправку».
+func (n *Node) SendFileAbort(peerID, mediaID string) error {
+	if n.host == nil {
+		return fmt.Errorf("node not started")
+	}
+	if peerID == "" || mediaID == "" {
+		return fmt.Errorf("peerID and mediaID are required")
+	}
+
+	msg := Message{
+		ID:        generateMsgID(fmt.Sprintf("abort:%s:%d", mediaID, time.Now().UnixNano())),
+		Text:      mediaID,
+		Sender:    n.host.ID().String(),
+		Recipient: peerID,
+		Type:      TypeFileAbort,
+		Version:   0,
+		Ref:       mediaID,
+		Time:      time.Now().UTC().Format("2006-01-02T15:04:05"),
+	}
+	if err := n.sendServiceViaBootstrap(msg); err != nil {
+		return fmt.Errorf("send abort failed: %w", err)
+	}
+	log.Printf("[FILE_ABORT] sent to %s (mediaID=%s)", peerID, mediaID)
+	return nil
+}
+
+// handleFileAbort — получатель: отправитель прервал отправку.
+// Удалить chunks/<mediaID>/ и files/<mediaID>.*, push file_abort.
+func (n *Node) handleFileAbort(m Message) {
+	mediaID := m.Text
+	if mediaID == "" {
+		log.Printf("[SERVICE] file_abort: empty mediaID from %s", m.Sender)
+		return
+	}
+	log.Printf("[FILE_ABORT] received from %s (mediaID=%s)", m.Sender, mediaID)
+
+	// Удалить недособранные чанки и файл.
+	chunksDir := filepath.Join(n.filesDirPath(), "chunks", mediaID)
+	_ = os.RemoveAll(chunksDir)
+	if matches, err := filepath.Glob(filepath.Join(n.filesDirPath(), mediaID+".*")); err == nil {
+		for _, p := range matches {
+			_ = os.Remove(p)
+		}
+	}
+
+	// Push в UI: отправитель прервал отправку.
+	if n.messageHook != nil {
+		push := map[string]interface{}{
+			"file_abort": map[string]interface{}{
+				"media_id": mediaID,
+				"sender":   m.Sender,
+			},
+		}
+		if data, err := json.Marshal(push); err == nil {
+			n.messageHook(string(data))
+		}
+	}
+}
+
 // handleFileAccept — отправитель: получатель принял файл.
 // Запустить sendFileChunksAsync.
 func (n *Node) handleFileAccept(m Message) {
@@ -535,9 +597,14 @@ func (n *Node) handleFileCancel(m Message) {
 	}
 	log.Printf("[FILE_CANCEL] received from %s (mediaID=%s)", m.Sender, mediaID)
 
+	// v2.0.7: не удалять оффер — пометить cancelled.
+	// Получатель видит «Отправитель отменил отправку» (кнопки неактивны).
 	if n.offers != nil {
-		if err := n.offers.Remove(mediaID); err != nil {
-			log.Printf("[FILE_CANCEL] offers.Remove(%s) failed: %v", mediaID, err)
+		if offer, ok := n.offers.Get(mediaID); ok {
+			offer.Cancelled = true
+			if err := n.offers.Add(offer); err != nil {
+				log.Printf("[FILE_CANCEL] offers.Add(%s) failed: %v", mediaID, err)
+			}
 		}
 	}
 
@@ -545,8 +612,9 @@ func (n *Node) handleFileCancel(m Message) {
 	if n.messageHook != nil {
 		push := map[string]interface{}{
 			"file_cancel": map[string]interface{}{
-				"media_id": mediaID,
-				"sender":   m.Sender,
+				"media_id":  mediaID,
+				"sender":    m.Sender,
+				"cancelled": true,
 			},
 		}
 		if data, err := json.Marshal(push); err == nil {

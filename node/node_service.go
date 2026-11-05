@@ -20,7 +20,7 @@ func (n *Node) isServiceType(t MessageType) bool {
 	switch t {
 	case TypeDelivered, TypeRead, TypeContactRequest, TypeContactAccept, TypeContactReject,
 		TypeContactHello, TypeContactHelloAck, TypeTtlUpdate, TypeFileComplete,
-		TypeFileOffer, TypeFileAccept, TypeFileDecline, TypeFileCancel:
+		TypeFileOffer, TypeFileAccept, TypeFileDecline, TypeFileCancel, TypeFileAbort:
 		return true
 	}
 	return false
@@ -135,6 +135,9 @@ func (n *Node) handleServiceMessage(m Message) {
 
 	case TypeFileCancel:
 		n.handleFileCancel(m)
+
+	case TypeFileAbort:
+		n.handleFileAbort(m)
 	}
 }
 

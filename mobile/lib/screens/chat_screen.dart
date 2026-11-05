@@ -812,8 +812,15 @@ class _ChatScreenState extends State<ChatScreen> {
                     }
 
                     // Входящий оффер — плашка с кнопками «Принять / Не принять».
+                    // v2.0.7: если отправитель отменил — state: cancelled, без кнопок.
                     if (item.kind == _ChatItemKind.incomingOffer) {
                       final offer = item.offer!;
+                      if (offer.state == 'cancelled') {
+                        return FileOfferBubble(
+                          offer: offer,
+                          state: FileOfferState.cancelled,
+                        );
+                      }
                       return FileOfferBubble(
                         offer: offer,
                         state: FileOfferState.pending,

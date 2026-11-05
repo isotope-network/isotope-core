@@ -1141,6 +1141,23 @@ class LibP2PService {
     }
   }
 
+  /// Отправитель → получатель: прервать отправку (v2.0.7+).
+  /// Вызывается, когда отправитель свайпнул файл во время отправки.
+  static Future<Map<String, dynamic>> sendFileAbort({
+    required String peerID,
+    required String mediaID,
+  }) async {
+    try {
+      final response = await _channel.invokeMethod<String>('sendFileAbort', {
+        'peerID': peerID,
+        'mediaID': mediaID,
+      });
+      return _safeDecode(response);
+    } on PlatformException catch (e) {
+      return {'error': e.message ?? 'platform_error', 'operation': 'send_file_abort'};
+    }
+  }
+
   /// Помечает входящие сообщения как прочитанные локально (ReadLocally=true).
   /// Вызывается при открытии чата — до отправки [READ] собеседнику.
   /// refs — список msg_id.

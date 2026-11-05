@@ -1669,6 +1669,29 @@ func SendFileCancel(offerMsgID, mediaID, recipient string) string {
 	return `{"status":"ok"}`
 }
 
+// SendFileAbort — отправляет [FILE_ABORT] получателю (v2.0.7+).
+// Вызывается из UI, когда отправитель прервал отправку (чанки идут).
+// Возвращает {"status":"ok"} или errorJSON.
+func SendFileAbort(peerID, mediaID string) string {
+	nodeMu.Lock()
+	defer nodeMu.Unlock()
+
+	if node == nil {
+		return errorJSON("node not started")
+	}
+	if peerID == "" {
+		return errorJSON("peerID is required")
+	}
+	if mediaID == "" {
+		return errorJSON("mediaID is required")
+	}
+	if err := node.SendFileAbort(peerID, mediaID); err != nil {
+		return errorJSON(err.Error())
+	}
+	addLog("[FILE_ABORT] sent to %s (mediaID=%s)", peerID, mediaID)
+	return `{"status":"ok"}`
+}
+
 // GetFileRequestThreshold — возвращает порог запроса на приём файла (МБ).
 // -1 — всегда запрашивать. 0 — никогда. N > 0 — от N МБ.
 // Формат: {"threshold_mb":N}.
