@@ -1815,6 +1815,21 @@ class ChatProvider extends ChangeNotifier {
           // v2.0.7+: aborted — не восстанавливать (не догружать).
           if (aborted.contains(mid)) continue;
           final existing = _fileMessages[mid];
+          // v2.0.7+: existing != null + не собран + не aborted → заполнить _chunkQueue.
+          // Иначе догрузка после перезапуска не работает (existing != null — continue).
+          if (existing != null && existing.localFilePath.isEmpty) {
+            final isOwnChunk = shortSender == shortMyID || map['isOwn'] == true;
+            if (!isOwnChunk) {
+              final set = _chunkQueue.putIfAbsent(mid, () => <int>{});
+              for (int i = 0; i < chunkTotal; i++) {
+                set.add(i);
+              }
+              _chunkQueueTimer ??= Timer(const Duration(milliseconds: 100), () {
+                _chunkQueueTimer = null;
+                _flushChunkQueue();
+              });
+            }
+          }
           if (existing == null) {
             // Восстановление пути для собранного файла.
             String localPath = '';
