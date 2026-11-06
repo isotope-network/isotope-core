@@ -1190,29 +1190,6 @@ class LibP2PService {
     }
   }
 
-  /// Получатель → отправитель: [FILE_STATUS] (v2.0.7+).
-  /// «У меня receivedCount из chunkTotal, missing — пропущенные индексы».
-  static Future<Map<String, dynamic>> sendFileStatus({
-    required String peerID,
-    required String mediaID,
-    required int chunkTotal,
-    required int receivedCount,
-    required List<int> missing,
-  }) async {
-    try {
-      final response = await _channel.invokeMethod<String>('sendFileStatus', {
-        'peerID': peerID,
-        'mediaID': mediaID,
-        'chunkTotal': chunkTotal,
-        'receivedCount': receivedCount,
-        'missing': jsonEncode(missing),
-      });
-      return _safeDecode(response);
-    } on PlatformException catch (e) {
-      return {'error': e.message ?? 'platform_error', 'operation': 'send_file_status'};
-    }
-  }
-
   /// Помечает входящие сообщения как прочитанные локально (ReadLocally=true).
   /// Вызывается при открытии чата — до отправки [READ] собеседнику.
   /// refs — список msg_id.

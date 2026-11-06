@@ -1706,36 +1706,6 @@ func SendFileAbort(peerID, mediaID string) string {
 	return `{"status":"ok"}`
 }
 
-// SendFileStatus — отправляет [FILE_STATUS] отправителю (v2.0.7+).
-// Получатель сообщает: «у меня N чанков из M, missing — список пропущенных».
-// missingJSON — JSON-массив int, например "[1,2,3]".
-func SendFileStatus(peerID, mediaID string, chunkTotal, receivedCount int, missingJSON string) string {
-	nodeMu.Lock()
-	defer nodeMu.Unlock()
-
-	if node == nil {
-		return errorJSON("node not started")
-	}
-	if peerID == "" {
-		return errorJSON("peerID is required")
-	}
-	if mediaID == "" {
-		return errorJSON("mediaID is required")
-	}
-	var missing []int
-	if missingJSON != "" {
-		if err := json.Unmarshal([]byte(missingJSON), &missing); err != nil {
-			return errorJSON("invalid missing JSON: " + err.Error())
-		}
-	}
-	if err := node.SendFileStatus(peerID, mediaID, chunkTotal, receivedCount, missing); err != nil {
-		return errorJSON(err.Error())
-	}
-	addLog("[FILE_STATUS] sent to %s (mediaID=%s, received=%d/%d, missing=%d)",
-		peerID, mediaID, receivedCount, chunkTotal, len(missing))
-	return `{"status":"ok"}`
-}
-
 // GetFileRequestThreshold — возвращает порог запроса на приём файла (МБ).
 // -1 — всегда запрашивать. 0 — никогда. N > 0 — от N МБ.
 // Формат: {"threshold_mb":N}.

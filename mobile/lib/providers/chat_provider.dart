@@ -1815,59 +1815,6 @@ class ChatProvider extends ChangeNotifier {
           // v2.0.7+: aborted — не восстанавливать (не догружать).
           if (aborted.contains(mid)) continue;
           final existing = _fileMessages[mid];
-          // v2.0.7+: existing != null + не собран + не aborted → заполнить _chunkQueue.
-          // Иначе догрузка после перезапуска не работает (existing != null — continue).
-          if (existing != null && existing.localFilePath.isEmpty) {
-            final isOwnChunk = shortSender == shortMyID || map['isOwn'] == true;
-            if (!isOwnChunk) {
-              final set = _chunkQueue.putIfAbsent(mid, () => <int>{});
-              for (int i = 0; i < chunkTotal; i++) {
-                set.add(i);
-              }
-              _chunkQueueTimer ??= Timer(const Duration(milliseconds: 100), () {
-                _chunkQueueTimer = null;
-                _flushChunkQueue();
-              });
-            }
-            // v2.0.7+: все чанки уже есть — собрать самому (без отправителя).
-            await MediaStorage.recountChunks(mid);
-            final count = MediaStorage.chunksCount(mid);
-            if (count == chunkTotal && !_fileCompleteSent.contains(mid)) {
-              final path = await MediaStorage.tryAssemble(mid);
-              if (path != null) {
-                final agg = _fileMessages[mid];
-                if (agg != null) {
-                  _fileMessages[mid] = agg.withLocalFilePath(path);
-                }
-                _fileCompleteSent.add(mid);
-                if (!isOwnChunk) {
-                  LibP2PService.sendFileComplete(
-                    mediaID: mid,
-                    recipient: sender,
-                  ).catchError((_) => <String, dynamic>{});
-                }
-                _safeNotify();
-              }
-            }
-            // v2.0.7+: [FILE_STATUS] — получатель → отправитель.
-            // «У меня N из M, missing — пропущенные». Отправитель досылает.
-            if (!isOwnChunk) {
-              final onDisk = await MediaStorage.listChunks(mid);
-              final missing = <int>[];
-              for (int i = 0; i < chunkTotal; i++) {
-                if (!onDisk.contains(i)) missing.add(i);
-              }
-              if (missing.isNotEmpty) {
-                LibP2PService.sendFileStatus(
-                  peerID: sender,
-                  mediaID: mid,
-                  chunkTotal: chunkTotal,
-                  receivedCount: onDisk.length,
-                  missing: missing,
-                ).catchError((_) => <String, dynamic>{});
-              }
-            }
-          }
           if (existing == null) {
             // Восстановление пути для собранного файла.
             String localPath = '';
@@ -1890,39 +1837,6 @@ class ChatProvider extends ChangeNotifier {
                   _chunkQueueTimer = null;
                   _flushChunkQueue();
                 });
-              }
-              // v2.0.7+: все чанки уже есть — собрать самому (без отправителя).
-              final count = MediaStorage.chunksCount(mid);
-              if (count == chunkTotal && !_fileCompleteSent.contains(mid)) {
-                final path = await MediaStorage.tryAssemble(mid);
-                if (path != null) {
-                  // _fileMessages[mid] создаётся ниже (agg) — здесь только флаг.
-                  _fileCompleteSent.add(mid);
-                  if (!isOwnChunk) {
-                    LibP2PService.sendFileComplete(
-                      mediaID: mid,
-                      recipient: sender,
-                    ).catchError((_) => <String, dynamic>{});
-                  }
-                }
-              }
-              // v2.0.7+: [FILE_STATUS] — получатель → отправитель.
-              // «У меня N из M, missing — пропущенные». Отправитель досылает.
-              if (!isOwnChunk) {
-                final onDisk = await MediaStorage.listChunks(mid);
-                final missing = <int>[];
-                for (int i = 0; i < chunkTotal; i++) {
-                  if (!onDisk.contains(i)) missing.add(i);
-                }
-                if (missing.isNotEmpty) {
-                  LibP2PService.sendFileStatus(
-                    peerID: sender,
-                    mediaID: mid,
-                    chunkTotal: chunkTotal,
-                    receivedCount: onDisk.length,
-                    missing: missing,
-                  ).catchError((_) => <String, dynamic>{});
-                }
               }
             }
             // ВАЖНО: этот блок — только для ПЕРВОГО чанка mediaID.

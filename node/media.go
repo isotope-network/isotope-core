@@ -615,19 +615,12 @@ func (n *Node) resumeFile(mediaID string) {
 	log.Printf("[RESUME] %s incomplete (%d/%d) — resuming", mediaID, delivered, total)
 
 	// Восстанавливаем unackedChunks для неподтверждённых чанков.
-	// Ф5 (2026-11-06): не перезаписывать существующую запись.
-	// Раньше attempts сбрасывался в 0 при каждом resumeFile (6 раз за тест)
-	// → backoff 30 сек → giving up не срабатывал → 1156 ретраев.
 	restored := 0
 	for _, c := range chunks {
 		if c.Status >= StatusDelivered {
 			continue
 		}
 		n.unackedChunksMu.Lock()
-		if _, exists := n.unackedChunks[c.ID]; exists {
-			n.unackedChunksMu.Unlock()
-			continue
-		}
 		n.unackedChunks[c.ID] = retryInfo{
 			mediaID:    c.MediaID,
 			mediaType:  c.MediaType,

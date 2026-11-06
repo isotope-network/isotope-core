@@ -469,17 +469,6 @@ class MainActivity : FlutterActivity() {
                             runOnUiThread { result.success(response) }
                         }.start()
                     }
-                    "sendFileStatus" -> {
-                        val peerID = call.argument<String>("peerID") ?: ""
-                        val mediaID = call.argument<String>("mediaID") ?: ""
-                        val chunkTotal = call.argument<Int>("chunkTotal") ?: 0
-                        val receivedCount = call.argument<Int>("receivedCount") ?: 0
-                        val missingJson = call.argument<String>("missing") ?: "[]"
-                        Thread {
-                            val response = Mobile.sendFileStatus(peerID, mediaID, chunkTotal.toLong(), receivedCount.toLong(), missingJson)
-                            runOnUiThread { result.success(response) }
-                        }.start()
-                    }
                     "sendReadBatch" -> {
                         val refsJson = call.argument<String>("refs") ?: "[]"
                         val recipient = call.argument<String>("recipient") ?: ""
