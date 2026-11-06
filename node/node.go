@@ -988,6 +988,10 @@ func (n *Node) sendReplicaToPeer(targetID peer.ID, data []byte, isFileChunk bool
 		return
 	}
 	defer s.Close()
+	// Ф4 (2026-11-06): write deadline. context.WithTimeout — только на NewStream.
+	// Без этого Write может висеть, если получатель не читает (перегруз).
+	// 10 воркеров chunkWorker → 10 висящих горутин → chunkQueue стоит.
+	_ = s.SetWriteDeadline(time.Now().Add(30 * time.Second))
 	s.Write([]byte(REPLICA_PREFIX))
 	s.Write(data)
 	s.Write([]byte("\n"))

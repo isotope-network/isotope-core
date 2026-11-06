@@ -182,6 +182,18 @@ func (n *Node) handleFileComplete(m Message) {
 		n.pushFileStatus(mediaID, total, total)
 	}
 
+	// Ф8 (2026-11-06): [FILE_COMPLETE] = получатель собрал файл.
+	// Все чанки доставлены — unackedChunks по mediaID больше не нужны.
+	// Без этого retryUnacked продолжает досылать уже собранный файл
+	// (1156 ретраев после [FILE_COMPLETE] на успешном тесте).
+	n.unackedChunksMu.Lock()
+	for id, info := range n.unackedChunks {
+		if info.mediaID == mediaID {
+			delete(n.unackedChunks, id)
+		}
+	}
+	n.unackedChunksMu.Unlock()
+
 	sentPath := n.sentPath(mediaID)
 	if err := os.Remove(sentPath); err == nil {
 		log.Printf("[SENT] removed sent file %s (file_complete from %s)", mediaID, m.Sender)
