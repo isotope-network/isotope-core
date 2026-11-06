@@ -59,6 +59,11 @@ const (
 	// Push «Отправитель прервал отправку».
 	// Ref = media_id. Text = mediaID.
 	TypeFileAbort MessageType = 14
+	// TypeFileStatus — получатель → отправитель: [FILE_STATUS] (v2.0.7+).
+	// «У меня N чанков из M, missing — список пропущенных».
+	// Отправитель досылает missing.
+	// Ref = media_id. Text = JSON {mediaID, chunkTotal, receivedCount, missing}.
+	TypeFileStatus MessageType = 15
 )
 
 // ============================================================

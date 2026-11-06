@@ -500,6 +500,120 @@ func (n *Node) handleFileAbort(m Message) {
 	}
 }
 
+// SendFileStatus — получатель → отправитель: [FILE_STATUS] (v2.0.7+).
+// «У меня N чанков из M, missing — список пропущенных». Отправитель досылает missing.
+func (n *Node) SendFileStatus(peerID, mediaID string, chunkTotal, receivedCount int, missing []int) error {
+	if n.host == nil {
+		return fmt.Errorf("node not started")
+	}
+	if peerID == "" || mediaID == "" {
+		return fmt.Errorf("peerID and mediaID are required")
+	}
+	if chunkTotal <= 0 {
+		return fmt.Errorf("chunkTotal must be > 0")
+	}
+
+	payload := map[string]interface{}{
+		"mediaID":       mediaID,
+		"chunkTotal":    chunkTotal,
+		"receivedCount": receivedCount,
+		"missing":       missing,
+	}
+	payloadJSON, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("marshal failed: %w", err)
+	}
+
+	msg := Message{
+		ID:        generateMsgID(fmt.Sprintf("file_status:%s:%d", mediaID, time.Now().UnixNano())),
+		Text:      string(payloadJSON),
+		Sender:    n.host.ID().String(),
+		Recipient: peerID,
+		Type:      TypeFileStatus,
+		Version:   0,
+		Ref:       mediaID,
+		Time:      time.Now().UTC().Format("2006-01-02T15:04:05"),
+	}
+	if err := n.sendServiceViaBootstrap(msg); err != nil {
+		return fmt.Errorf("send file_status failed: %w", err)
+	}
+	log.Printf("[FILE_STATUS] sent to %s (mediaID=%s, received=%d/%d, missing=%d)",
+		peerID, mediaID, receivedCount, chunkTotal, len(missing))
+	return nil
+}
+
+// handleFileStatus — отправитель: получатель сообщил [FILE_STATUS].
+// Досылает missing чанки (через unackedChunks + retryUnacked).
+func (n *Node) handleFileStatus(m Message) {
+	if m.Sender == "" || m.Text == "" {
+		log.Printf("[SERVICE] file_status: empty sender/text, dropped")
+		return
+	}
+	var payload struct {
+		MediaID       string `json:"mediaID"`
+		ChunkTotal    int    `json:"chunkTotal"`
+		ReceivedCount int    `json:"receivedCount"`
+		Missing       []int  `json:"missing"`
+	}
+	if err := json.Unmarshal([]byte(m.Text), &payload); err != nil {
+		log.Printf("[SERVICE] file_status: parse failed from %s: %v", m.Sender, err)
+		return
+	}
+	if payload.MediaID == "" || payload.ChunkTotal <= 0 {
+		log.Printf("[SERVICE] file_status: invalid payload from %s", m.Sender)
+		return
+	}
+	log.Printf("[FILE_STATUS] received from %s (mediaID=%s, received=%d/%d, missing=%d)",
+		m.Sender, payload.MediaID, payload.ReceivedCount, payload.ChunkTotal, len(payload.Missing))
+	if len(payload.Missing) == 0 {
+		return
+	}
+
+	// Восстанавливаем retryInfo для missing чанков из sent/<mediaID>.bin.
+	// Досылка — через retryUnacked (backoff 30 сек → 1 ч).
+	all := n.memory.GetAll()
+	chunkMap := make(map[int]Message)
+	for _, cm := range all {
+		if cm.MediaID == payload.MediaID && cm.IsOwn && isChunkedMediaType(cm.MediaType) {
+			chunkMap[cm.ChunkIndex] = cm
+		}
+	}
+	if len(chunkMap) == 0 {
+		log.Printf("[FILE_STATUS] no own chunks for mediaID=%s, ignored", payload.MediaID)
+		return
+	}
+
+	added := 0
+	n.unackedChunksMu.Lock()
+	for _, idx := range payload.Missing {
+		cm, ok := chunkMap[idx]
+		if !ok {
+			continue
+		}
+		if _, exists := n.unackedChunks[cm.ID]; exists {
+			continue
+		}
+		n.unackedChunks[cm.ID] = retryInfo{
+			mediaID:    cm.MediaID,
+			mediaType:  cm.MediaType,
+			chunkIndex: cm.ChunkIndex,
+			recipient:  m.Sender,
+			msgID:      cm.ID,
+			fileName:   cm.FileName,
+			fileSize:   cm.FileSize,
+			chunkTotal: cm.ChunkTotal,
+			ttlSeconds: cm.TtlPeriodSeconds,
+			ttlMode:    cm.TtlMode,
+			expiresAt:  cm.ExpiresAt,
+			attempts:   0,
+			lastSent:   time.Now(),
+		}
+		added++
+	}
+	n.unackedChunksMu.Unlock()
+	log.Printf("[FILE_STATUS] re-enqueued %d missing chunks for %s", added, payload.MediaID)
+}
+
 // handleFileAccept — отправитель: получатель принял файл.
 // Запустить sendFileChunksAsync.
 func (n *Node) handleFileAccept(m Message) {

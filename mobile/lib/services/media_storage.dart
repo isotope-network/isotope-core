@@ -28,6 +28,31 @@ class MediaStorage {
   /// Количество сохранённых чанков для mediaId (из кэша).
   static int chunksCount(String mediaId) => _chunkCounts[mediaId] ?? 0;
 
+  /// v2.0.7+: список индексов чанков на диске (для [FILE_STATUS] missing).
+  /// Возвращает отсортированный список. Пусто — если папки нет.
+  static Future<List<int>> listChunks(String mediaId) async {
+    if (mediaId.isEmpty) return [];
+    try {
+      final dir = Directory('${_chunksRoot.path}/$mediaId');
+      if (!await dir.exists()) return [];
+      final indices = <int>[];
+      await for (final e in dir.list()) {
+        if (e is File && e.path.endsWith('.bin')) {
+          final name = e.path.split(Platform.pathSeparator).last;
+          final m = RegExp(r'chunk_(\d+)\.bin$').firstMatch(name);
+          if (m != null) {
+            final idx = int.tryParse(m.group(1) ?? '');
+            if (idx != null) indices.add(idx);
+          }
+        }
+      }
+      indices.sort();
+      return indices;
+    } catch (_) {
+      return [];
+    }
+  }
+
   /// Инициализация. Вызывается один раз при старте приложения.
   static Future<void> init() async {
     // Тот же filesDir, что использует Go-ядро. Иначе files/ у Go и Dart
