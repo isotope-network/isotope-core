@@ -212,6 +212,11 @@ type Node struct {
 	// sendSem — глобальный семафор исходящих stream'ов (10 одновременно).
 	sendSem chan struct{}
 
+	// relaySem — семафор replicateMessage на relay (10 одновременно).
+	// Без него go n.replicateMessage на каждый Sphinx/REPLICA — goroutines
+	// растут (13656) — OOM на VPS. 2026-11-07.
+	relaySem chan struct{}
+
 	// serviceSem — семафор сервисных сообщений ([DELIVERED], [READ], [CONTACT_*]).
 	serviceSem chan struct{}
 
@@ -308,6 +313,7 @@ func NewNode(cfg Config) *Node {
 		tempContacts:            make(map[string]Contact),
 		myReadEnabled:           true,
 		sendSem:                 make(chan struct{}, SendSemaphoreCapacity),
+		relaySem:                make(chan struct{}, 10),
 		serviceSem:              make(chan struct{}, 2),
 		mixingSem:               make(chan struct{}, 5),
 		sphinxFileSem:           make(chan struct{}, 2),
@@ -1297,7 +1303,11 @@ func (n *Node) handleReplicaData(data string) {
 				replicaMsg.IsOwn = false
 				replicaMsg.SenderName = n.nameForPeer(replicaMsg.Sender)
 				if n.memory.Add(replicaMsg) {
-					go n.replicateMessage(replicaMsg)
+					n.relaySem <- struct{}{}
+					go func() {
+						defer func() { <-n.relaySem }()
+						n.replicateMessage(replicaMsg)
+					}()
 					if n.messageHook != nil {
 						data, _ := json.Marshal(replicaMsg)
 						n.messageHook(string(data))
