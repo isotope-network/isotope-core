@@ -341,8 +341,8 @@ func (n *Node) handleStream(stream network.Stream) {
 							data, _ := json.Marshal(hookMsg)
 							n.messageHook(string(data))
 						}
+						n.queueDelivered(replicaMsg.Sender, replicaMsg.ID)
 					}
-					n.queueDelivered(replicaMsg.Sender, replicaMsg.ID)
 					return
 				}
 				if n.isRelay {
@@ -532,8 +532,8 @@ func (n *Node) handleSphinxReplicaMsg(replicaMsg Message) {
 						data, _ := json.Marshal(msg)
 						n.messageHook(string(data))
 					}
+					n.queueDelivered(replicaMsg.Sender, t.ID)
 				}
-				n.queueDelivered(replicaMsg.Sender, t.ID)
 			}
 			return
 		}
@@ -581,8 +581,8 @@ func (n *Node) handleSphinxReplicaMsg(replicaMsg Message) {
 			data, _ := json.Marshal(hookMsg)
 			n.messageHook(string(data))
 		}
+		n.queueDelivered(replicaMsg.Sender, replicaMsg.ID)
 	}
-	n.queueDelivered(replicaMsg.Sender, replicaMsg.ID)
 }
 
 // handlePingStream — обработчик PING.
