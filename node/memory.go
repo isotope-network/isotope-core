@@ -59,10 +59,6 @@ const (
 	// Push «Отправитель прервал отправку».
 	// Ref = media_id. Text = mediaID.
 	TypeFileAbort MessageType = 14
-	// TypeFileAbortAck — ACK для [FILE_ABORT] / [FILE_CANCEL].
-	// Получатель → отправитель: «получил, удалил». Text = "abort" | "cancel".
-	// Ref = media_id. Отправитель удаляет из pendingAborts (retry).
-	TypeFileAbortAck MessageType = 15
 )
 
 // ============================================================
