@@ -343,6 +343,14 @@ func (n *Node) DeleteFile(mediaID string) int {
 	if mediaID == "" {
 		return 0
 	}
+	// 5.8-фикс (2026-11-07): удаление = стоп. aborted persist — иначе
+	// чанки в пути (handleStream) добавляются в memory → файл «появляется опять».
+	n.abortedMu.Lock()
+	n.aborted[mediaID] = true
+	n.abortedMu.Unlock()
+	if n.abortedStore != nil {
+		_ = n.abortedStore.Add(mediaID)
+	}
 	all := n.memory.GetAll()
 	removed := 0
 	for _, m := range all {

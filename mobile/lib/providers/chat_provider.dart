@@ -815,7 +815,10 @@ class ChatProvider extends ChangeNotifier {
           return;
         }
 
-        // Специальное событие: отправитель прервал отправку (получателю).
+        // Специальное событие: [FILE_ABORT] — файл прерван.
+        // 5.8: различаем, кто прервал — отправитель (v2.0.7) или получатель (5.8).
+        // Если fileMsg.isOwn — мы отправитель, прервал получатель → 'receiver_aborted'.
+        // Иначе — мы получатель, прервал отправитель → 'aborted'.
         if (messageJSON.contains('"file_abort"')) {
           final map = jsonDecode(messageJSON) as Map<String, dynamic>;
           final fa = map['file_abort'] as Map<String, dynamic>?;
@@ -824,12 +827,14 @@ class ChatProvider extends ChangeNotifier {
             final sender = fa['sender'] as String? ?? '';
             if (mediaID.isNotEmpty) {
               // v2.0.7: не удалять _fileMessages — место для надписи.
-              _offerStates[mediaID] = 'aborted';
+              final agg = _fileMessages[mediaID];
+              final weAreSender = agg?.isOwn ?? false;
+              _offerStates[mediaID] = weAreSender ? 'receiver_aborted' : 'aborted';
               _fileProgress.remove(mediaID);
               // Обновить time — для сортировки (контакт вверху).
-              final agg = _fileMessages[mediaID];
-              if (agg != null) {
-                _fileMessages[mediaID] = agg.copyWith(
+              final agg2 = _fileMessages[mediaID];
+              if (agg2 != null) {
+                _fileMessages[mediaID] = agg2.copyWith(
                   time: DateTime.now().toUtc().toIso8601String(),
                 );
               }
@@ -2454,6 +2459,15 @@ class ChatProvider extends ChangeNotifier {
           return;
         }
 
+      // 5.8 (2026-11-07): получатель удалил входящий файл —
+      // сообщить отправителю [FILE_ABORT], чтобы тот прекратил досылать.
+      // Без этого отправитель продолжает retry (100% доставка) — файл «появляется опять».
+      if (!fileMsg.isOwn && fileMsg.sender.isNotEmpty) {
+        LibP2PService.sendFileAbort(
+          peerID: fileMsg.sender,
+          mediaID: mediaId,
+        ).catchError((_) => <String, dynamic>{});
+      }
       _fileMessages.remove(mediaId);
       _fileProgress.remove(mediaId);
       _fileCompleteSent.remove(mediaId);
