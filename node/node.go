@@ -261,6 +261,11 @@ type Node struct {
 	pendingHookAcks   map[string]*hookAckWindow
 	pendingHookAcksMu sync.Mutex
 
+	// pendingAborts — [FILE_ABORT]/[FILE_CANCEL] ждут ACK от получателя (retry).
+	pendingAborts       map[string]time.Time
+	pendingAbortsMu     sync.Mutex
+	pendingAbortsTimers map[string]*time.Timer
+
 	// deliveredCount — счётчик доставленных чанков по MediaID (отправитель).
 	deliveredCount   map[string]int
 	deliveredCountMu sync.Mutex
@@ -321,6 +326,8 @@ func NewNode(cfg Config) *Node {
 		pendingDeliveredTimers:  make(map[string]*time.Timer),
 		completedFiles:          make(map[string]bool),
 		pendingHookAcks:         make(map[string]*hookAckWindow),
+		pendingAborts:           make(map[string]time.Time),
+		pendingAbortsTimers:     make(map[string]*time.Timer),
 		batchBuffers:            make(map[string]*batchBuffer),
 		useOnion:                cfg.UseOnion,
 		dummyScreenOn:           true,

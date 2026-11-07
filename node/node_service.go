@@ -20,7 +20,8 @@ func (n *Node) isServiceType(t MessageType) bool {
 	switch t {
 	case TypeDelivered, TypeRead, TypeContactRequest, TypeContactAccept, TypeContactReject,
 		TypeContactHello, TypeContactHelloAck, TypeTtlUpdate, TypeFileComplete,
-		TypeFileOffer, TypeFileAccept, TypeFileDecline, TypeFileCancel, TypeFileAbort:
+		TypeFileOffer, TypeFileAccept, TypeFileDecline, TypeFileCancel, TypeFileAbort,
+		TypeFileAbortAck:
 		return true
 	}
 	return false
@@ -138,6 +139,9 @@ func (n *Node) handleServiceMessage(m Message) {
 
 	case TypeFileAbort:
 		n.handleFileAbort(m)
+
+	case TypeFileAbortAck:
+		n.handleFileAbortAck(m)
 	}
 }
 
@@ -714,3 +718,5 @@ func (n *Node) GetMessageStatuses() map[string]MessageStatus {
 	}
 	return result
 }
+
+// D:\isotope\node\node_service.go
