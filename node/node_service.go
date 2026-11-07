@@ -20,7 +20,8 @@ func (n *Node) isServiceType(t MessageType) bool {
 	switch t {
 	case TypeDelivered, TypeRead, TypeContactRequest, TypeContactAccept, TypeContactReject,
 		TypeContactHello, TypeContactHelloAck, TypeTtlUpdate, TypeFileComplete,
-		TypeFileOffer, TypeFileAccept, TypeFileDecline, TypeFileCancel, TypeFileAbort:
+		TypeFileOffer, TypeFileAccept, TypeFileDecline, TypeFileCancel, TypeFileAbort,
+		TypeFileAbortAck:
 		return true
 	}
 	return false
@@ -138,6 +139,9 @@ func (n *Node) handleServiceMessage(m Message) {
 
 	case TypeFileAbort:
 		n.handleFileAbort(m)
+
+	case TypeFileAbortAck:
+		n.handleFileAbortAck(m)
 	}
 }
 
@@ -176,6 +180,17 @@ func (n *Node) handleFileComplete(m Message) {
 		n.deliveredCountMu.Unlock()
 		n.pushFileStatus(mediaID, total, total)
 	}
+
+	// Ф8 (2026-11-07): [FILE_COMPLETE] = получатель собрал файл.
+	// Все чанки доставлены — unackedChunks по mediaID больше не нужны.
+	// Без этого retryUnacked продолжает досылать уже собранный файл.
+	n.unackedChunksMu.Lock()
+	for id, info := range n.unackedChunks {
+		if info.mediaID == mediaID {
+			delete(n.unackedChunks, id)
+		}
+	}
+	n.unackedChunksMu.Unlock()
 
 	sentPath := n.sentPath(mediaID)
 	if err := os.Remove(sentPath); err == nil {
@@ -714,3 +729,5 @@ func (n *Node) GetMessageStatuses() map[string]MessageStatus {
 	}
 	return result
 }
+
+// D:\isotope\node\node_service.go
