@@ -1,4 +1,3 @@
-// D:\isotope\node\node_p2p.go
 package core
 
 // D:\isotope\node\node_p2p.go
@@ -231,11 +230,7 @@ func (n *Node) handleStream(stream network.Stream) {
 				if replicaMsg.Recipient == myID {
 					n.handleServiceMessage(replicaMsg)
 				} else if n.isRelay {
-					n.relaySem <- struct{}{}
-					go func() {
-						defer func() { <-n.relaySem }()
-						n.replicateMessage(replicaMsg)
-					}()
+					go n.replicateMessage(replicaMsg)
 				}
 				return
 			}
@@ -287,8 +282,8 @@ func (n *Node) handleStream(stream network.Stream) {
 									data, _ := json.Marshal(msg)
 									n.messageHook(string(data))
 								}
-								n.queueDelivered(replicaMsg.Sender, t.ID)
 							}
+							n.queueDelivered(replicaMsg.Sender, t.ID)
 						}
 						return
 					}
@@ -341,16 +336,12 @@ func (n *Node) handleStream(stream network.Stream) {
 							data, _ := json.Marshal(hookMsg)
 							n.messageHook(string(data))
 						}
-						n.queueDelivered(replicaMsg.Sender, replicaMsg.ID)
 					}
+					n.queueDelivered(replicaMsg.Sender, replicaMsg.ID)
 					return
 				}
 				if n.isRelay {
-					n.relaySem <- struct{}{}
-					go func() {
-						defer func() { <-n.relaySem }()
-						n.replicateMessage(replicaMsg)
-					}()
+					go n.replicateMessage(replicaMsg)
 				}
 				return
 			}
@@ -360,11 +351,7 @@ func (n *Node) handleStream(stream network.Stream) {
 				if replicaMsg.Recipient != myID {
 					if n.isRelay {
 						log.Printf("[REPLICA] relay forward to %s", replicaMsg.Recipient)
-						n.relaySem <- struct{}{}
-						go func() {
-							defer func() { <-n.relaySem }()
-							n.replicateMessage(replicaMsg)
-						}()
+						go n.replicateMessage(replicaMsg)
 					} else {
 						log.Printf("[REPLICA] not for us (recipient=%s), dropping", replicaMsg.Recipient)
 					}
@@ -382,11 +369,7 @@ func (n *Node) handleStream(stream network.Stream) {
 			}
 
 			if n.memory.Add(replicaMsg) {
-				n.relaySem <- struct{}{}
-				go func() {
-					defer func() { <-n.relaySem }()
-					n.replicateMessage(replicaMsg)
-				}()
+				go n.replicateMessage(replicaMsg)
 				if n.messageHook != nil {
 					data, _ := json.Marshal(replicaMsg)
 					n.messageHook(string(data))
@@ -532,8 +515,8 @@ func (n *Node) handleSphinxReplicaMsg(replicaMsg Message) {
 						data, _ := json.Marshal(msg)
 						n.messageHook(string(data))
 					}
-					n.queueDelivered(replicaMsg.Sender, t.ID)
 				}
+				n.queueDelivered(replicaMsg.Sender, t.ID)
 			}
 			return
 		}
@@ -581,8 +564,8 @@ func (n *Node) handleSphinxReplicaMsg(replicaMsg Message) {
 			data, _ := json.Marshal(hookMsg)
 			n.messageHook(string(data))
 		}
-		n.queueDelivered(replicaMsg.Sender, replicaMsg.ID)
 	}
+	n.queueDelivered(replicaMsg.Sender, replicaMsg.ID)
 }
 
 // handlePingStream — обработчик PING.
