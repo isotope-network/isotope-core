@@ -1,3 +1,4 @@
+// D:\isotope\node\node_p2p.go
 package core
 
 // D:\isotope\node\node_p2p.go
@@ -286,8 +287,8 @@ func (n *Node) handleStream(stream network.Stream) {
 									data, _ := json.Marshal(msg)
 									n.messageHook(string(data))
 								}
+								n.queueDelivered(replicaMsg.Sender, t.ID)
 							}
-							n.queueDelivered(replicaMsg.Sender, t.ID)
 						}
 						return
 					}
