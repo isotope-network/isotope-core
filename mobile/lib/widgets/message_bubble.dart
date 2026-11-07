@@ -866,9 +866,6 @@ class _FileRow extends StatelessWidget {
     if (offerState == 'aborted') {
       return _buildOfferRow(context, name, 'Отправитель прервал отправку', canCancel: false);
     }
-    if (offerState == 'receiver_aborted') {
-      return _buildOfferRow(context, name, 'Получатель удалил файл', canCancel: false);
-    }
 
     // Состояние файла (по приоритету):
     // 1. Готов (localFilePath есть) → «Открыть».
@@ -1011,10 +1008,6 @@ class _OfferStatusRow extends StatelessWidget {
         break;
       case 'aborted':
         text = 'Отправитель прервал отправку';
-        color = Colors.black54;
-        break;
-      case 'receiver_aborted':
-        text = 'Получатель удалил файл';
         color = Colors.black54;
         break;
       case 'cancelled':

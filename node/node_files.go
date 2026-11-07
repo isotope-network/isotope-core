@@ -196,17 +196,6 @@ func (n *Node) retryUnacked() {
 
 	n.unackedChunksMu.Lock()
 	for id, info := range n.unackedChunks {
-		// Ф6 (2026-11-07): отправитель прервал — не досылать.
-		// Без этого после [FILE_ABORT] retryUnacked продолжает слать
-		// (chunkWorker скипает, но retryUnacked ре-енкьюит → attempts++).
-		n.abortedMu.Lock()
-		aborted := n.aborted[info.mediaID]
-		n.abortedMu.Unlock()
-		if aborted {
-			log.Printf("[RETRY] aborted, drop %s", id)
-			delete(n.unackedChunks, id)
-			continue
-		}
 		if info.attempts >= len(retryBackoff) {
 			log.Printf("[RETRY] giving up on %s after %d attempts", id, info.attempts)
 			delete(n.unackedChunks, id)
@@ -343,14 +332,6 @@ func (n *Node) DeleteFile(mediaID string) int {
 	if mediaID == "" {
 		return 0
 	}
-	// 5.8-фикс (2026-11-07): удаление = стоп. aborted persist — иначе
-	// чанки в пути (handleStream) добавляются в memory → файл «появляется опять».
-	n.abortedMu.Lock()
-	n.aborted[mediaID] = true
-	n.abortedMu.Unlock()
-	if n.abortedStore != nil {
-		_ = n.abortedStore.Add(mediaID)
-	}
 	all := n.memory.GetAll()
 	removed := 0
 	for _, m := range all {
@@ -385,17 +366,6 @@ func (n *Node) DeleteFile(mediaID string) int {
 	n.pendingHookAcksMu.Lock()
 	delete(n.pendingHookAcks, mediaID)
 	n.pendingHookAcksMu.Unlock()
-
-	// Ф7 (2026-11-07): чистить unackedChunks по mediaID.
-	// Без этого после удаления retryUnacked продолжает досылать (Ф6 спасёт,
-	// но только если aborted=true; для decline/complete — aborted нет).
-	n.unackedChunksMu.Lock()
-	for id, info := range n.unackedChunks {
-		if info.mediaID == mediaID {
-			delete(n.unackedChunks, id)
-		}
-	}
-	n.unackedChunksMu.Unlock()
 
 	if removed > 0 {
 		log.Printf("[DELETE] file %s — removed %d chunks", mediaID, removed)

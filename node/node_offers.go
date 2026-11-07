@@ -455,12 +455,9 @@ func (n *Node) SendFileAbort(peerID, mediaID string) error {
 		Ref:       mediaID,
 		Time:      time.Now().UTC().Format("2006-01-02T15:04:05"),
 	}
-	// 5.5 (2026-11-07): retry до ACK (TypeFileAbortAck). 100%.
-	// Без ACK на LTE [FILE_ABORT] теряется — отправитель досылает удалённое.
 	if err := n.sendServiceViaBootstrap(msg); err != nil {
-		log.Printf("[FILE_ABORT] send failed (will retry): %v", err)
+		return fmt.Errorf("send abort failed: %w", err)
 	}
-	n.scheduleAbortRetry(mediaID, "abort", peerID)
 	log.Printf("[FILE_ABORT] sent to %s (mediaID=%s)", peerID, mediaID)
 	return nil
 }
@@ -475,21 +472,18 @@ func (n *Node) handleFileAbort(m Message) {
 	}
 	log.Printf("[FILE_ABORT] received from %s (mediaID=%s)", m.Sender, mediaID)
 
-	// Ф4 (2026-11-07): атомарно — сначала aborted на диск, потом DeleteFile.
-	// Если упало между — при старте aborted уже есть, файл не восстановится.
-	n.abortedMu.Lock()
-	n.aborted[mediaID] = true
-	n.abortedMu.Unlock()
-	if n.abortedStore != nil {
-		if err := n.abortedStore.Add(mediaID); err != nil {
-			log.Printf("[FILE_ABORT] abortedStore.Add(%s) failed: %v", mediaID, err)
-		}
-	}
-
 	// DeleteFile: memory (все чанки) + files/<mediaID>.* + sent/ + .meta + chunks/.
 	// getChunk → null (memory пуст) → _fetchAndSaveChunk (Dart) остановится.
 	if removed := n.DeleteFile(mediaID); removed >= 0 {
 		log.Printf("[FILE_ABORT] deleted %d chunks for %s", removed, mediaID)
+	}
+
+	// v2.0.7+: сохранить aborted на диск — переживёт перезапуск.
+	// getMessagesViaLibP2P (Dart) / resumeFile (Go) — не догружать.
+	if n.abortedStore != nil {
+		if err := n.abortedStore.Add(mediaID); err != nil {
+			log.Printf("[FILE_ABORT] abortedStore.Add(%s) failed: %v", mediaID, err)
+		}
 	}
 
 	// Push в UI: отправитель прервал отправку.
@@ -503,11 +497,6 @@ func (n *Node) handleFileAbort(m Message) {
 		if data, err := json.Marshal(push); err == nil {
 			n.messageHook(string(data))
 		}
-	}
-
-	// 5.7a: ACK отправителю — прекратить retry [FILE_ABORT].
-	if err := n.SendFileAbortAck(mediaID, "abort", m.Sender); err != nil {
-		log.Printf("[FILE_ABORT] SendFileAbortAck(%s) failed: %v", mediaID, err)
 	}
 }
 
@@ -643,137 +632,6 @@ func (n *Node) handleFileCancel(m Message) {
 			n.messageHook(string(data))
 		}
 	}
-
-	// 5.7c: ACK отправителю — прекратить retry [FILE_CANCEL].
-	if err := n.SendFileAbortAck(mediaID, "cancel", m.Sender); err != nil {
-		log.Printf("[FILE_CANCEL] SendFileAbortAck(%s) failed: %v", mediaID, err)
-	}
-}
-
-// SendFileAbortAck — получатель → отправитель: ACK для [FILE_ABORT]/[FILE_CANCEL].
-// Text = "abort" | "cancel". Ref = mediaID.
-func (n *Node) SendFileAbortAck(mediaID, kind, recipient string) error {
-	if n.host == nil {
-		return fmt.Errorf("node not started")
-	}
-	if mediaID == "" || recipient == "" {
-		return fmt.Errorf("mediaID and recipient are required")
-	}
-	msg := Message{
-		ID:        generateMsgID(fmt.Sprintf("abort_ack:%s:%d", mediaID, time.Now().UnixNano())),
-		Text:      kind,
-		Sender:    n.host.ID().String(),
-		Recipient: recipient,
-		Type:      TypeFileAbortAck,
-		Version:   0,
-		Ref:       mediaID,
-		Time:      time.Now().UTC().Format("2006-01-02T15:04:05"),
-	}
-	if err := n.sendServiceViaBootstrap(msg); err != nil {
-		return fmt.Errorf("send abort_ack failed: %w", err)
-	}
-	log.Printf("[FILE_ABORT_ACK] sent %s for %s to %s", kind, mediaID, recipient)
-	return nil
-}
-
-// handleFileAbortAck — отправитель: получатель подтвердил [FILE_ABORT]/[FILE_CANCEL].
-// Удаляет из pendingAborts (retry прекращается).
-func (n *Node) handleFileAbortAck(m Message) {
-	mediaID := m.Ref
-	if mediaID == "" {
-		log.Printf("[FILE_ABORT_ACK] empty ref from %s", m.Sender)
-		return
-	}
-	kind := m.Text // "abort" | "cancel"
-	log.Printf("[FILE_ABORT_ACK] %s for %s from %s", kind, mediaID, m.Sender)
-
-	n.pendingAbortsMu.Lock()
-	delete(n.pendingAborts, mediaID)
-	if t, ok := n.pendingAbortsTimers[mediaID]; ok {
-		t.Stop()
-		delete(n.pendingAbortsTimers, mediaID)
-	}
-	n.pendingAbortsMu.Unlock()
-}
-
-// abortRetryBackoff — интервалы переотправки [FILE_ABORT]/[FILE_CANCEL].
-// Потолок 10 мин. Без giving up — пока не ACK (100%, как [DELIVERED]).
-var abortRetryBackoff = []time.Duration{
-	5 * time.Second,
-	15 * time.Second,
-	30 * time.Second,
-	1 * time.Minute,
-	2 * time.Minute,
-	5 * time.Minute,
-	10 * time.Minute,
-}
-
-// scheduleAbortRetry — ставит mediaID в pendingAborts и запускает retry-цикл.
-// kind — "abort" | "cancel". recipient — кому слать.
-func (n *Node) scheduleAbortRetry(mediaID, kind, recipient string) {
-	if mediaID == "" || recipient == "" {
-		return
-	}
-	n.pendingAbortsMu.Lock()
-	_, exists := n.pendingAborts[mediaID]
-	n.pendingAborts[mediaID] = time.Now()
-	n.pendingAbortsMu.Unlock()
-	if exists {
-		return // уже в retry
-	}
-	go n.abortRetryLoop(mediaID, kind, recipient)
-}
-
-// abortRetryLoop — вечный retry до ACK (backoff до 10 мин).
-func (n *Node) abortRetryLoop(mediaID, kind, recipient string) {
-	attempt := 0
-	for {
-		time.Sleep(abortRetryBackoff[minInt(attempt, len(abortRetryBackoff)-1)])
-		n.pendingAbortsMu.Lock()
-		_, still := n.pendingAborts[mediaID]
-		n.pendingAbortsMu.Unlock()
-		if !still {
-			return // ACK пришёл
-		}
-		var msg Message
-		if kind == "abort" {
-			msg = Message{
-				ID:        generateMsgID(fmt.Sprintf("abort:%s:%d", mediaID, time.Now().UnixNano())),
-				Text:      mediaID,
-				Sender:    n.host.ID().String(),
-				Recipient: recipient,
-				Type:      TypeFileAbort,
-				Version:   0,
-				Ref:       mediaID,
-				Time:      time.Now().UTC().Format("2006-01-02T15:04:05"),
-			}
-		} else {
-			msg = Message{
-				ID:        generateMsgID(fmt.Sprintf("cancel:%s:%d", mediaID, time.Now().UnixNano())),
-				Text:      mediaID,
-				Sender:    n.host.ID().String(),
-				Recipient: recipient,
-				Type:      TypeFileCancel,
-				Version:   0,
-				Ref:       mediaID,
-				Time:      time.Now().UTC().Format("2006-01-02T15:04:05"),
-			}
-		}
-		if err := n.sendServiceViaBootstrap(msg); err != nil {
-			log.Printf("[FILE_ABORT] retry %d for %s failed: %v", attempt+1, mediaID, err)
-		} else {
-			log.Printf("[FILE_ABORT] retry %d for %s sent", attempt+1, mediaID)
-		}
-		attempt++
-	}
-}
-
-// minInt — минимум из двух int.
-func minInt(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
 }
 
 // node/node_offers.go
