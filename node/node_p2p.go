@@ -230,7 +230,11 @@ func (n *Node) handleStream(stream network.Stream) {
 				if replicaMsg.Recipient == myID {
 					n.handleServiceMessage(replicaMsg)
 				} else if n.isRelay {
-					go n.replicateMessage(replicaMsg)
+					n.relaySem <- struct{}{}
+					go func(m Message) {
+						defer func() { <-n.relaySem }()
+						n.replicateMessage(m)
+					}(replicaMsg)
 				}
 				return
 			}
@@ -341,7 +345,11 @@ func (n *Node) handleStream(stream network.Stream) {
 					return
 				}
 				if n.isRelay {
-					go n.replicateMessage(replicaMsg)
+					n.relaySem <- struct{}{}
+					go func(m Message) {
+						defer func() { <-n.relaySem }()
+						n.replicateMessage(m)
+					}(replicaMsg)
 				}
 				return
 			}
@@ -351,7 +359,11 @@ func (n *Node) handleStream(stream network.Stream) {
 				if replicaMsg.Recipient != myID {
 					if n.isRelay {
 						log.Printf("[REPLICA] relay forward to %s", replicaMsg.Recipient)
-						go n.replicateMessage(replicaMsg)
+						n.relaySem <- struct{}{}
+						go func(m Message) {
+							defer func() { <-n.relaySem }()
+							n.replicateMessage(m)
+						}(replicaMsg)
 					} else {
 						log.Printf("[REPLICA] not for us (recipient=%s), dropping", replicaMsg.Recipient)
 					}
@@ -369,7 +381,15 @@ func (n *Node) handleStream(stream network.Stream) {
 			}
 
 			if n.memory.Add(replicaMsg) {
-				go n.replicateMessage(replicaMsg)
+				if n.isRelay {
+					n.relaySem <- struct{}{}
+					go func(m Message) {
+						defer func() { <-n.relaySem }()
+						n.replicateMessage(m)
+					}(replicaMsg)
+				} else {
+					go n.replicateMessage(replicaMsg)
+				}
 				if n.messageHook != nil {
 					data, _ := json.Marshal(replicaMsg)
 					n.messageHook(string(data))
@@ -980,7 +1000,15 @@ func (n *Node) replicateMessage(msg Message) {
 		replicaCount = len(alive)
 	}
 	for i := 0; i < replicaCount; i++ {
-		go n.sendReplicaToPeer(alive[i], data, isFileChunk)
+		if n.isRelay {
+			n.relaySem <- struct{}{}
+			go func(pid peer.ID) {
+				defer func() { <-n.relaySem }()
+				n.sendReplicaToPeer(pid, data, isFileChunk)
+			}(alive[i])
+		} else {
+			go n.sendReplicaToPeer(alive[i], data, isFileChunk)
+		}
 	}
 }
 

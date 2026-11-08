@@ -221,6 +221,10 @@ type Node struct {
 	// sphinxFileSem — семафор для Sphinx-файлов (3 одновременно).
 	sphinxFileSem chan struct{}
 
+	// relaySem — семафор для relay-репликации на VPS (10 одновременно).
+	// Без него go n.replicateMessage на каждый Sphinx — горутины копятся — OOM.
+	relaySem chan struct{}
+
 	// chunkQueue — очередь файловых чанков для воркер-пула.
 	chunkQueue chan Message
 
@@ -317,6 +321,7 @@ func NewNode(cfg Config) *Node {
 		serviceSem:              make(chan struct{}, 2),
 		mixingSem:               make(chan struct{}, 5),
 		sphinxFileSem:           make(chan struct{}, 2),
+		relaySem:                make(chan struct{}, 10),
 		chunkQueue:              make(chan Message, 1000),
 		unackedChunks:           make(map[string]retryInfo),
 		aborted:                 make(map[string]bool),
@@ -1305,7 +1310,15 @@ func (n *Node) handleReplicaData(data string) {
 				replicaMsg.IsOwn = false
 				replicaMsg.SenderName = n.nameForPeer(replicaMsg.Sender)
 				if n.memory.Add(replicaMsg) {
-					go n.replicateMessage(replicaMsg)
+					if n.isRelay {
+						n.relaySem <- struct{}{}
+						go func(m Message) {
+							defer func() { <-n.relaySem }()
+							n.replicateMessage(m)
+						}(replicaMsg)
+					} else {
+						go n.replicateMessage(replicaMsg)
+					}
 					if n.messageHook != nil {
 						data, _ := json.Marshal(replicaMsg)
 						n.messageHook(string(data))
