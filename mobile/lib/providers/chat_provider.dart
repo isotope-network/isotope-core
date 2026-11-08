@@ -824,7 +824,11 @@ class ChatProvider extends ChangeNotifier {
             final sender = fa['sender'] as String? ?? '';
             if (mediaID.isNotEmpty) {
               // v2.0.7: не удалять _fileMessages — место для надписи.
-              _offerStates[mediaID] = 'aborted';
+              // Если мы — отправитель, получатель удалил файл.
+              // Если мы — получатель, отправитель прервал отправку.
+              final abortedAgg = _fileMessages[mediaID];
+              final weAreSender = abortedAgg?.isOwn ?? false;
+              _offerStates[mediaID] = weAreSender ? 'receiver_aborted' : 'aborted';
               _fileProgress.remove(mediaID);
               // Обновить time — для сортировки (контакт вверху).
               final agg = _fileMessages[mediaID];
@@ -2453,6 +2457,17 @@ class ChatProvider extends ChangeNotifier {
           abortFileSend(mediaId);
           return;
         }
+
+      // v2.0.7+: получатель удаляет НЕДОСОБРАННЫЙ файл — сообщить отправителю.
+      // Отправитель: retry стоп, sent/ удалён, «Получатель удалил».
+      // Собранный файл — не сообщать. Отправитель свой sent/ не трогает,
+      // receiver_aborted не показывает. Каждый контролирует свой список.
+      if (!fileMsg.isOwn && fileMsg.sender.isNotEmpty && fileMsg.localFilePath.isEmpty) {
+        LibP2PService.sendFileAbort(
+          peerID: fileMsg.sender,
+          mediaID: mediaId,
+        ).catchError((_) => <String, dynamic>{});
+      }
 
       _fileMessages.remove(mediaId);
       _fileProgress.remove(mediaId);

@@ -59,6 +59,10 @@ const (
 	// Push «Отправитель прервал отправку».
 	// Ref = media_id. Text = mediaID.
 	TypeFileAbort MessageType = 14
+	// TypeFileAbortAck — ACK на [FILE_ABORT]/[FILE_CANCEL] (v2.0.7+).
+	// Получатель → отправитель: «я получил, файл удалён». Отправитель
+	// останавливает retry. Ref = media_id. Text = "abort" | "cancel".
+	TypeFileAbortAck MessageType = 15
 )
 
 // ============================================================

@@ -20,7 +20,8 @@ func (n *Node) isServiceType(t MessageType) bool {
 	switch t {
 	case TypeDelivered, TypeRead, TypeContactRequest, TypeContactAccept, TypeContactReject,
 		TypeContactHello, TypeContactHelloAck, TypeTtlUpdate, TypeFileComplete,
-		TypeFileOffer, TypeFileAccept, TypeFileDecline, TypeFileCancel, TypeFileAbort:
+		TypeFileOffer, TypeFileAccept, TypeFileDecline, TypeFileCancel, TypeFileAbort,
+		TypeFileAbortAck:
 		return true
 	}
 	return false
@@ -138,6 +139,9 @@ func (n *Node) handleServiceMessage(m Message) {
 
 	case TypeFileAbort:
 		n.handleFileAbort(m)
+
+	case TypeFileAbortAck:
+		n.handleFileAbortAck(m)
 	}
 }
 
@@ -181,6 +185,14 @@ func (n *Node) handleFileComplete(m Message) {
 	if err := os.Remove(sentPath); err == nil {
 		log.Printf("[SENT] removed sent file %s (file_complete from %s)", mediaID, m.Sender)
 	}
+
+	n.unackedChunksMu.Lock()
+	for id, info := range n.unackedChunks {
+		if info.mediaID == mediaID {
+			delete(n.unackedChunks, id)
+		}
+	}
+	n.unackedChunksMu.Unlock()
 }
 
 // SendFileComplete — получатель → отправитель: файл собран.
@@ -714,3 +726,5 @@ func (n *Node) GetMessageStatuses() map[string]MessageStatus {
 	}
 	return result
 }
+
+// node/node_service.go
