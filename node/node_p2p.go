@@ -230,11 +230,7 @@ func (n *Node) handleStream(stream network.Stream) {
 				if replicaMsg.Recipient == myID {
 					n.handleServiceMessage(replicaMsg)
 				} else if n.isRelay {
-					n.relaySem <- struct{}{}
-					go func(m Message) {
-						defer func() { <-n.relaySem }()
-						n.replicateMessage(m)
-					}(replicaMsg)
+					n.relayReplicate(replicaMsg)
 				}
 				return
 			}
@@ -345,11 +341,7 @@ func (n *Node) handleStream(stream network.Stream) {
 					return
 				}
 				if n.isRelay {
-					n.relaySem <- struct{}{}
-					go func(m Message) {
-						defer func() { <-n.relaySem }()
-						n.replicateMessage(m)
-					}(replicaMsg)
+					n.relayReplicate(replicaMsg)
 				}
 				return
 			}
@@ -359,11 +351,7 @@ func (n *Node) handleStream(stream network.Stream) {
 				if replicaMsg.Recipient != myID {
 					if n.isRelay {
 						log.Printf("[REPLICA] relay forward to %s", replicaMsg.Recipient)
-						n.relaySem <- struct{}{}
-						go func(m Message) {
-							defer func() { <-n.relaySem }()
-							n.replicateMessage(m)
-						}(replicaMsg)
+						n.relayReplicate(replicaMsg)
 					} else {
 						log.Printf("[REPLICA] not for us (recipient=%s), dropping", replicaMsg.Recipient)
 					}
@@ -382,11 +370,7 @@ func (n *Node) handleStream(stream network.Stream) {
 
 			if n.memory.Add(replicaMsg) {
 				if n.isRelay {
-					n.relaySem <- struct{}{}
-					go func(m Message) {
-						defer func() { <-n.relaySem }()
-						n.replicateMessage(m)
-					}(replicaMsg)
+					n.relayReplicate(replicaMsg)
 				} else {
 					go n.replicateMessage(replicaMsg)
 				}
@@ -1000,7 +984,7 @@ func (n *Node) replicateMessage(msg Message) {
 		replicaCount = len(alive)
 	}
 	for i := 0; i < replicaCount; i++ {
-		if n.isRelay {
+		if n.isRelay && isFileChunk {
 			n.relaySem <- struct{}{}
 			go func(pid peer.ID) {
 				defer func() { <-n.relaySem }()
@@ -1010,6 +994,20 @@ func (n *Node) replicateMessage(msg Message) {
 			go n.sendReplicaToPeer(alive[i], data, isFileChunk)
 		}
 	}
+}
+
+// relayReplicate — relay-репликация: файловые чанки — через relaySem (10),
+// сервисные — без (не ждут файловые, [DELIVERED]/[FILE_COMPLETE] доходят).
+func (n *Node) relayReplicate(m Message) {
+	if isChunkedMediaType(m.MediaType) && m.ChunkTotal > 0 {
+		n.relaySem <- struct{}{}
+		go func(msg Message) {
+			defer func() { <-n.relaySem }()
+			n.replicateMessage(msg)
+		}(m)
+		return
+	}
+	go n.replicateMessage(m)
 }
 
 func (n *Node) requestRestore() {

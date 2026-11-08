@@ -1311,11 +1311,7 @@ func (n *Node) handleReplicaData(data string) {
 				replicaMsg.SenderName = n.nameForPeer(replicaMsg.Sender)
 				if n.memory.Add(replicaMsg) {
 					if n.isRelay {
-						n.relaySem <- struct{}{}
-						go func(m Message) {
-							defer func() { <-n.relaySem }()
-							n.replicateMessage(m)
-						}(replicaMsg)
+						n.relayReplicate(replicaMsg)
 					} else {
 						go n.replicateMessage(replicaMsg)
 					}
