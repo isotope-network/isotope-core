@@ -46,8 +46,18 @@ class LibP2PService {
     }
   }
 
+  static int _hookReceived = 0;
+
   static Stream<String> getMessageStream() {
-    return _messageChannel.receiveBroadcastStream().map((event) => event as String);
+    return _messageChannel.receiveBroadcastStream().map((event) {
+      final s = event as String;
+      if (s.contains('"chunk_total"')) {
+        _hookReceived++;
+        // ignore: avoid_print
+        print('[CHANNEL] received N=$_hookReceived');
+      }
+      return s;
+    });
   }
 
   static Future<Map<String, dynamic>> start({

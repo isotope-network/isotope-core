@@ -933,6 +933,14 @@ class ChatProvider extends ChangeNotifier {
           return;
         }
 
+        final channelMediaType = map['media_type'] as String? ?? '';
+        final channelChunkTotal = map['chunk_total'] as int? ?? 0;
+        if ((channelMediaType == 'file' || channelMediaType == 'voice' || channelMediaType == 'photo') && channelChunkTotal > 0) {
+          final channelMediaID = map['media_id'] as String? ?? '';
+          final channelChunkIndex = map['chunk_index'] as int? ?? 0;
+          LogService.log('[CHANNEL] parsed mediaID=$channelMediaID idx=$channelChunkIndex');
+        }
+
         final previewText = (map['text'] as String? ?? '');
         final preview = previewText.length > 40 ? '${previewText.substring(0, 40)}…' : previewText;
         LogService.log('P2P: входящее от $sender: $preview');
@@ -2076,6 +2084,7 @@ class ChatProvider extends ChangeNotifier {
         }
       }
 
+      LogService.log('[CHANNEL] added mediaID=${msg.mediaId} idx=${msg.chunkIndex}');
       _enqueueFileChunk(msg);
       _safeNotify();
       return;

@@ -271,6 +271,11 @@ type Node struct {
 	pendingAbortsMu     sync.Mutex
 	pendingAbortsTimers map[string]*time.Timer
 
+	// hookSent — счётчик вызовов messageHook (для [CHANNEL] диагностики).
+	// Только для файловых чанков, чтобы не залить лог текстом.
+	hookSent   int
+	hookSentMu sync.Mutex
+
 	// deliveredCount — счётчик доставленных чанков по MediaID (отправитель).
 	deliveredCount   map[string]int
 	deliveredCountMu sync.Mutex
@@ -335,6 +340,7 @@ func NewNode(cfg Config) *Node {
 		pendingAborts:           make(map[string]time.Time),
 		pendingAbortsTimers:     make(map[string]*time.Timer),
 		batchBuffers:            make(map[string]*batchBuffer),
+		hookSent:                0,
 		useOnion:                cfg.UseOnion,
 		dummyScreenOn:           true,
 	}

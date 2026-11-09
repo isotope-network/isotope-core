@@ -332,6 +332,11 @@ func (n *Node) handleStream(stream network.Stream) {
 								}
 								w.Indices[hookMsg.ChunkIndex] = time.Now()
 								n.pendingHookAcksMu.Unlock()
+								n.hookSentMu.Lock()
+								n.hookSent++
+								channelCount := n.hookSent
+								n.hookSentMu.Unlock()
+								log.Printf("[CHANNEL] sent replica N=%d mediaID=%s idx=%d", channelCount, hookMsg.MediaID, hookMsg.ChunkIndex)
 							}
 							data, _ := json.Marshal(hookMsg)
 							n.messageHook(string(data))
@@ -564,6 +569,11 @@ func (n *Node) handleSphinxReplicaMsg(replicaMsg Message) {
 			if isChunkedMediaType(hookMsg.MediaType) && hookMsg.ChunkTotal > 0 {
 				hookMsg.Text = ""
 				hookMsg.PlainText = ""
+				n.hookSentMu.Lock()
+				n.hookSent++
+				channelCount := n.hookSent
+				n.hookSentMu.Unlock()
+				log.Printf("[CHANNEL] sent sphinx N=%d mediaID=%s idx=%d", channelCount, hookMsg.MediaID, hookMsg.ChunkIndex)
 			}
 			data, _ := json.Marshal(hookMsg)
 			n.messageHook(string(data))
