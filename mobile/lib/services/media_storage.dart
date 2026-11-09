@@ -19,6 +19,11 @@ class MediaStorage {
   /// Инкрементируется в saveChunk. Сбрасывается при init.
   static final Map<String, int> _chunkCounts = {};
 
+  /// Кэш: mediaId → множество индексов сохранённых чанков.
+  /// Заполняется в saveChunk (add) и recountChunks/listChunks (dir.list).
+  /// Нужен для chunkExists без I/O и для _chunkQueue missing (4.1).
+  static final Map<String, Set<int>> _savedChunks = {};
+
   /// Кэш: mediaId → путь к собранному файлу (или null, если не собран).
   /// Нужен для getFilePath — без кэша каждый вызов сканирует files/.
   /// Инвалидация: invalidatePathCache(mediaId), init() → clear().
@@ -44,6 +49,7 @@ class MediaStorage {
     }
     _chunkCounts.clear();
     _pathCache.clear();
+    _savedChunks.clear();
     LogService.log('MEDIA: init done');
   }
 
@@ -62,10 +68,18 @@ class MediaStorage {
         return 0;
       }
       int count = 0;
+      final indices = <int>{};
       await for (final e in dir.list()) {
-        if (e is File && e.path.endsWith('.bin')) count++;
+        if (e is File && e.path.endsWith('.bin')) {
+          count++;
+          final name = e.path.split(Platform.pathSeparator).last;
+          final base = name.replaceFirst('chunk_', '').replaceFirst('.bin', '');
+          final idx = int.tryParse(base);
+          if (idx != null) indices.add(idx);
+        }
       }
       _chunkCounts[mediaId] = count;
+      _savedChunks[mediaId] = indices;
       return count;
     } catch (_) {
       return 0;
@@ -120,6 +134,7 @@ class MediaStorage {
       if (!existed) {
         _chunkCounts[mediaId] = (_chunkCounts[mediaId] ?? 0) + 1;
       }
+      _savedChunks.putIfAbsent(mediaId, () => <int>{}).add(chunkIndex);
       LogService.log('MEDIA: saved chunk $chunkIndex/$chunkTotal of $mediaId (${bytes.length} B)');
       return true;
     } catch (e) {
@@ -153,11 +168,15 @@ class MediaStorage {
       final chunkTotal = meta['chunkTotal'] as int? ?? 0;
       if (chunkTotal <= 0) return null;
 
-      // Проверяем все чанки.
+      // O(1): проверка по счётчику (инкремент в saveChunk), не File.exists() × N.
+      // На холодном кэше после перезапуска — не 9524 I/O на каждый вызов.
+      final saved = _chunkCounts[mediaId] ?? 0;
+      if (saved < chunkTotal) return null;
+
+      // Все чанки на месте — собираем (один раз, O(N) чтение).
       final chunks = <File>[];
       for (int i = 0; i < chunkTotal; i++) {
         final f = File('${dir.path}/chunk_$i.bin');
-        if (!await f.exists()) return null;
         chunks.add(f);
       }
 
@@ -194,6 +213,7 @@ class MediaStorage {
       } catch (_) {}
 
       _chunkCounts.remove(mediaId);
+      _savedChunks.remove(mediaId);
       _pathCache[mediaId] = outPath;
       LogService.log('MEDIA: assembled $mediaId → $outPath');
       return outPath;
@@ -208,9 +228,17 @@ class MediaStorage {
   /// уже сохранённые чанки не запрашиваются повторно.
   static Future<bool> chunkExists(String mediaId, int chunkIndex) async {
     if (mediaId.isEmpty) return false;
+    final cached = _savedChunks[mediaId];
+    if (cached != null) {
+      return cached.contains(chunkIndex);
+    }
     try {
       final f = File('${_chunksRoot.path}/$mediaId/chunk_$chunkIndex.bin');
-      return await f.exists();
+      final exists = await f.exists();
+      if (exists) {
+        _savedChunks.putIfAbsent(mediaId, () => <int>{}).add(chunkIndex);
+      }
+      return exists;
     } catch (_) {
       return false;
     }
@@ -256,6 +284,32 @@ class MediaStorage {
   static void invalidatePathCache(String mediaId) {
     if (mediaId.isEmpty) return;
     _pathCache.remove(mediaId);
+  }
+
+  /// Возвращает множество индексов чанков, реально лежащих на диске.
+  /// Один dir.list() на mediaId (O(N) I/O один раз), не File.exists() × N.
+  /// Если папки нет (файл собран) — пустой Set (missing = 0).
+  static Future<Set<int>> listChunks(String mediaId) async {
+    if (mediaId.isEmpty) return <int>{};
+    final cached = _savedChunks[mediaId];
+    if (cached != null) return cached;
+    final result = <int>{};
+    try {
+      final dir = Directory('${_chunksRoot.path}/$mediaId');
+      if (await dir.exists()) {
+        await for (final e in dir.list()) {
+          if (e is File && e.path.endsWith('.bin')) {
+            final name = e.path.split(Platform.pathSeparator).last;
+            final base = name.replaceFirst('chunk_', '').replaceFirst('.bin', '');
+            final idx = int.tryParse(base);
+            if (idx != null) result.add(idx);
+          }
+        }
+      }
+    } catch (_) {}
+    _savedChunks[mediaId] = result;
+    _chunkCounts[mediaId] = result.length;
+    return result;
   }
 
   /// Очистка: удаляет чанки старше N часов. По умолчанию — 24.

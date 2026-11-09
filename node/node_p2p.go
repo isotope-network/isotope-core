@@ -342,6 +342,8 @@ func (n *Node) handleStream(stream network.Stream) {
 							n.messageHook(string(data))
 						}
 					}
+					// v2.0.8: [DELIVERED] — всегда (даже дубль). Иначе отправитель
+					// не знает, что чанк дошёл → retryUnacked → цикл (B5: 940).
 					n.queueDelivered(replicaMsg.Sender, replicaMsg.ID)
 					return
 				}
@@ -579,6 +581,7 @@ func (n *Node) handleSphinxReplicaMsg(replicaMsg Message) {
 			n.messageHook(string(data))
 		}
 	}
+	// v2.0.8: [DELIVERED] — всегда (даже дубль). См. handleStream.
 	n.queueDelivered(replicaMsg.Sender, replicaMsg.ID)
 }
 

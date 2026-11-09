@@ -1841,14 +1841,21 @@ class ChatProvider extends ChangeNotifier {
               // Без этого после перезапуска _chunkQueue пуст → файл не дособерётся.
               final isOwnChunk = shortSender == shortMyID || map['isOwn'] == true;
               if (!isOwnChunk) {
+                final onDisk = await MediaStorage.listChunks(mid);
                 final set = _chunkQueue.putIfAbsent(mid, () => <int>{});
                 for (int i = 0; i < chunkTotal; i++) {
-                  set.add(i);
+                  if (!onDisk.contains(i)) {
+                    set.add(i);
+                  }
                 }
-                _chunkQueueTimer ??= Timer(const Duration(milliseconds: 100), () {
-                  _chunkQueueTimer = null;
-                  _flushChunkQueue();
-                });
+                if (set.isNotEmpty) {
+                  _chunkQueueTimer ??= Timer(Duration.zero, () {
+                    _chunkQueueTimer = null;
+                    _flushChunkQueue();
+                  });
+                } else {
+                  _chunkQueue.remove(mid);
+                }
               }
             }
             // ВАЖНО: этот блок — только для ПЕРВОГО чанка mediaID.
@@ -2147,7 +2154,7 @@ class ChatProvider extends ChangeNotifier {
     if (msg.chunkTotal <= 0) return;
 
     _chunkQueue.putIfAbsent(msg.mediaId, () => <int>{}).add(msg.chunkIndex);
-    _chunkQueueTimer ??= Timer(const Duration(milliseconds: 100), () {
+    _chunkQueueTimer ??= Timer(Duration.zero, () {
       _chunkQueueTimer = null;
       _flushChunkQueue();
     });
