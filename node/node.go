@@ -1267,6 +1267,8 @@ func (n *Node) loadState() error {
 		AntiHash      string                   `json:"antiHash"`
 		RoutingTable  []string                 `json:"routingTable"`
 		MessageStatus map[string]MessageStatus `json:"messageStatus"`
+		// v2.0.8: счётчик доставленных чанков по mediaID (отправитель).
+		DeliveredCount map[string]int `json:"deliveredCount,omitempty"`
 	}
 	if err := json.Unmarshal(data, &state); err != nil {
 		return err
@@ -1284,6 +1286,16 @@ func (n *Node) loadState() error {
 	}
 	for _, msg := range state.Messages {
 		n.memory.Add(msg)
+	}
+	// v2.0.8: восстановить deliveredCount — чтобы resumeIncompleteFiles
+	// не создавал unackedChunks для уже доставленных чанков (B6: 1110 → 0).
+	if len(state.DeliveredCount) > 0 {
+		n.deliveredCountMu.Lock()
+		for k, v := range state.DeliveredCount {
+			n.deliveredCount[k] = v
+		}
+		n.deliveredCountMu.Unlock()
+		log.Printf("[STATUS] restored %d deliveredCount entries", len(state.DeliveredCount))
 	}
 	n.layers = state.Layers
 	n.msgCount = state.MsgCount

@@ -28,6 +28,11 @@ type State struct {
 	PreHash      string          `json:"preHash"`
 	AntiHash     string          `json:"antiHash"`
 	RoutingTable []string        `json:"routingTable"`
+	// v2.0.8: счётчик доставленных чанков по mediaID (отправитель).
+	// Без него после перезапуска resumeIncompleteFiles восстанавливает
+	// unackedChunks для ВСЕХ чанков (StatusDelivered у файловых ставится
+	// только в [FILE_COMPLETE]) → retryUnacked-цикл (B6: 1110).
+	DeliveredCount map[string]int `json:"deliveredCount,omitempty"`
 }
 
 // getEncryptionKey — возвращает 32-байтный ключ из пароля
@@ -113,14 +118,23 @@ func (n *Node) saveState() error {
 		aliveMsgs = append(aliveMsgs, m)
 	}
 
+	// v2.0.8: снимок deliveredCount (под мьютексом), чтобы пережил перезапуск.
+	n.deliveredCountMu.Lock()
+	deliveredCountCopy := make(map[string]int, len(n.deliveredCount))
+	for k, v := range n.deliveredCount {
+		deliveredCountCopy[k] = v
+	}
+	n.deliveredCountMu.Unlock()
+
 	state := State{
-		Layers:       n.layers,
-		MsgCount:     n.msgCount,
-		Messages:     aliveMsgs,
-		Seen:         seen,
-		PreHash:      n.preHash,
-		AntiHash:     n.antiHash,
-		RoutingTable: routingTable,
+		Layers:         n.layers,
+		MsgCount:       n.msgCount,
+		Messages:       aliveMsgs,
+		Seen:           seen,
+		PreHash:        n.preHash,
+		AntiHash:       n.antiHash,
+		RoutingTable:   routingTable,
+		DeliveredCount: deliveredCountCopy,
 	}
 
 	data, err := json.MarshalIndent(state, "", "  ")

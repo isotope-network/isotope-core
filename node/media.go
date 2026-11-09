@@ -596,11 +596,23 @@ func (n *Node) resumeFile(mediaID string) {
 		return
 	}
 
-	// Восстанавливаем deliveredCount по Status чанков.
+	// v2.0.8: delivered — из persist n.deliveredCount (saveState/loadState).
+	// Файловые чанки не получают StatusDelivered до [FILE_COMPLETE], поэтому
+	// c.Status давал delivered=0 → unackedChunks для ВСЕХ → retryUnacked-цикл
+	// (B6: 1110). Persist-счётчик (B7) даёт 1042 → unackedChunks=0.
+	n.deliveredCountMu.Lock()
+	persistedDelivered, hasPersisted := n.deliveredCount[mediaID]
+	n.deliveredCountMu.Unlock()
+
 	delivered := 0
-	for _, c := range chunks {
-		if c.Status >= StatusDelivered {
-			delivered++
+	if hasPersisted {
+		delivered = persistedDelivered
+	} else {
+		// Fallback: старый state без deliveredCount — по Status.
+		for _, c := range chunks {
+			if c.Status >= StatusDelivered {
+				delivered++
+			}
 		}
 	}
 	n.deliveredCountMu.Lock()
