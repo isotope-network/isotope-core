@@ -323,7 +323,7 @@ func NewNode(cfg Config) *Node {
 		tempContacts:            make(map[string]Contact),
 		myReadEnabled:           true,
 		sendSem:                 make(chan struct{}, SendSemaphoreCapacity),
-		serviceSem:              make(chan struct{}, 2),
+		serviceSem:              make(chan struct{}, 5),
 		mixingSem:               make(chan struct{}, 5),
 		sphinxFileSem:           make(chan struct{}, 2),
 		relaySem:                make(chan struct{}, 10),
